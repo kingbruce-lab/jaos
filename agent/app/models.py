@@ -250,6 +250,18 @@ class ManagedProject(Base):
     budget_tax: Mapped[Decimal] = mapped_column(
         Numeric(18, 2), nullable=False, default=Decimal("0"), server_default="0"
     )
+    process_received: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    process_spent: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    process_advanced: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), nullable=False, default=Decimal("0"), server_default="0"
+    )
+    process_finance_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
     progress_percent: Mapped[int] = mapped_column(Integer, default=0)
     current_stage: Mapped[str] = mapped_column(String(120), default="立项准备")

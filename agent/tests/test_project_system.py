@@ -245,6 +245,103 @@ def test_project_founder_approval_and_closing(tmp_path, monkeypatch) -> None:
         db.close()
 
 
+def test_pm_updates_process_finance_only_while_project_is_running(
+    tmp_path, monkeypatch
+) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["business"])
+    try:
+        created = client.post(
+            "/v1/pm/projects",
+            data={
+                "project_no": "FEISHU-FIN-01",
+                "name": "项目过程资金测试",
+                "company_name": "京奥电竞（北京）科技有限公司",
+                "client": "测试甲方",
+                "client_contact": "测试联系人",
+                "business_category": "电竞培训",
+                "members_json": '["执行同事"]',
+                "planned_start": "2026-08-01",
+                "planned_end": "2026-10-31",
+                "objective": "验证项目经理过程资金填报与权限。",
+            },
+        )
+        assert created.status_code == 200
+        project_id = created.json()["id"]
+        assert Decimal(str(created.json()["process_received"])) == Decimal("0")
+        assert Decimal(str(created.json()["process_spent"])) == Decimal("0")
+        assert Decimal(str(created.json()["process_advanced"])) == Decimal("0")
+
+        before_start = client.patch(
+            f"/v1/pm/projects/{project_id}/process-finance",
+            json={
+                "process_received": 100000,
+                "process_spent": 50000,
+                "process_advanced": 20000,
+            },
+        )
+        assert before_start.status_code == 409
+
+        assert client.post(
+            f"/v1/pm/projects/{project_id}/submit-initiation"
+        ).status_code == 200
+        app.dependency_overrides[current_user] = lambda: users["founder"]
+        assert _review(client, project_id, "initiation").status_code == 200
+
+        app.dependency_overrides[current_user] = lambda: users["business"]
+        updated = client.patch(
+            f"/v1/pm/projects/{project_id}/process-finance",
+            json={
+                "process_received": 180000,
+                "process_spent": 120000,
+                "process_advanced": 45000,
+            },
+        )
+        assert updated.status_code == 200
+        assert Decimal(str(updated.json()["process_received"])) == Decimal("180000")
+        assert Decimal(str(updated.json()["process_spent"])) == Decimal("120000")
+        assert Decimal(str(updated.json()["process_advanced"])) == Decimal("45000")
+        assert updated.json()["process_finance_updated_at"] is not None
+        assert db.get(ManagedProject, project_id).process_advanced == Decimal("45000")
+        assert db.scalar(
+            select(AuditLog).where(AuditLog.action == "pm_process_finance_update")
+        ) is not None
+
+        invalid = client.patch(
+            f"/v1/pm/projects/{project_id}/process-finance",
+            json={
+                "process_received": -1,
+                "process_spent": 0,
+                "process_advanced": 0,
+            },
+        )
+        assert invalid.status_code == 422
+
+        app.dependency_overrides[current_user] = lambda: users["finance"]
+        forbidden = client.patch(
+            f"/v1/pm/projects/{project_id}/process-finance",
+            json={
+                "process_received": 1,
+                "process_spent": 1,
+                "process_advanced": 1,
+            },
+        )
+        assert forbidden.status_code == 403
+
+        app.dependency_overrides[current_user] = lambda: users["second_business"]
+        assert client.patch(
+            f"/v1/pm/projects/{project_id}/process-finance",
+            json={
+                "process_received": 1,
+                "process_spent": 1,
+                "process_advanced": 1,
+            },
+        ).status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
 def test_project_rejection_returns_to_business(tmp_path, monkeypatch) -> None:
     db, users = _database()
     client = _configure(monkeypatch, tmp_path, db, users["business"])

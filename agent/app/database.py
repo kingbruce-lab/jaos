@@ -53,6 +53,30 @@ def init_database() -> None:
             connection.execute(
                 text(
                     "ALTER TABLE managed_projects ADD COLUMN IF NOT EXISTS "
+                    "process_received NUMERIC(18, 2) NOT NULL DEFAULT 0"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE managed_projects ADD COLUMN IF NOT EXISTS "
+                    "process_spent NUMERIC(18, 2) NOT NULL DEFAULT 0"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE managed_projects ADD COLUMN IF NOT EXISTS "
+                    "process_advanced NUMERIC(18, 2) NOT NULL DEFAULT 0"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE managed_projects ADD COLUMN IF NOT EXISTS "
+                    "process_finance_updated_at TIMESTAMPTZ"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE managed_projects ADD COLUMN IF NOT EXISTS "
                     "client_contact VARCHAR(240) NOT NULL DEFAULT ''"
                 )
             )

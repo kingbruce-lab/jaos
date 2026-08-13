@@ -91,6 +91,12 @@ class ProjectContractStatusUpdate(BaseModel):
     contract_status: Literal["unsigned", "signed_received"]
 
 
+class ProjectProcessFinanceUpdate(BaseModel):
+    process_received: Decimal = Field(ge=0, max_digits=18, decimal_places=2)
+    process_spent: Decimal = Field(ge=0, max_digits=18, decimal_places=2)
+    process_advanced: Decimal = Field(ge=0, max_digits=18, decimal_places=2)
+
+
 class ProjectCashflowActualUpdate(BaseModel):
     actual_amount: Decimal = Field(ge=0, max_digits=18, decimal_places=2)
     actual_date: date | None = None
@@ -426,6 +432,10 @@ def _project_payload(db: Session, project: ManagedProject, detail: bool = False)
         "budget_cost": project.budget_cost,
         "budget_tax": project.budget_tax,
         "expected_margin": project.budget_revenue - project.budget_cost - project.budget_tax,
+        "process_received": project.process_received,
+        "process_spent": project.process_spent,
+        "process_advanced": project.process_advanced,
+        "process_finance_updated_at": project.process_finance_updated_at,
         "status": project.status,
         "progress_percent": project.progress_percent,
         "current_stage": project.current_stage,
@@ -694,6 +704,46 @@ def update_project_contract_status(
             "project_id": project.id,
             "previous_status": previous_status,
             "contract_status": project.contract_status,
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+    return _project_payload(db, project, detail=True)
+
+
+@router.patch("/projects/{project_id}/process-finance")
+def update_project_process_finance(
+    project_id: str,
+    payload: ProjectProcessFinanceUpdate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Record PM-reported cumulative project cash figures during execution."""
+
+    project = _project_or_404(db, user, project_id)
+    if not _project_editable(user, project):
+        raise HTTPException(status_code=403, detail="仅项目经理可以填报项目过程资金")
+    if project.status not in {"active", "closing_rejected"}:
+        raise HTTPException(status_code=409, detail="仅执行中的项目可以填报过程资金")
+    previous = {
+        "process_received": str(project.process_received),
+        "process_spent": str(project.process_spent),
+        "process_advanced": str(project.process_advanced),
+    }
+    project.process_received = payload.process_received
+    project.process_spent = payload.process_spent
+    project.process_advanced = payload.process_advanced
+    project.process_finance_updated_at = datetime.now(timezone.utc)
+    db.add(AuditLog(
+        user_id=user.id,
+        action="pm_process_finance_update",
+        details_json=json.dumps({
+            "project_id": project.id,
+            "previous": previous,
+            "current": {
+                "process_received": str(project.process_received),
+                "process_spent": str(project.process_spent),
+                "process_advanced": str(project.process_advanced),
+            },
         }, ensure_ascii=False),
     ))
     db.commit()

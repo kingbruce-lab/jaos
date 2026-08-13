@@ -482,6 +482,10 @@ type ManagedProject = {
   budget_cost: MoneyValue;
   budget_tax: MoneyValue;
   expected_margin: MoneyValue;
+  process_received: MoneyValue;
+  process_spent: MoneyValue;
+  process_advanced: MoneyValue;
+  process_finance_updated_at: string | null;
   status: string;
   progress_percent: number;
   current_stage: string;
@@ -3097,6 +3101,30 @@ export default function Home() {
     }
   }
 
+  async function handleProjectProcessFinance(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token || !selectedManagedProject) return;
+    const data = new FormData(event.currentTarget);
+    setProjectBusy("process-finance");
+    setError("");
+    try {
+      await kbFetch(`v1/pm/projects/${selectedManagedProject.id}/process-finance`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          process_received: data.get("process_received") || 0,
+          process_spent: data.get("process_spent") || 0,
+          process_advanced: data.get("process_advanced") || 0,
+        }),
+      }, token);
+      setProjectMessage("项目过程资金已更新。三项数据为项目经理累计填报口径。");
+      await refreshManagedProjects(selectedManagedProject.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "项目过程资金更新失败");
+    } finally {
+      setProjectBusy("");
+    }
+  }
+
   async function handleRequestProjectDeletion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token || !selectedManagedProject) return;
@@ -4292,6 +4320,7 @@ export default function Home() {
             onCreate={handleCreateManagedProject}
             onUpdate={handleUpdateManagedProject}
             onContractStatus={handleUpdateProjectContractStatus}
+            onProcessFinance={handleProjectProcessFinance}
             onRequestDeletion={handleRequestProjectDeletion}
             onDeletionDecision={handleProjectDeletionDecision}
             onArchive={handleProjectArchive}
@@ -7000,6 +7029,7 @@ function ProjectManagementWorkspace({
   onCreate,
   onUpdate,
   onContractStatus,
+  onProcessFinance,
   onRequestDeletion,
   onDeletionDecision,
   onArchive,
@@ -7023,6 +7053,7 @@ function ProjectManagementWorkspace({
   onCreate: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onUpdate: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onContractStatus: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onProcessFinance: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onRequestDeletion: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onDeletionDecision: (event: FormEvent<HTMLFormElement>, requestId: string) => Promise<void>;
   onArchive: (action: "archive" | "restore") => Promise<void>;
@@ -7209,6 +7240,29 @@ function ProjectManagementWorkspace({
                 <article><span>预计毛利</span><strong className={Number(selected.expected_margin) >= 0 ? "positive" : "negative"}>{formatMoney(selected.expected_margin)}</strong></article>
                 <article><span>最大垫资缺口</span><strong className="negative">{formatMoney(selected.maximum_funding_gap ?? 0)}</strong></article>
               </section>
+              <section className="pmProcessFinanceSection">
+                <header>
+                  <div><span>PM REPORTED CASH</span><strong>项目过程资金</strong></div>
+                  <small>{selected.process_finance_updated_at ? `最近填报：${new Date(selected.process_finance_updated_at).toLocaleString("zh-CN")}` : "尚未填报，当前显示为 0"}</small>
+                </header>
+                <div className="pmProcessFinanceSummary">
+                  <article className="received"><span>已收入</span><strong>{formatMoney(selected.process_received ?? 0)}</strong><small>PM累计填报</small></article>
+                  <article className="spent"><span>已支出</span><strong>{formatMoney(selected.process_spent ?? 0)}</strong><small>PM累计填报</small></article>
+                  <article className="advanced"><span>已垫资</span><strong>{formatMoney(selected.process_advanced ?? 0)}</strong><small>PM累计填报</small></article>
+                </div>
+                {isOwner && ["active", "closing_rejected"].includes(selected.status) && (
+                  <details className="pmProcessFinanceEditor">
+                    <summary>更新项目过程资金</summary>
+                    <form key={`${selected.id}-${selected.process_finance_updated_at || "new"}`} onSubmit={onProcessFinance}>
+                      <label>累计已收入<input name="process_received" type="number" min="0" step="0.01" defaultValue={Number(selected.process_received || 0)} required /></label>
+                      <label>累计已支出<input name="process_spent" type="number" min="0" step="0.01" defaultValue={Number(selected.process_spent || 0)} required /></label>
+                      <label>累计已垫资<input name="process_advanced" type="number" min="0" step="0.01" defaultValue={Number(selected.process_advanced || 0)} required /></label>
+                      <button type="submit" disabled={busy === "process-finance"}>{busy === "process-finance" ? "保存中…" : "保存过程资金"}</button>
+                    </form>
+                    <p>填写截至当前的累计金额；该数据由项目经理维护，不替代财务确认的银行流水。</p>
+                  </details>
+                )}
+              </section>
               <section className="pmBrief"><div><span>周期</span><b>{selected.planned_start} 至 {selected.planned_end}</b></div><div><span>当前阶段</span><b>{selected.current_stage}</b></div><p>{selected.objective}</p></section>
 
               {["closed", "archived"].includes(selected.status) && (
@@ -7254,46 +7308,60 @@ function ProjectManagementWorkspace({
                 </details>
               )}
 
-              <section className="pmDeletionPanel">
-                <div><span>PROJECT REMOVAL</span><h3>项目删除</h3></div>
-                {selected.deletion_request?.status === "pending" ? (
-                  <div className="pmDeletionPending">
-                    <strong>等待叶靖波复核删除</strong>
-                    <p>{selected.deletion_request.reason}</p>
-                    <small>申请人：{selected.deletion_request.requester}</small>
-                    {canReview && (
-                      <form className="inlineReviewForm" onSubmit={(event) => void onDeletionDecision(event, selected.deletion_request!.id)}>
-                        <select name="decision" defaultValue="rejected"><option value="rejected">驳回删除</option><option value="approved">批准删除</option></select>
-                        <input name="note" placeholder="删除复核意见（选填）" />
-                        <button className="primaryButton" disabled={busy === "deletion-decision"}>提交删除复核</button>
+              <section className="pmProjectAdminFooter" aria-label="项目管理记录">
+                <header><span>PROJECT ADMINISTRATION</span><strong>管理记录</strong><small>复核与删除操作集中收纳于此</small></header>
+
+                <details className="pmManagementItem pmReviewSection" defaultOpen={Boolean(canReview && reviewStage && !alreadyReviewed)} key={`${selected.id}-review-${reviewStage || "none"}-${alreadyReviewed ? "done" : "open"}`}>
+                  <summary>
+                    <div><strong>负责人复核</strong><small>测试阶段由叶靖波复核</small></div>
+                    <span className={alreadyReviewed ? "complete" : reviewStage ? "pending" : "neutral"}>{alreadyReviewed ? "已完成" : reviewStage ? "待复核" : "暂无待办"}</span>
+                  </summary>
+                  <div className="pmManagementBody">
+                    <div className="reviewSlotGrid">
+                      {(selected.status.includes("closing") || selected.status === "closed" ? selected.closing_reviews : selected.initiation_reviews)?.map((item) => (
+                        <article className={item.decision} key={item.slot}><span>{item.label}</span><strong>{item.decision === "approved" ? "已通过" : item.decision === "rejected" ? "已退回" : "待复核"}</strong><small>{item.reviewer || "等待处理"}{item.note ? ` · ${item.note}` : ""}</small></article>
+                      ))}
+                    </div>
+                    {canReview && reviewStage && !alreadyReviewed && (
+                      <form className="inlineReviewForm" onSubmit={(event) => void onReview(event, reviewStage)}>
+                        <select name="decision" defaultValue="approved"><option value="approved">通过</option><option value="rejected">退回</option></select>
+                        <input name="note" placeholder="复核意见（退回时建议填写）" />
+                        <button className="primaryButton" disabled={busy === `review-${reviewStage}`}>提交我的复核</button>
                       </form>
                     )}
                   </div>
-                ) : isOwner ? (
-                  <form className="pmDeletionRequestForm" onSubmit={onRequestDeletion}>
-                    {selected.deletion_request?.status === "rejected" && <p>上次删除申请已被驳回：{selected.deletion_request.decision_note || "未填写原因"}</p>}
-                    <input name="reason" minLength={2} maxLength={1000} required placeholder="说明为什么需要删除这个项目" />
-                    <button type="submit" disabled={busy === "deletion-request"}>申请删除项目</button>
-                  </form>
-                ) : (
-                  <p>只有项目经理可以发起删除申请，批准权归叶靖波。</p>
-                )}
-              </section>
+                </details>
 
-              <section className="pmReviewSection">
-                <div className="sectionHeading"><div><span>FOUNDER REVIEW</span><h3>负责人复核</h3></div><small>测试阶段仅由叶靖波复核</small></div>
-                <div className="reviewSlotGrid">
-                  {(selected.status.includes("closing") || selected.status === "closed" ? selected.closing_reviews : selected.initiation_reviews)?.map((item) => (
-                    <article className={item.decision} key={item.slot}><span>{item.label}</span><strong>{item.decision === "approved" ? "已通过" : item.decision === "rejected" ? "已退回" : "待复核"}</strong><small>{item.reviewer || "等待处理"}{item.note ? ` · ${item.note}` : ""}</small></article>
-                  ))}
-                </div>
-                {canReview && reviewStage && !alreadyReviewed && (
-                  <form className="inlineReviewForm" onSubmit={(event) => void onReview(event, reviewStage)}>
-                    <select name="decision" defaultValue="approved"><option value="approved">通过</option><option value="rejected">退回</option></select>
-                    <input name="note" placeholder="复核意见（退回时建议填写）" />
-                    <button className="primaryButton" disabled={busy === `review-${reviewStage}`}>提交我的复核</button>
-                  </form>
-                )}
+                <details className="pmManagementItem pmDeletionPanel" defaultOpen={selected.deletion_request?.status === "pending"} key={`${selected.id}-deletion-${selected.deletion_request?.status || "none"}`}>
+                  <summary>
+                    <div><strong>项目删除</strong><small>项目经理申请，叶靖波复核</small></div>
+                    <span className={selected.deletion_request?.status === "pending" ? "danger" : selected.deletion_request?.status === "rejected" ? "rejected" : "neutral"}>{selected.deletion_request?.status === "pending" ? "待复核" : selected.deletion_request?.status === "rejected" ? "已驳回" : "无申请"}</span>
+                  </summary>
+                  <div className="pmManagementBody">
+                    {selected.deletion_request?.status === "pending" ? (
+                      <div className="pmDeletionPending">
+                        <strong>等待叶靖波复核删除</strong>
+                        <p>{selected.deletion_request.reason}</p>
+                        <small>申请人：{selected.deletion_request.requester}</small>
+                        {canReview && (
+                          <form className="inlineReviewForm" onSubmit={(event) => void onDeletionDecision(event, selected.deletion_request!.id)}>
+                            <select name="decision" defaultValue="rejected"><option value="rejected">驳回删除</option><option value="approved">批准删除</option></select>
+                            <input name="note" placeholder="删除复核意见（选填）" />
+                            <button className="primaryButton" disabled={busy === "deletion-decision"}>提交删除复核</button>
+                          </form>
+                        )}
+                      </div>
+                    ) : isOwner ? (
+                      <form className="pmDeletionRequestForm" onSubmit={onRequestDeletion}>
+                        {selected.deletion_request?.status === "rejected" && <p>上次删除申请已被驳回：{selected.deletion_request.decision_note || "未填写原因"}</p>}
+                        <input name="reason" minLength={2} maxLength={1000} required placeholder="说明为什么需要删除这个项目" />
+                        <button type="submit" disabled={busy === "deletion-request"}>申请删除项目</button>
+                      </form>
+                    ) : (
+                      <p>只有项目经理可以发起删除申请，批准权归叶靖波。</p>
+                    )}
+                  </div>
+                </details>
               </section>
 
               <section className="pmCashflowSection">
