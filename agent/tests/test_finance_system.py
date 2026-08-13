@@ -186,11 +186,12 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
         "account_name": "基本户",
         "account_number": "6222000012345678",
     }
+    statement_bytes = _xlsx()
     try:
         first = client.post(
             "/v1/finance/statements/upload",
             data=form,
-            files={"file": ("2026年8月流水.xlsx", _xlsx(), "application/octet-stream")},
+            files={"file": ("2026年8月流水.xlsx", statement_bytes, "application/octet-stream")},
         )
         assert first.status_code == 200
         assert first.json()["row_count"] == 2
@@ -201,7 +202,7 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
         duplicate = client.post(
             "/v1/finance/statements/upload",
             data=form,
-            files={"file": ("重复.xlsx", _xlsx(), "application/octet-stream")},
+            files={"file": ("重复.xlsx", statement_bytes, "application/octet-stream")},
         )
         assert duplicate.status_code == 200
         assert duplicate.json()["duplicate_file"] is True

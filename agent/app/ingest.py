@@ -295,6 +295,11 @@ def ingest_document(
     expected_stat: tuple[int, int] | None = None,
 ) -> dict:
     path = Path(entry["path"]).expanduser().resolve()
+    if any(
+        part.strip().casefold() in SYSTEM_MANAGED_SCAN_EXCLUSION_KEYS
+        for part in path.parts
+    ):
+        raise ValueError("system_managed_source_excluded")
     if not path.is_file():
         raise FileNotFoundError(path)
     _assert_stable(path, expected_stat)
@@ -578,9 +583,14 @@ def _infer_version(stem: str) -> str:
 
 def _infer_confidentiality(relative_path: Path) -> str:
     value = relative_path.as_posix().lower()
+    if any(
+        part.strip().casefold() in SYSTEM_MANAGED_SCAN_EXCLUSION_KEYS
+        for part in relative_path.parts
+    ):
+        return "L4"
     for part in relative_path.parts:
         normalized = part.strip().lower()
-        if normalized in {"l1", "l2", "l3", "l4"}:
+        if normalized in {"l1", "l2", "l3", "l4", "l5"}:
             return normalized.upper()
     if any(
         hint in value

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pymupdf
+import pytest
 from openpyxl import Workbook
 from PIL import Image
 from sqlalchemy import create_engine, func, select
@@ -112,6 +113,14 @@ def test_scan_skips_system_managed_finance_records(tmp_path, monkeypatch) -> Non
         assert result["counts"]["skipped"] == 1
         assert db.scalar(select(func.count(Document.id))) == 0
         assert db.scalar(select(func.count(InboxIssue.id))) == 0
+        assert ingest._infer_confidentiality(
+            finance_file.relative_to(library)
+        ) == "L4"
+        with pytest.raises(ValueError, match="system_managed_source_excluded"):
+            ingest.ingest_document(
+                db,
+                ingest.prefill_entry(finance_file, library),
+            )
     finally:
         db.close()
 
