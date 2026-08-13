@@ -167,6 +167,110 @@
 .financeIncomeAmount { color: #c83b45 !important; }
 .financeExpenseAmount { color: #128159 !important; }
 .financeDashboardGrid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, .75fr); gap: 18px; }
+
+/* Annual finance review */
+.financePeriodSwitcher { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 24px; border: 1px solid #dfe5ec; border-radius: 16px; background: #fff; box-shadow: 0 8px 22px rgba(15,29,49,.05); }
+.financePeriodSwitcher > div:first-child { display: grid; gap: 4px; }
+.financePeriodSwitcher > div:first-child span { color: #7c899a; font-size: 11px; font-weight: 900; letter-spacing: 1.8px; }
+.financePeriodSwitcher > div:first-child strong { color: #17243a; font-size: 20px; }
+.financePeriodSwitcher > div:first-child small { color: #7c899a; font-size: 13px; }
+.financePeriodSwitcherButtons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.financePeriodSwitcherButtons button { min-height: 44px; padding: 0 18px; border: 1px solid #dce3eb; border-radius: 12px; color: #59677a; background: #f7f9fb; font-size: 14px; font-weight: 800; cursor: pointer; }
+.financePeriodSwitcherButtons button.active { border-color: #d91e2b; color: #fff; background: #d91e2b; box-shadow: 0 8px 18px rgba(217,30,43,.18); }
+.financeAnnualLoading { display: grid; place-items: center; min-height: 260px; gap: 8px; text-align: center; }
+.financeAnnualLoading strong { font-size: 22px; }
+.financeAnnualLoading span { color: #7e8998; font-size: 14px; }
+.financeAnnualHero { display: flex; align-items: stretch; justify-content: space-between; gap: 28px; min-height: 280px; padding: 36px 40px; overflow: hidden; border-radius: 20px; color: #fff; background: radial-gradient(circle at 88% 5%, rgba(82,139,181,.28), transparent 32%), linear-gradient(122deg,#101d31,#183452 62%,#213f50); box-shadow: 0 22px 46px rgba(15,29,49,.16); }
+.financeAnnualHero > div { display: flex; flex: 1; flex-direction: column; justify-content: center; min-width: 0; }
+.financeAnnualHero p { margin: 0 0 24px; color: #7eb2df; font-size: 12px; font-weight: 900; letter-spacing: 2.2px; }
+.financeAnnualHero span { color: #d5e0eb; font-size: 18px; font-weight: 800; }
+.financeAnnualHero > div small { margin-top: 22px; color: #aebdce; font-size: 14px; }
+.financeAnnualHero > div strong { margin: 5px 0 12px; font-size: clamp(42px,5vw,68px); letter-spacing: -2px; font-variant-numeric: tabular-nums; }
+.financeAnnualHero > div em { color: #afbdcb; font-size: 14px; font-style: normal; }
+.financeAnnualHero aside { align-self: center; display: grid; width: min(390px,38%); gap: 10px; padding: 26px; border: 1px solid rgba(255,255,255,.13); border-radius: 16px; background: rgba(255,255,255,.07); backdrop-filter: blur(10px); }
+.financeAnnualHero aside > span { font-size: 13px; }
+.financeAnnualHero aside.complete > span { color: #7de0b8; }
+.financeAnnualHero aside.attention > span { color: #ffbd60; }
+.financeAnnualHero aside b { font-size: 20px; line-height: 1.4; }
+.financeAnnualHero aside small { color: #b8c4d0; font-size: 13px; line-height: 1.5; }
+.financeAnnualHero aside i { overflow: hidden; color: #ffd89e; font-size: 12px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.financeAnnualScopeBar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 18px 22px; border: 1px solid #dfe5ec; border-radius: 14px; background: #fff; }
+.financeAnnualScopeBar > div { display: grid; gap: 4px; }
+.financeAnnualScopeBar strong { font-size: 15px; }
+.financeAnnualScopeBar span { color: #7e8998; font-size: 13px; }
+.financeAnnualScopeBar button { min-height: 44px; padding: 0 18px; border: 1px solid #b9cee2; border-radius: 11px; color: #1763a4; background: #eef6fd; font-weight: 800; cursor: pointer; }
+.financeAnnualScopeBar button.active { border-color: #e0a44d; color: #925800; background: #fff6e8; }
+.financeAnnualMetricGrid, .financeAnnualConcentrationGrid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 16px; }
+.financeAnnualMetricGrid article, .financeAnnualConcentrationGrid article { display: grid; min-height: 145px; align-content: center; gap: 10px; padding: 23px; border: 1px solid #dfe5ec; border-radius: 16px; background: #fff; }
+.financeAnnualMetricGrid span, .financeAnnualConcentrationGrid span { color: #69778a; font-size: 14px; font-weight: 750; }
+.financeAnnualMetricGrid strong { font-size: clamp(23px,2.2vw,34px); font-variant-numeric: tabular-nums; }
+.financeAnnualMetricGrid small, .financeAnnualConcentrationGrid small { color: #8a96a5; font-size: 12px; line-height: 1.5; }
+.financeAnnualConcentrationGrid article { min-height: 125px; }
+.financeAnnualConcentrationGrid strong { color: #17243a; font-size: 28px; }
+.financeAnnualConcentrationGrid article.attention { border-color: #f0c47f; background: #fff9ef; }
+.financeAnnualTrendPanel { padding: 28px 30px; }
+.financeAnnualTrendPanel > header { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 26px; }
+.financeAnnualTrendPanel header span, .financeAnnualCategoryPanel header span, .financeAnnualOutflowPanel header span { color: #7890aa; font-size: 11px; font-weight: 900; letter-spacing: 1.7px; }
+.financeAnnualTrendPanel h2, .financeAnnualCategoryPanel h3, .financeAnnualOutflowPanel h3 { margin: 7px 0 0; color: #17243a; }
+.financeAnnualTrendPanel > header small { color: #8a96a5; font-size: 13px; }
+.financeAnnualMonthChart { display: grid; grid-template-columns: repeat(12,minmax(46px,1fr)); gap: 9px; min-height: 300px; overflow-x: auto; }
+.financeAnnualMonthChart article { display: grid; grid-template-rows: auto 160px auto auto; gap: 8px; min-width: 46px; text-align: center; }
+.financeAnnualMonthChart article > span { color: #647388; font-size: 12px; font-weight: 800; }
+.financeAnnualBars { display: flex; align-items: end; justify-content: center; gap: 5px; height: 160px; padding: 0 4px; border-bottom: 1px solid #dde4eb; }
+.financeAnnualBars i { width: 13px; min-height: 0; border-radius: 5px 5px 2px 2px; }
+.financeAnnualBars i.income, .financeAnnualTrendPanel footer i.income { background: #d91e2b; }
+.financeAnnualBars i.expense, .financeAnnualTrendPanel footer i.expense { background: #07805d; }
+.financeAnnualMonthChart b { font-size: 11px; white-space: nowrap; }
+.financeAnnualMonthChart small { color: #929dab; font-size: 10px; }
+.financeAnnualTrendPanel footer { display: flex; justify-content: flex-end; gap: 18px; margin-top: 14px; color: #6e7c8d; font-size: 12px; }
+.financeAnnualTrendPanel footer span { display: flex; align-items: center; gap: 6px; }
+.financeAnnualTrendPanel footer i { width: 18px; height: 5px; border-radius: 4px; }
+.financeAnnualRankingGrid, .financeAnnualCategoryGrid, .financeAnnualRiskGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; }
+.financeAnnualCategoryPanel, .financeAnnualOutflowPanel { padding: 26px; }
+.financeAnnualCategoryPanel > div, .financeAnnualOutflowPanel > div { display: grid; margin-top: 18px; }
+.financeAnnualCategoryPanel article { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 62px; padding: 10px 0; border-bottom: 1px solid #edf0f3; }
+.financeAnnualCategoryPanel article > div { display: grid; gap: 4px; }
+.financeAnnualCategoryPanel article strong { font-size: 14px; }
+.financeAnnualCategoryPanel article small { color: #8a96a5; font-size: 12px; }
+.financeAnnualCategoryPanel article b { font-size: 14px; white-space: nowrap; }
+.financeAnnualOutflowPanel article { display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 12px; min-height: 62px; padding: 10px 0; border-bottom: 1px solid #edf0f3; }
+.financeAnnualOutflowPanel article > b { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: #1763a4; background: #eaf3fb; }
+.financeAnnualOutflowPanel article > div { display: grid; gap: 4px; }
+.financeAnnualOutflowPanel article strong { font-size: 13px; }
+.financeAnnualOutflowPanel article small { color: #8a96a5; font-size: 11px; }
+.financeAnnualOutflowPanel article em { font-size: 14px; font-style: normal; font-weight: 850; white-space: nowrap; }
+
+@media (max-width: 900px) {
+  .financeAnnualMetricGrid, .financeAnnualConcentrationGrid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .financeAnnualHero { flex-direction: column; }
+  .financeAnnualHero aside { width: auto; }
+}
+
+@media (max-width: 760px) {
+  .financePeriodSwitcher { align-items: stretch; flex-direction: column; padding: 18px; }
+  .financePeriodSwitcherButtons { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; padding-bottom: 3px; }
+  .financePeriodSwitcherButtons button { flex: 0 0 auto; min-height: 46px; font-size: 15px; }
+  .financeAnnualHero { min-height: 0; padding: 25px 20px; }
+  .financeAnnualHero p { margin-bottom: 18px; }
+  .financeAnnualHero span { font-size: 16px; }
+  .financeAnnualHero > div strong { font-size: clamp(36px,11vw,52px); }
+  .financeAnnualHero aside { padding: 20px; }
+  .financeAnnualScopeBar { align-items: stretch; flex-direction: column; }
+  .financeAnnualScopeBar button { width: 100%; }
+  .financeAnnualMetricGrid, .financeAnnualConcentrationGrid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 11px; }
+  .financeAnnualMetricGrid article, .financeAnnualConcentrationGrid article { min-height: 125px; padding: 17px; }
+  .financeAnnualMetricGrid strong { font-size: clamp(20px,6.5vw,29px); overflow-wrap: anywhere; }
+  .financeAnnualTrendPanel { padding: 20px 16px; }
+  .financeAnnualTrendPanel > header { align-items: start; flex-direction: column; }
+  .financeAnnualMonthChart { grid-template-columns: repeat(12,60px); padding-bottom: 8px; }
+  .financeAnnualRankingGrid, .financeAnnualCategoryGrid, .financeAnnualRiskGrid { grid-template-columns: 1fr; }
+  .financeAnnualRankingGrid .financeRankingPanel, .financeAnnualRiskGrid .financeAnomalyPanel { min-height: 0; }
+}
+
+@media (max-width: 420px) {
+  .financeAnnualMetricGrid, .financeAnnualConcentrationGrid { grid-template-columns: 1fr; }
+  .financeAnnualMetricGrid article, .financeAnnualConcentrationGrid article { min-height: 112px; }
+}
 .financeTrendPanel, .financeAccountPanel, .financeLedgerPanel, .transactionPanel, .compactLedgerPanel { padding: 26px; }
 .financeTrendChart { display: grid; gap: 8px; margin-top: 18px; }
 .trendRow { display: grid; grid-template-columns: 74px minmax(120px, 1fr) 120px; align-items: center; gap: 12px; font-size: 10px; color: #7d8797; }

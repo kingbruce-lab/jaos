@@ -382,6 +382,58 @@ type FinanceDashboard = {
   internal_transfer_summary?: Omit<FinanceInternalTransferRegistry, "items">;
 };
 
+type FinanceAnnualYears = {
+  entity_id: string;
+  years: number[];
+  default_view: "realtime";
+  current_year: number;
+};
+
+type FinanceAnnualDashboard = {
+  confidentiality: "L4";
+  entity_id: string;
+  entity_name: string;
+  year: number;
+  period_start: string;
+  period_end: string;
+  confirmed_only: boolean;
+  include_internal_transfers: boolean;
+  coverage: {
+    data_complete: boolean;
+    confirmed_period_start: string | null;
+    confirmed_period_end: string | null;
+    confirmed_batch_count: number;
+    pending_batch_count: number;
+    pending_batches: { id: string; filename: string; period_start: string | null; period_end: string | null; status: string }[];
+  };
+  income: MoneyValue;
+  expense: MoneyValue;
+  net: MoneyValue;
+  opening_balance: MoneyValue;
+  closing_balance: MoneyValue;
+  balance_change: MoneyValue;
+  transaction_count: number;
+  income_transaction_count: number;
+  expense_transaction_count: number;
+  average_income: MoneyValue;
+  average_expense: MoneyValue;
+  largest_income: MoneyValue;
+  largest_expense: MoneyValue;
+  counterparty_count: number;
+  monthly: { month: number; income: MoneyValue; expense: MoneyValue; net: MoneyValue; transaction_count: number }[];
+  top_income: FinanceRankItem[];
+  top_expense: FinanceRankItem[];
+  income_concentration: { amount: MoneyValue; total: MoneyValue; ratio: MoneyValue; parties: FinanceRankItem[] };
+  expense_concentration: { amount: MoneyValue; total: MoneyValue; ratio: MoneyValue; parties: FinanceRankItem[] };
+  income_categories: { name: string; amount: MoneyValue; transaction_count: number; ratio: MoneyValue }[];
+  expense_categories: { name: string; amount: MoneyValue; transaction_count: number; ratio: MoneyValue }[];
+  largest_outflow_days: { date: string; income: MoneyValue; expense: MoneyValue; net: MoneyValue; transaction_count: number }[];
+  anomaly_count: number;
+  anomalies: FinanceAlertItem[];
+  unclassified: { count: number; amount: MoneyValue; ratio: MoneyValue };
+  internal_transfers: { count: number; income: MoneyValue; expense: MoneyValue };
+};
+
 type FinanceEntity = {
   id: string;
   key: "jingao" | "ace-leopard" | "power-leopard";
@@ -1416,6 +1468,9 @@ export default function Home() {
   const [financeEntities, setFinanceEntities] = useState<FinanceEntity[]>([]);
   const [selectedFinanceEntityId, setSelectedFinanceEntityId] = useState("");
   const [financeDashboard, setFinanceDashboard] = useState<FinanceDashboard | null>(null);
+  const [financePeriodView, setFinancePeriodView] = useState<"realtime" | number>("realtime");
+  const [financeAnnualYears, setFinanceAnnualYears] = useState<number[]>([]);
+  const [financeAnnualDashboard, setFinanceAnnualDashboard] = useState<FinanceAnnualDashboard | null>(null);
   const [financeBatches, setFinanceBatches] = useState<FinanceBatch[]>([]);
   const [financeCash, setFinanceCash] = useState<CashLedgerEntry[]>([]);
   const [financeTransfers, setFinanceTransfers] = useState<FinanceInternalTransferRegistry>({
@@ -1678,12 +1733,14 @@ export default function Home() {
         ? kbFetch<CashLedgerEntry[]>(`v1/finance/cash${query}`, {}, token)
         : Promise.resolve([] as CashLedgerEntry[]),
       kbFetch<FinanceInternalTransferApiRegistry>(`v1/finance/internal-transfers${transferQuery}&review_status=all&limit=100`, {}, token),
-    ]).then(([dashboard, batches, cash, transfers]) => {
+      kbFetch<FinanceAnnualYears>(`v1/finance/annual-years${transferQuery}`, {}, token),
+    ]).then(([dashboard, batches, cash, transfers, annualYears]) => {
       if (cancelled) return;
       setFinanceDashboard(dashboard);
       setFinanceBatches(batches);
       setFinanceCash(cash);
       setFinanceTransfers(normalizeFinanceTransferRegistry(transfers));
+      setFinanceAnnualYears(annualYears.years);
     }).catch((cause) => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : "公司财务数据加载失败");
     }).finally(() => {
@@ -1693,6 +1750,34 @@ export default function Home() {
       cancelled = true;
     };
   }, [active, financeEntities, financeIncludeInternalTransfers, selectedFinanceEntityId, token]);
+
+  useEffect(() => {
+    if (
+      !token
+      || active !== "财务分析"
+      || !selectedFinanceEntityId
+      || financePeriodView === "realtime"
+    ) {
+      setFinanceAnnualDashboard(null);
+      return;
+    }
+    let cancelled = false;
+    const query = `?entity_id=${encodeURIComponent(selectedFinanceEntityId)}&year=${financePeriodView}&include_internal_transfers=${financeIncludeInternalTransfers ? "true" : "false"}`;
+    setFinanceBusy("annual");
+    kbFetch<FinanceAnnualDashboard>(`v1/finance/annual${query}`, {}, token)
+      .then((payload) => {
+        if (!cancelled) setFinanceAnnualDashboard(payload);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "年度财务数据加载失败");
+      })
+      .finally(() => {
+        if (!cancelled) setFinanceBusy("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, financeIncludeInternalTransfers, financePeriodView, selectedFinanceEntityId, token]);
 
   useEffect(() => {
     if (!token || active !== "项目管理") return;
@@ -2800,24 +2885,37 @@ export default function Home() {
     if (!entity) return;
     const query = `?entity_id=${encodeURIComponent(selectedFinanceEntityId)}&include_internal_transfers=${financeIncludeInternalTransfers ? "true" : "false"}`;
     const transferQuery = `?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`;
-    const [dashboard, batches, cash, transfers] = await Promise.all([
+    const [dashboard, batches, cash, transfers, annualYears, annualDashboard] = await Promise.all([
       kbFetch<FinanceDashboard>(`v1/finance/dashboard${query}`, {}, token),
       kbFetch<FinanceBatch[]>(`v1/finance/statements${query}`, {}, token),
       entity.show_cash
         ? kbFetch<CashLedgerEntry[]>(`v1/finance/cash${query}`, {}, token)
         : Promise.resolve([] as CashLedgerEntry[]),
       kbFetch<FinanceInternalTransferApiRegistry>(`v1/finance/internal-transfers${transferQuery}&review_status=all&limit=100`, {}, token),
+      kbFetch<FinanceAnnualYears>(`v1/finance/annual-years${transferQuery}`, {}, token),
+      financePeriodView === "realtime"
+        ? Promise.resolve(null)
+        : kbFetch<FinanceAnnualDashboard>(
+            `v1/finance/annual${transferQuery}&year=${financePeriodView}&include_internal_transfers=${financeIncludeInternalTransfers ? "true" : "false"}`,
+            {},
+            token,
+          ),
     ]);
     setFinanceDashboard(dashboard);
     setFinanceBatches(batches);
     setFinanceCash(cash);
     setFinanceTransfers(normalizeFinanceTransferRegistry(transfers));
+    setFinanceAnnualYears(annualYears.years);
+    if (annualDashboard) setFinanceAnnualDashboard(annualDashboard);
   }
 
   function handleFinanceEntitySelect(entityId: string) {
     setActive("财务分析");
     if (entityId === selectedFinanceEntityId) return;
     setSelectedFinanceEntityId(entityId);
+    setFinancePeriodView("realtime");
+    setFinanceAnnualYears([]);
+    setFinanceAnnualDashboard(null);
     setFinanceDashboard(null);
     setFinanceBatches([]);
     setFinanceCash([]);
@@ -4279,6 +4377,9 @@ export default function Home() {
             entity={selectedFinanceEntity}
             entities={financeEntities}
             dashboard={financeDashboard}
+            periodView={financePeriodView}
+            annualYears={financeAnnualYears}
+            annualDashboard={financeAnnualDashboard}
             batches={financeBatches}
             cashEntries={financeCash}
             transfers={financeTransfers}
@@ -4291,6 +4392,7 @@ export default function Home() {
             canEditCash={canEditCash && selectedFinanceEntity.show_cash}
             projects={selectedFinanceProjects}
             onEntitySelect={handleFinanceEntitySelect}
+            onPeriodViewChange={setFinancePeriodView}
             onTransferScopeChange={setFinanceIncludeInternalTransfers}
             onTransferDecision={handleFinanceTransferDecision}
             onUpload={handleStatementUpload}
@@ -6571,6 +6673,9 @@ function FinanceWorkspace({
   entity,
   entities,
   dashboard,
+  periodView,
+  annualYears,
+  annualDashboard,
   batches,
   cashEntries,
   transfers,
@@ -6583,6 +6688,7 @@ function FinanceWorkspace({
   canEditCash,
   projects,
   onEntitySelect,
+  onPeriodViewChange,
   onTransferScopeChange,
   onTransferDecision,
   onUpload,
@@ -6595,6 +6701,9 @@ function FinanceWorkspace({
   entity: FinanceEntity;
   entities: FinanceEntity[];
   dashboard: FinanceDashboard | null;
+  periodView: "realtime" | number;
+  annualYears: number[];
+  annualDashboard: FinanceAnnualDashboard | null;
   batches: FinanceBatch[];
   cashEntries: CashLedgerEntry[];
   transfers: FinanceInternalTransferRegistry;
@@ -6607,6 +6716,7 @@ function FinanceWorkspace({
   canEditCash: boolean;
   projects: ManagedProject[];
   onEntitySelect: (entityId: string) => void;
+  onPeriodViewChange: (view: "realtime" | number) => void;
   onTransferScopeChange: (include: boolean) => void;
   onTransferDecision: (transferId: string, action: "confirm" | "reject" | "reset") => Promise<void>;
   onUpload: (event: FormEvent<HTMLFormElement>) => Promise<void>;
@@ -6650,6 +6760,22 @@ function FinanceWorkspace({
             <strong>{item.display_name}</strong>
             <small>{item.business_name}</small>
           </button>
+        ))}
+      </div>
+    </section>
+  );
+
+  const periodSwitcher = (
+    <section className="financePeriodSwitcher" aria-label="选择财务分析周期">
+      <div>
+        <span>ANALYSIS PERIOD</span>
+        <strong>{periodView === "realtime" ? "实时经营总览" : `${periodView} 年度分析`}</strong>
+        <small>实时页关注近期经营；年度页按自然年复盘全年银行现金流。</small>
+      </div>
+      <div className="financePeriodSwitcherButtons" role="tablist">
+        <button type="button" role="tab" aria-selected={periodView === "realtime"} className={periodView === "realtime" ? "active" : ""} onClick={() => onPeriodViewChange("realtime")}>实时总览</button>
+        {annualYears.map((year) => (
+          <button type="button" role="tab" aria-selected={periodView === year} className={periodView === year ? "active" : ""} onClick={() => onPeriodViewChange(year)} key={year}>{year} 年度</button>
         ))}
       </div>
     </section>
@@ -6706,9 +6832,121 @@ function FinanceWorkspace({
       </section>
     );
   }
+  if (periodView !== "realtime") {
+    const annual = annualDashboard?.year === periodView ? annualDashboard : null;
+    const maxMonthly = Math.max(
+      1,
+      ...(annual?.monthly || []).flatMap((item) => [Number(item.income), Number(item.expense)]),
+    );
+    const coverageRange = annual?.coverage.confirmed_period_start && annual.coverage.confirmed_period_end
+      ? formatChineseDateRange(annual.coverage.confirmed_period_start, annual.coverage.confirmed_period_end)
+      : "尚无已确认流水";
+    const categoryPanel = (
+      title: string,
+      items: FinanceAnnualDashboard["income_categories"],
+      direction: "income" | "expense",
+    ) => (
+      <section className="panel financeAnnualCategoryPanel">
+        <header><span>{direction === "income" ? "INCOME MIX" : "EXPENSE MIX"}</span><h3>{title}</h3></header>
+        <div>
+          {items.slice(0, 8).map((item) => (
+            <article key={item.name}>
+              <div><strong>{item.name}</strong><small>{item.transaction_count} 笔 · {(Number(item.ratio) * 100).toFixed(1)}%</small></div>
+              <b className={direction === "income" ? "financeIncomeAmount" : "financeExpenseAmount"}>{formatMoney(item.amount)}</b>
+            </article>
+          ))}
+          {!items.length && <p className="mutedText">该年度暂无可分析数据。</p>}
+        </div>
+      </section>
+    );
+    return (
+      <section className="financeWorkspace financeAnnualWorkspace">
+        {entitySwitcher}
+        {periodSwitcher}
+        {!annual ? (
+          <section className="panel financeAnnualLoading"><strong>{busy === "annual" ? `正在分析 ${periodView} 年度流水…` : "年度数据暂不可用"}</strong><span>年度统计仅使用已确认银行流水。</span></section>
+        ) : (
+          <>
+            <section className="financeAnnualHero">
+              <div>
+                <p>ANNUAL FINANCIAL REVIEW</p>
+                <span>{entity.display_name} · {periodView} 年度</span>
+                <small>全年账内银行净流入</small>
+                <strong className={Number(annual.net) >= 0 ? "positive" : "negative"}>{formatMoney(annual.net)}</strong>
+                <em>{annual.transaction_count} 条已确认流水 · {annual.counterparty_count} 个往来单位</em>
+              </div>
+              <aside className={annual.coverage.data_complete ? "complete" : "attention"}>
+                <span>{annual.coverage.data_complete ? "年度数据已核对" : "年度数据尚未完整"}</span>
+                <b>已确认覆盖 {coverageRange}</b>
+                <small>{annual.coverage.confirmed_batch_count} 个批次已确认{annual.coverage.pending_batch_count ? ` · ${annual.coverage.pending_batch_count} 个批次待确认` : " · 无待确认批次"}</small>
+                {annual.coverage.pending_batches.map((item) => <i key={item.id}>{item.filename}</i>)}
+              </aside>
+            </section>
+
+            {!annual.coverage.data_complete && (
+              <div className="noticeBar warningNotice"><strong>当前不是完整全年口径</strong><span>待确认批次不会计入任何指标；财务确认后年度页会自动更新。</span></div>
+            )}
+
+            <section className="financeAnnualScopeBar">
+              <div><strong>经营口径</strong><span>余额始终按银行原值；切换只影响收支、排行与异常。</span></div>
+              <button type="button" className={includeInternalTransfers ? "active" : ""} onClick={() => onTransferScopeChange(!includeInternalTransfers)}>{includeInternalTransfers ? "当前：包含内部划转" : "当前：剔除内部划转"}</button>
+            </section>
+
+            <section className="financeAnnualMetricGrid">
+              <article><span>全年收入</span><strong className="financeIncomeAmount">{formatMoney(annual.income)}</strong><small>{annual.income_transaction_count} 笔 · 单笔均值 {formatMoney(annual.average_income)}</small></article>
+              <article><span>全年支出</span><strong className="financeExpenseAmount">{formatMoney(annual.expense)}</strong><small>{annual.expense_transaction_count} 笔 · 单笔均值 {formatMoney(annual.average_expense)}</small></article>
+              <article><span>全年净流入</span><strong className={Number(annual.net) >= 0 ? "positive" : "negative"}>{formatMoney(annual.net)}</strong><small>收入减支出</small></article>
+              <article><span>年末账内余额</span><strong>{formatMoney(annual.closing_balance)}</strong><small>年初 {formatMoney(annual.opening_balance)} · 变动 {formatMoney(annual.balance_change)}</small></article>
+            </section>
+
+            <section className="panel financeAnnualTrendPanel">
+              <header><div><span>12-MONTH CASHFLOW</span><h2>{periodView} 年月度现金流走势</h2></div><small>只做月度分布，不重复实时页的周度分析</small></header>
+              <div className="financeAnnualMonthChart">
+                {annual.monthly.map((item) => (
+                  <article key={item.month}>
+                    <span>{item.month}月</span>
+                    <div className="financeAnnualBars"><i className="income" style={{ height: `${Math.max(Number(item.income) / maxMonthly * 100, Number(item.income) ? 3 : 0)}%` }} /><i className="expense" style={{ height: `${Math.max(Number(item.expense) / maxMonthly * 100, Number(item.expense) ? 3 : 0)}%` }} /></div>
+                    <b className={Number(item.net) >= 0 ? "positive" : "negative"}>{formatMoney(item.net)}</b>
+                    <small>{item.transaction_count} 笔</small>
+                  </article>
+                ))}
+              </div>
+              <footer><span><i className="income" />收入</span><span><i className="expense" />支出</span></footer>
+            </section>
+
+            <section className="financeAnnualRankingGrid">
+              <FinanceRankingPanel eyebrow="ANNUAL INCOME TOP 10" title="全年收入前 10 往来单位" range={`${periodView} 年`} items={annual.top_income} direction="income" emptyText="全年暂无已确认收入。" />
+              <FinanceRankingPanel eyebrow="ANNUAL EXPENSE TOP 10" title="全年支出前 10 往来单位" range={`${periodView} 年`} items={annual.top_expense} direction="expense" emptyText="全年暂无已确认支出。" />
+            </section>
+
+            <section className="financeAnnualConcentrationGrid">
+              <article><span>收入 Top 5 集中度</span><strong className="financeIncomeAmount">{(Number(annual.income_concentration.ratio) * 100).toFixed(1)}%</strong><small>前五单位贡献 {formatMoney(annual.income_concentration.amount)}</small></article>
+              <article><span>支出 Top 5 集中度</span><strong className="financeExpenseAmount">{(Number(annual.expense_concentration.ratio) * 100).toFixed(1)}%</strong><small>前五单位占用 {formatMoney(annual.expense_concentration.amount)}</small></article>
+              <article className={Number(annual.unclassified.ratio) > 0.2 ? "attention" : ""}><span>未分类流水占比</span><strong>{(Number(annual.unclassified.ratio) * 100).toFixed(1)}%</strong><small>{annual.unclassified.count} 笔 · {formatMoney(annual.unclassified.amount)}</small></article>
+              <article><span>年度异常提示</span><strong>{annual.anomaly_count}</strong><small>行为变化与数据质量规则</small></article>
+            </section>
+
+            <section className="financeAnnualCategoryGrid">
+              {categoryPanel("全年收入分类结构", annual.income_categories, "income")}
+              {categoryPanel("全年支出分类结构", annual.expense_categories, "expense")}
+            </section>
+
+            <section className="financeAnnualRiskGrid">
+              <section className="panel financeAnnualOutflowPanel">
+                <header><span>LIQUIDITY PRESSURE</span><h3>单日净流出峰值</h3></header>
+                <div>{annual.largest_outflow_days.slice(0, 8).map((item, index) => <article key={item.date}><b>{index + 1}</b><div><strong>{item.date}</strong><small>{item.transaction_count} 笔 · 收入 {formatMoney(item.income)}</small></div><em className="financeExpenseAmount">{formatMoney(Math.abs(Number(item.net)))}</em></article>)}{!annual.largest_outflow_days.length && <p className="mutedText">全年没有单日净流出。</p>}</div>
+              </section>
+              <FinanceAlertsPanel eyebrow="ANNUAL RISK & EXCEPTION" title="年度风险与异常预警" range={`${periodView} 年`} periodLabel="全年" count={annual.anomaly_count} items={annual.anomalies} onSelectBatch={onSelectBatch} />
+            </section>
+          </>
+        )}
+      </section>
+    );
+  }
   return (
     <section className="financeWorkspace">
       {entitySwitcher}
+      {periodSwitcher}
       <section className="financeHeroPanel">
         <div className="financeHeroCopy">
           <p>JINGAO FINANCIAL COMMAND CENTER</p>

@@ -1387,3 +1387,151 @@ def test_finance_entity_seed_normalizes_finance_projects_and_active_registry(
     finally:
         app.dependency_overrides.clear()
         db.close()
+
+
+def test_annual_dashboard_is_natural_year_confirmed_only_and_entity_scoped(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    jingao = BusinessEntity(
+        name="京奥电竞（北京）科技有限公司",
+        short_name="京奥电竞",
+        created_by_user_id=users["founder"].id,
+    )
+    ace = BusinessEntity(
+        name="王牌猎豹（JAG三角洲）",
+        short_name="王牌猎豹",
+        created_by_user_id=users["founder"].id,
+    )
+    db.add_all([jingao, ace])
+    db.flush()
+    jingao_account = FinancialAccount(
+        entity_id=jingao.id,
+        bank_name="北京银行成寿寺支行",
+        account_name="基本户",
+        account_number_masked="2000****6862",
+        account_number_hash="ANNUAL-JINGAO",
+    )
+    ace_account = FinancialAccount(
+        entity_id=ace.id,
+        bank_name="测试银行",
+        account_name="基本户",
+        account_number_masked="1000****0001",
+        account_number_hash="ANNUAL-ACE",
+    )
+    db.add_all([jingao_account, ace_account])
+    db.flush()
+    confirmed = BankStatementBatch(
+        entity_id=jingao.id,
+        account_id=jingao_account.id,
+        original_filename="2025前三季度.xlsx",
+        source_path="/finance/2025-confirmed.xlsx",
+        file_hash="ANNUAL-CONFIRMED",
+        period_start=date(2025, 3, 10),
+        period_end=date(2025, 9, 30),
+        status="confirmed",
+        row_count=4,
+        uploaded_by_user_id=users["finance"].id,
+        confirmed_by_user_id=users["finance"].id,
+        confirmed_at=datetime.now(timezone.utc),
+    )
+    pending = BankStatementBatch(
+        entity_id=jingao.id,
+        account_id=jingao_account.id,
+        original_filename="2025第四季度.xlsx",
+        source_path="/finance/2025-pending.xlsx",
+        file_hash="ANNUAL-PENDING",
+        period_start=date(2025, 10, 1),
+        period_end=date(2025, 12, 31),
+        status="pending",
+        row_count=1,
+        uploaded_by_user_id=users["finance"].id,
+    )
+    other_batch = BankStatementBatch(
+        entity_id=ace.id,
+        account_id=ace_account.id,
+        original_filename="2025王牌猎豹.xlsx",
+        source_path="/finance/ace-2025.xlsx",
+        file_hash="ANNUAL-ACE-FILE",
+        period_start=date(2025, 1, 1),
+        period_end=date(2025, 12, 31),
+        status="confirmed",
+        row_count=1,
+        uploaded_by_user_id=users["finance"].id,
+        confirmed_by_user_id=users["finance"].id,
+        confirmed_at=datetime.now(timezone.utc),
+    )
+    db.add_all([confirmed, pending, other_batch])
+    db.flush()
+
+    def transaction(
+        batch: BankStatementBatch,
+        entity: BusinessEntity,
+        account: FinancialAccount,
+        when: datetime,
+        income: str,
+        expense: str,
+        balance: str,
+        counterparty: str,
+        fingerprint: str,
+        *,
+        status: str = "confirmed",
+        category: str = "待确认",
+    ) -> BankTransaction:
+        return BankTransaction(
+            batch_id=batch.id,
+            entity_id=entity.id,
+            account_id=account.id,
+            transacted_at=when,
+            income=Decimal(income),
+            expense=Decimal(expense),
+            balance=Decimal(balance),
+            counterparty=counterparty,
+            summary="年度测试",
+            category=category,
+            fingerprint=fingerprint,
+            status=status,
+        )
+
+    db.add_all([
+        transaction(confirmed, jingao, jingao_account, datetime(2025, 3, 10, tzinfo=timezone.utc), "100", "0", "1100", "客户A", "A-1"),
+        transaction(confirmed, jingao, jingao_account, datetime(2025, 3, 11, tzinfo=timezone.utc), "0", "20", "1080", "供应商A", "A-2", category="场地"),
+        transaction(confirmed, jingao, jingao_account, datetime(2025, 7, 1, tzinfo=timezone.utc), "200", "0", "1280", "客户A", "A-3"),
+        transaction(confirmed, jingao, jingao_account, datetime(2025, 9, 30, tzinfo=timezone.utc), "0", "80", "1200", "供应商B", "A-4", category="服务费"),
+        transaction(pending, jingao, jingao_account, datetime(2025, 10, 1, tzinfo=timezone.utc), "9999", "0", "11199", "待确认客户", "P-1", status="pending"),
+        transaction(other_batch, ace, ace_account, datetime(2025, 6, 1, tzinfo=timezone.utc), "8888", "0", "8888", "其他公司客户", "ACE-1"),
+    ])
+    db.commit()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        years = client.get(
+            "/v1/finance/annual-years", params={"entity_id": jingao.id}
+        )
+        assert years.status_code == 200
+        assert years.json()["years"] == [2025]
+
+        response = client.get(
+            "/v1/finance/annual",
+            params={"entity_id": jingao.id, "year": 2025},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["income"] == "300.00"
+        assert payload["expense"] == "100.00"
+        assert payload["net"] == "200.00"
+        assert payload["opening_balance"] == "1000.00"
+        assert payload["closing_balance"] == "1200.00"
+        assert payload["transaction_count"] == 4
+        assert payload["monthly"][2]["income"] == "100.00"
+        assert payload["monthly"][6]["income"] == "200.00"
+        assert payload["top_income"][0]["name"] == "客户A"
+        assert payload["top_income"][0]["amount"] == "300.00"
+        assert payload["coverage"]["data_complete"] is False
+        assert payload["coverage"]["pending_batch_count"] == 1
+        assert payload["coverage"]["pending_batches"][0]["filename"] == "2025第四季度.xlsx"
+        assert payload["unclassified"]["count"] == 2
+        assert all(item["counterparty"] != "其他公司客户" for item in payload["anomalies"])
+    finally:
+        app.dependency_overrides.clear()
+        db.close()

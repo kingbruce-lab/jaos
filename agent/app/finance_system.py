@@ -1948,6 +1948,308 @@ def list_cash_entries(
     } for item in entries]
 
 
+def _annual_category_breakdown(
+    transactions: list[BankTransaction],
+    direction: Literal["income", "expense"],
+) -> list[dict]:
+    buckets: dict[str, dict[str, Decimal | int]] = defaultdict(
+        lambda: {"amount": Decimal("0"), "transaction_count": 0}
+    )
+    total = Decimal("0")
+    unclassified_names = {"", "待确认", "未分类", "待分类"}
+    for item in transactions:
+        amount = item.income if direction == "income" else item.expense
+        if amount <= 0:
+            continue
+        raw_category = (item.category or "").strip()
+        category = "未分类" if raw_category in unclassified_names else raw_category
+        buckets[category]["amount"] += amount
+        buckets[category]["transaction_count"] += 1
+        total += amount
+    return [
+        {
+            "name": name,
+            "amount": summary["amount"],
+            "transaction_count": summary["transaction_count"],
+            "ratio": (
+                (Decimal(str(summary["amount"])) / total).quantize(Decimal("0.0001"))
+                if total > 0
+                else Decimal("0")
+            ),
+        }
+        for name, summary in sorted(
+            buckets.items(),
+            key=lambda row: (Decimal(str(row[1]["amount"])), row[0]),
+            reverse=True,
+        )
+    ]
+
+
+@router.get("/annual-years")
+def finance_annual_years(
+    entity_id: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return years for which the selected company has uploaded statements.
+
+    Pending batches are deliberately included so an uploaded but not yet
+    confirmed quarter is visible to management instead of silently hiding the
+    year.  Annual figures themselves remain confirmed-only.
+    """
+    _require_finance_view(user)
+    _entity_by_id(db, entity_id)
+    batches = db.scalars(
+        select(BankStatementBatch).where(BankStatementBatch.entity_id == entity_id)
+    ).all()
+    years = sorted(
+        {
+            point.year
+            for item in batches
+            for point in (item.period_start, item.period_end)
+            if point is not None
+        },
+        reverse=True,
+    )
+    current_year = date.today().year
+    return {
+        "entity_id": entity_id,
+        "years": years,
+        "default_view": "realtime",
+        "current_year": current_year,
+    }
+
+
+@router.get("/annual")
+def finance_annual_dashboard(
+    entity_id: str,
+    year: int = Query(ge=2000, le=2100),
+    include_internal_transfers: bool = Query(default=False),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Natural-year, confirmed-only cashflow analysis for one legal entity."""
+    _require_finance_view(user)
+    entity = _entity_by_id(db, entity_id)
+    period_start = date(year, 1, 1)
+    period_end = date(year, 12, 31)
+
+    all_entity_transactions = db.scalars(
+        select(BankTransaction).where(BankTransaction.entity_id == entity_id)
+    ).all()
+    confirmed_transactions = [
+        item for item in all_entity_transactions if item.status == "confirmed"
+    ]
+    if _refresh_auto_internal_transfers(db, confirmed_transactions):
+        db.commit()
+    operating_transactions = (
+        confirmed_transactions
+        if include_internal_transfers
+        else [item for item in confirmed_transactions if not _is_internal_transfer(item)]
+    )
+    year_transactions = [
+        item
+        for item in operating_transactions
+        if period_start <= _business_date(item.transacted_at) <= period_end
+    ]
+    raw_year_transactions = [
+        item
+        for item in confirmed_transactions
+        if period_start <= _business_date(item.transacted_at) <= period_end
+    ]
+
+    income = sum((item.income for item in year_transactions), Decimal("0"))
+    expense = sum((item.expense for item in year_transactions), Decimal("0"))
+    top_income, top_expense = _top_counterparties(year_transactions)
+
+    monthly = []
+    for month in range(1, 13):
+        rows = [
+            item
+            for item in year_transactions
+            if _business_date(item.transacted_at).month == month
+        ]
+        month_income = sum((item.income for item in rows), Decimal("0"))
+        month_expense = sum((item.expense for item in rows), Decimal("0"))
+        monthly.append({
+            "month": month,
+            "income": month_income,
+            "expense": month_expense,
+            "net": month_income - month_expense,
+            "transaction_count": len(rows),
+        })
+
+    first_by_account: dict[str, BankTransaction] = {}
+    last_by_account: dict[str, BankTransaction] = {}
+    for item in raw_year_transactions:
+        first = first_by_account.get(item.account_id)
+        if first is None or _transaction_order_key(item) < _transaction_order_key(first):
+            first_by_account[item.account_id] = item
+        last = last_by_account.get(item.account_id)
+        if last is None or _transaction_order_key(item) > _transaction_order_key(last):
+            last_by_account[item.account_id] = item
+    opening_balance = sum(
+        (
+            Decimal(item.balance) - item.income + item.expense
+            for item in first_by_account.values()
+            if item.balance is not None
+        ),
+        Decimal("0"),
+    )
+    closing_balance = sum(
+        (
+            Decimal(item.balance)
+            for item in last_by_account.values()
+            if item.balance is not None
+        ),
+        Decimal("0"),
+    )
+
+    income_rows = [item for item in year_transactions if item.income > 0]
+    expense_rows = [item for item in year_transactions if item.expense > 0]
+    daily: dict[date, dict[str, Decimal | int]] = defaultdict(
+        lambda: {"income": Decimal("0"), "expense": Decimal("0"), "count": 0}
+    )
+    for item in year_transactions:
+        business_day = _business_date(item.transacted_at)
+        daily[business_day]["income"] += item.income
+        daily[business_day]["expense"] += item.expense
+        daily[business_day]["count"] += 1
+    largest_outflow_days = [
+        {
+            "date": business_day,
+            "income": values["income"],
+            "expense": values["expense"],
+            "net": Decimal(str(values["income"])) - Decimal(str(values["expense"])),
+            "transaction_count": values["count"],
+        }
+        for business_day, values in sorted(
+            daily.items(),
+            key=lambda row: (
+                Decimal(str(row[1]["expense"])) - Decimal(str(row[1]["income"])),
+                row[0],
+            ),
+            reverse=True,
+        )[:10]
+        if Decimal(str(values["expense"])) > Decimal(str(values["income"]))
+    ]
+
+    batches = db.scalars(
+        select(BankStatementBatch).where(BankStatementBatch.entity_id == entity_id)
+    ).all()
+    year_batches = [
+        item
+        for item in batches
+        if (
+            (item.period_start and item.period_start.year == year)
+            or (item.period_end and item.period_end.year == year)
+        )
+    ]
+    confirmed_batches = [item for item in year_batches if item.status == "confirmed"]
+    pending_batches = [item for item in year_batches if item.status != "confirmed"]
+    confirmed_dates = [
+        point
+        for item in confirmed_batches
+        for point in (item.period_start, item.period_end)
+        if point is not None
+    ]
+    internal_rows = [item for item in raw_year_transactions if _is_internal_transfer(item)]
+    anomalies = _transaction_alerts(
+        operating_transactions, period_start, period_end
+    )
+    unclassified_names = {"", "待确认", "未分类", "待分类"}
+    unclassified_rows = [
+        item
+        for item in year_transactions
+        if (item.category or "").strip() in unclassified_names
+    ]
+    gross_flow = income + expense
+    unclassified_amount = sum(
+        (item.income + item.expense for item in unclassified_rows), Decimal("0")
+    )
+
+    return {
+        "confidentiality": "L4",
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "year": year,
+        "period_start": period_start,
+        "period_end": period_end,
+        "confirmed_only": True,
+        "include_internal_transfers": include_internal_transfers,
+        "coverage": {
+            "data_complete": bool(year_batches) and not pending_batches,
+            "confirmed_period_start": min(confirmed_dates) if confirmed_dates else None,
+            "confirmed_period_end": max(confirmed_dates) if confirmed_dates else None,
+            "confirmed_batch_count": len(confirmed_batches),
+            "pending_batch_count": len(pending_batches),
+            "pending_batches": [
+                {
+                    "id": item.id,
+                    "filename": item.original_filename,
+                    "period_start": item.period_start,
+                    "period_end": item.period_end,
+                    "status": item.status,
+                }
+                for item in sorted(
+                    pending_batches,
+                    key=lambda item: (item.period_start or period_start, item.created_at),
+                )
+            ],
+        },
+        "income": income,
+        "expense": expense,
+        "net": income - expense,
+        "opening_balance": opening_balance,
+        "closing_balance": closing_balance,
+        "balance_change": closing_balance - opening_balance,
+        "transaction_count": len(year_transactions),
+        "income_transaction_count": len(income_rows),
+        "expense_transaction_count": len(expense_rows),
+        "average_income": (
+            income / Decimal(len(income_rows)) if income_rows else Decimal("0")
+        ),
+        "average_expense": (
+            expense / Decimal(len(expense_rows)) if expense_rows else Decimal("0")
+        ),
+        "largest_income": max((item.income for item in income_rows), default=Decimal("0")),
+        "largest_expense": max((item.expense for item in expense_rows), default=Decimal("0")),
+        "counterparty_count": len({
+            _normalise_counterparty(item.counterparty)
+            for item in year_transactions
+            if _normalise_counterparty(item.counterparty)
+        }),
+        "monthly": monthly,
+        "top_income": top_income,
+        "top_expense": top_expense,
+        "income_concentration": _counterparty_concentration(
+            year_transactions, "income", limit=5
+        ),
+        "expense_concentration": _counterparty_concentration(
+            year_transactions, "expense", limit=5
+        ),
+        "income_categories": _annual_category_breakdown(year_transactions, "income"),
+        "expense_categories": _annual_category_breakdown(year_transactions, "expense"),
+        "largest_outflow_days": largest_outflow_days,
+        "anomaly_count": len(anomalies),
+        "anomalies": anomalies[:20],
+        "unclassified": {
+            "count": len(unclassified_rows),
+            "amount": unclassified_amount,
+            "ratio": (
+                (unclassified_amount / gross_flow).quantize(Decimal("0.0001"))
+                if gross_flow > 0
+                else Decimal("0")
+            ),
+        },
+        "internal_transfers": {
+            "count": len(internal_rows),
+            "income": sum((item.income for item in internal_rows), Decimal("0")),
+            "expense": sum((item.expense for item in internal_rows), Decimal("0")),
+        },
+    }
+
+
 @router.get("/dashboard")
 def finance_dashboard(
     from_date: date | None = None,
