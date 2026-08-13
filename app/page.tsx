@@ -1084,7 +1084,7 @@ function FinanceRankingPanel({
               <i><span style={{ width: `${Math.max(3, (Number(item.amount) || 0) / rankMax * 100)}%` }} /></i>
               <small>{item.transaction_count} 笔{directionLabel}</small>
             </div>
-            <em className={direction === "income" ? "positive" : "negative"}>{formatMoney(item.amount)}</em>
+            <em className={direction === "income" ? "financeIncomeAmount" : "financeExpenseAmount"}>{formatMoney(item.amount)}</em>
           </article>
         ))}
         {!items.length && <p className="mutedText">{emptyText}</p>}
@@ -1143,7 +1143,7 @@ function FinanceAlertsPanel({
               <p>{(item.reasons || []).join(" · ") || "该笔流水需要人工核验。"}</p>
               <small title={item.summary || ""}>{item.summary || "流水摘要待补全"}</small>
               <footer>
-                <b className={Number(item.income) > 0 ? "positive" : "negative"}>{Number(item.income) > 0 ? "收入 " : "支出 "}{formatMoney(item.amount)}</b>
+                <b className={Number(item.income) > 0 ? "financeIncomeAmount" : "financeExpenseAmount"}>{Number(item.income) > 0 ? "收入 " : "支出 "}{formatMoney(item.amount)}</b>
                 <span>{item.status === "confirmed" ? "已确认" : "待确认"}</span>
                 <button type="button" onClick={() => void onSelectBatch(item.batch_id)}>查看流水</button>
               </footer>
@@ -6445,7 +6445,7 @@ function FinanceHealthPanel({
         </article>
         <article>
           <span>最大单日净流出</span>
-          <strong className="negative">{financeOptionalMoney(maximumDailyOutflow)}</strong>
+          <strong className="financeExpenseAmount">{financeOptionalMoney(maximumDailyOutflow)}</strong>
           <small>{maximumDailyOutflowDate ? `发生于 ${financeDate(maximumDailyOutflowDate)}` : "按自然日汇总收支"}</small>
         </article>
         <article>
@@ -6695,7 +6695,7 @@ function FinanceWorkspace({
             <PanelTitle eyebrow="CASH LEDGER" title="账外现金记录" />
             <div className="cashEntryList">
               {cashEntries.map((item) => (
-                <article key={item.id}><span>{item.transaction_date}</span><div><strong>{item.company} · {item.category}</strong><small>{item.cash_account} · {item.note}</small></div><b className={item.direction === "expense" ? "negative" : "positive"}>{item.direction === "expense" ? "−" : "+"}{formatMoney(item.amount)}</b></article>
+                <article key={item.id}><span>{item.transaction_date}</span><div><strong>{item.company} · {item.category}</strong><small>{item.cash_account} · {item.note}</small></div><b className={item.direction === "expense" ? "financeExpenseAmount" : "financeIncomeAmount"}>{item.direction === "expense" ? "−" : "+"}{formatMoney(item.amount)}</b></article>
               ))}
               {!cashEntries.length && <p className="mutedText">暂无账外现金记录。</p>}
             </div>
@@ -6728,8 +6728,8 @@ function FinanceWorkspace({
       </section>
 
       <section className="financeMetricGrid">
-        <article><span>账内上周收入</span><strong className="positive">{formatMoney(dashboard?.income ?? 0)}</strong><small>{weekRange} · 仅银行流水</small></article>
-        <article><span>账内上周支出</span><strong className="negative">{formatMoney(dashboard?.expense ?? 0)}</strong><small>{weekRange} · 不含账外现金</small></article>
+        <article><span>账内上周收入</span><strong className="financeIncomeAmount">{formatMoney(dashboard?.income ?? 0)}</strong><small>{weekRange} · 仅银行流水</small></article>
+        <article><span>账内上周支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.expense ?? 0)}</strong><small>{weekRange} · 不含账外现金</small></article>
         <article><span>账内上周净流入</span><strong>{formatMoney(dashboard?.net ?? 0)}</strong><small>{weekRange} · 已确认口径</small></article>
       </section>
 
@@ -6778,8 +6778,8 @@ function FinanceWorkspace({
       <section className="financeMonthlySection">
         <header><div><p>PREVIOUS MONTH</p><h2>账内上月经营流量</h2></div><span>{monthRange}</span></header>
         <div className="financeMonthlyGrid">
-          <article><span>账内上月收入</span><strong className="positive">{formatMoney(dashboard?.previous_month?.income ?? 0)}</strong><small>{monthRange} · 仅银行流水</small></article>
-          <article><span>账内上月支出</span><strong className="negative">{formatMoney(dashboard?.previous_month?.expense ?? 0)}</strong><small>{monthRange} · 不含账外现金</small></article>
+          <article><span>账内上月收入</span><strong className="financeIncomeAmount">{formatMoney(dashboard?.previous_month?.income ?? 0)}</strong><small>{monthRange} · 仅银行流水</small></article>
+          <article><span>账内上月支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.previous_month?.expense ?? 0)}</strong><small>{monthRange} · 不含账外现金</small></article>
           <article><span>账内上月净流入</span><strong>{formatMoney(dashboard?.previous_month?.net ?? 0)}</strong><small>{monthRange} · 已确认口径</small></article>
         </div>
       </section>
@@ -6815,8 +6815,8 @@ function FinanceWorkspace({
       <section className="financeMonthlySection financeYearSection">
         <header><div><p>YEAR TO DATE</p><h2>账内本年累计经营流量</h2></div><span>{yearRange}</span></header>
         <div className="financeMonthlyGrid">
-          <article><span>账内本年收入</span><strong className="positive">{formatMoney(dashboard?.current_year?.income ?? 0)}</strong><small>{yearRange} · 仅银行流水</small></article>
-          <article><span>账内本年支出</span><strong className="negative">{formatMoney(dashboard?.current_year?.expense ?? 0)}</strong><small>{yearRange} · 不含账外现金</small></article>
+          <article><span>账内本年收入</span><strong className="financeIncomeAmount">{formatMoney(dashboard?.current_year?.income ?? 0)}</strong><small>{yearRange} · 仅银行流水</small></article>
+          <article><span>账内本年支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.current_year?.expense ?? 0)}</strong><small>{yearRange} · 不含账外现金</small></article>
           <article><span>账内本年净流入</span><strong>{formatMoney(dashboard?.current_year?.net ?? 0)}</strong><small>{yearRange} · 已确认口径</small></article>
         </div>
       </section>
@@ -6924,8 +6924,8 @@ function FinanceWorkspace({
                           </button>
                         )}
                       </td>
-                      <td className="positive">{Number(item.income) ? formatMoney(item.income) : "—"}</td>
-                      <td className="negative">{Number(item.expense) ? formatMoney(item.expense) : "—"}</td>
+                      <td className="financeIncomeAmount">{Number(item.income) ? formatMoney(item.income) : "—"}</td>
+                      <td className="financeExpenseAmount">{Number(item.expense) ? formatMoney(item.expense) : "—"}</td>
                       <td>{item.balance === null ? "—" : formatMoney(item.balance)}</td>
                       <td><span>{item.category || "未分类"}{item.pm_project_id ? " · 已关联项目" : ""}</span></td>
                     </tr>
@@ -6966,7 +6966,7 @@ function FinanceWorkspace({
                     <time>{formatShanghaiDateTime(item.transacted_at)}</time>
                     <strong>{item.counterparty || "未识别对方单位"}</strong>
                   </div>
-                  <span className={Number(item.income) ? "positive" : "negative"}>
+                  <span className={Number(item.income) ? "financeIncomeAmount" : "financeExpenseAmount"}>
                     {Number(item.income) ? `收入 ${formatMoney(item.income)}` : `支出 ${formatMoney(item.expense)}`}
                   </span>
                 </header>

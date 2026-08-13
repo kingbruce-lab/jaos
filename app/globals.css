@@ -129,8 +129,8 @@
 .financeRankList strong { overflow: hidden; color: #253248; font-size: 13px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .financeRankList small { margin-top: 5px; color: #929cab; font-size: 11px; }
 .financeRankList i { display: block; overflow: hidden; height: 4px; margin-top: 7px; border-radius: 6px; background: #edf1f5; }
-.financeRankList i span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #1667aa, #4aa6d4); }
-.expenseRankingPanel .financeRankList i span { background: linear-gradient(90deg, #c93643, #ee7a83); }
+.financeRankList i span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #c93643, #ee7a83); }
+.expenseRankingPanel .financeRankList i span { background: linear-gradient(90deg, #087b59, #4bb58c); }
 .financeRankList em { color: #17243a; font-size: 13px; font-style: normal; font-weight: 850; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .financeAlertIntro { margin: 10px 0 12px; color: #4d5c71; font-size: 13px; line-height: 1.65; }
 .financeAlertRuleChips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
@@ -164,6 +164,8 @@
 .financeNoAnomaly small { max-width: 280px; color: #7a8796; font-size: 11px; line-height: 1.55; text-align: center; }
 .positive { color: #128159 !important; }
 .negative { color: #c83b45 !important; }
+.financeIncomeAmount { color: #c83b45 !important; }
+.financeExpenseAmount { color: #128159 !important; }
 .financeDashboardGrid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, .75fr); gap: 18px; }
 .financeTrendPanel, .financeAccountPanel, .financeLedgerPanel, .transactionPanel, .compactLedgerPanel { padding: 26px; }
 .financeTrendChart { display: grid; gap: 8px; margin-top: 18px; }
@@ -171,8 +173,8 @@
 .trendRow > b { text-align: right; font-variant-numeric: tabular-nums; }
 .trendBars { display: grid; gap: 3px; }
 .trendBars i { display: block; height: 5px; min-width: 2px; border-radius: 4px; }
-.trendBars .income, .trendLegend .income { background: linear-gradient(90deg, #1667aa, #3c9bd1); }
-.trendBars .expense, .trendLegend .expense { background: linear-gradient(90deg, #d91e2b, #ee7880); }
+.trendBars .income, .trendLegend .income { background: linear-gradient(90deg, #c93643, #ee7a83); }
+.trendBars .expense, .trendLegend .expense { background: linear-gradient(90deg, #087b59, #4bb58c); }
 .trendLegend { display: flex; justify-content: flex-end; gap: 16px; color: #8a93a2; font-size: 10px; }
 .trendLegend span { display: flex; align-items: center; gap: 5px; }
 .trendLegend i { width: 16px; height: 4px; border-radius: 4px; }
