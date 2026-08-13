@@ -172,7 +172,7 @@ def load_settings() -> Settings:
         gateway_api_key=os.getenv("ORIGINGAME_API_KEY") or None,
         embedding_model=os.getenv(
             "JINGAO_EMBEDDING_MODEL",
-            "gemini-embedding-2",
+            "text-embedding-3-large",
         ),
         embedding_enabled=_as_bool("JINGAO_EMBEDDING_ENABLED", False),
         embedding_l3_enabled=_as_bool("JINGAO_EMBEDDING_L3_ENABLED", False),

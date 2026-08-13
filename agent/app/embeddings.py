@@ -8,6 +8,7 @@ from typing import Callable
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session, joinedload
 
 from .config import settings
@@ -17,6 +18,8 @@ from .models import (
     ChunkEmbedding,
     Document,
     SourceHealth,
+    new_id,
+    utcnow,
 )
 from .source_integrity import source_is_available
 
@@ -208,27 +211,62 @@ def index_pending_embeddings(
                 )
                 if len(vectors) != len(batch):
                     raise EmbeddingServiceError("embedding_count_mismatch")
-                for (chunk, text_hash, _vector_text), vector in zip(
-                    batch,
-                    vectors,
-                    strict=True,
-                ):
-                    row = existing.get(chunk.id)
-                    if row:
-                        row.text_hash = text_hash
-                        row.dimensions = len(vector)
-                        row.embedding = vector
-                    else:
-                        row = ChunkEmbedding(
-                            chunk_id=chunk.id,
-                            model_name=settings.embedding_model,
-                            dimensions=len(vector),
-                            text_hash=text_hash,
-                            embedding=vector,
+                if db.get_bind().dialect.name == "postgresql":
+                    now = utcnow()
+                    values = []
+                    for (chunk, text_hash, _vector_text), vector in zip(
+                        batch,
+                        vectors,
+                        strict=True,
+                    ):
+                        current = existing.get(chunk.id)
+                        values.append(
+                            {
+                                "id": current.id if current else new_id(),
+                                "chunk_id": chunk.id,
+                                "model_name": settings.embedding_model,
+                                "dimensions": len(vector),
+                                "text_hash": text_hash,
+                                "embedding": vector,
+                                "created_at": current.created_at if current else now,
+                                "updated_at": now,
+                            }
                         )
-                        db.add(row)
-                        existing[chunk.id] = row
-                    indexed += 1
+                    statement = postgresql_insert(ChunkEmbedding).values(values)
+                    db.execute(
+                        statement.on_conflict_do_update(
+                            constraint="uq_chunk_embedding_model",
+                            set_={
+                                "dimensions": statement.excluded.dimensions,
+                                "text_hash": statement.excluded.text_hash,
+                                "embedding": statement.excluded.embedding,
+                                "updated_at": statement.excluded.updated_at,
+                            },
+                        )
+                    )
+                    indexed += len(values)
+                else:
+                    for (chunk, text_hash, _vector_text), vector in zip(
+                        batch,
+                        vectors,
+                        strict=True,
+                    ):
+                        row = existing.get(chunk.id)
+                        if row:
+                            row.text_hash = text_hash
+                            row.dimensions = len(vector)
+                            row.embedding = vector
+                        else:
+                            row = ChunkEmbedding(
+                                chunk_id=chunk.id,
+                                model_name=settings.embedding_model,
+                                dimensions=len(vector),
+                                text_hash=text_hash,
+                                embedding=vector,
+                            )
+                            db.add(row)
+                            existing[chunk.id] = row
+                        indexed += 1
                 db.commit()
     except EmbeddingServiceError as exc:
         db.rollback()

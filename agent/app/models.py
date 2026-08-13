@@ -6,7 +6,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -28,6 +28,12 @@ class PortableVector(TypeDecorator):
 
     impl = Text
     cache_ok = True
+
+    class comparator_factory(TypeDecorator.Comparator):
+        def cosine_distance(self, other):
+            """Expose pgvector cosine distance on PostgreSQL."""
+
+            return self.op("<=>", return_type=Float)(other)
 
     def load_dialect_impl(self, dialect):
         if dialect.name == "postgresql":

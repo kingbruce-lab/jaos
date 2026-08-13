@@ -33,6 +33,9 @@ from .contracts import CONTRACT_DOMAINS
 CONFIDENTIALITY_RANK = {"L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5}
 CURRENT_HINTS = ("当前", "最新", "现在", "现行", "公司介绍", "公司简介", "目前")
 ASCII_WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+COMPACT_MATCH_RE = re.compile(r"[^0-9a-z\u4e00-\u9fff]+")
+LEXICAL_RRF_WEIGHT = 1.25
+SEMANTIC_RRF_WEIGHT = 1.0
 CJK_RE = re.compile(r"[\u3400-\u9fff]+")
 
 
@@ -145,7 +148,9 @@ def _score(query: str, terms: list[str], chunk: Chunk, document: Document, proje
     matched: list[str] = []
     exact_query_match = False
     if query_lower and query_lower in text:
-        score += 10.0
+        # Full-phrase evidence is stronger than accumulated bigram overlap on
+        # a different page of the same document.
+        score += 80.0
         exact_query_match = True
     if query_lower and query_lower in title:
         score += 14.0
@@ -153,6 +158,15 @@ def _score(query: str, terms: list[str], chunk: Chunk, document: Document, proje
     if query_lower and query_lower in project_name:
         score += 16.0
         exact_query_match = True
+    compact_query = COMPACT_MATCH_RE.sub("", query_lower)
+    if len(compact_query) >= 8:
+        compact_text = COMPACT_MATCH_RE.sub("", text)
+        if compact_query in compact_text and not exact_query_match:
+            # OCR and spreadsheets frequently insert or remove whitespace and
+            # punctuation. Treat an otherwise exact normalized phrase as
+            # strong evidence instead of letting generic location bigrams win.
+            score += 80.0
+            exact_query_match = True
     for term in terms:
         count = min(text.count(term), 4)
         title_count = title.count(term)
@@ -290,6 +304,18 @@ def search(
         row.content_hash: row
         for row in db.scalars(select(SourceHealth)).all()
     }
+    availability_by_hash: dict[str, bool] = {}
+
+    def document_source_available(document: Document) -> bool:
+        cached = availability_by_hash.get(document.content_hash)
+        if cached is not None:
+            return cached
+        available = source_is_available(
+            document.file_blob,
+            source_health.get(document.content_hash),
+        )
+        availability_by_hash[document.content_hash] = available
+        return available
     lexical_hits: list[SearchHit] = []
     # Unauthorized rows never enter either candidate set. Keeping this at zero
     # also avoids turning administrative diagnostics into a document-count
@@ -302,12 +328,7 @@ def search(
         score, matched = _score(query, terms, chunk, document, project)
         if score <= 0:
             continue
-        if (
-            not source_is_available(
-                document.file_blob,
-                source_health.get(document.content_hash),
-            )
-        ):
+        if not document_source_available(document):
             unavailable_document_ids.add(document.id)
             continue
         if not _status_allowed(document, scope):
@@ -327,7 +348,7 @@ def search(
             item.score,
             item.document.knowledge_status == "current",
             item.document.is_final,
-            item.chunk.page,
+            -item.chunk.page,
         ),
         reverse=True,
     )
@@ -378,22 +399,41 @@ def search(
                     embedding_query = embedding_query.where(
                         Project.domain.not_in(CONTRACT_DOMAINS)
                     )
-                embedding_rows = db.scalars(embedding_query).all()
-                for row in embedding_rows:
+                if db.bind is not None and db.bind.dialect.name == "postgresql":
+                    distance = ChunkEmbedding.embedding.cosine_distance(
+                        query_vector
+                    )
+                    ranked_query = (
+                        embedding_query
+                        .add_columns(distance.label("cosine_distance"))
+                        .order_by(distance.asc())
+                        .limit(200)
+                    )
+                    embedding_rows = [
+                        (row, float(distance_value))
+                        for row, distance_value in db.execute(ranked_query).all()
+                    ]
+                else:
+                    embedding_rows = [
+                        (row, None)
+                        for row in db.scalars(embedding_query).all()
+                    ]
+                for row, distance_value in embedding_rows:
                     chunk = row.chunk
                     document = chunk.document
                     project = document.project
                     # SQL has already applied authorization, knowledge status
                     # and L4/L5 exclusion before rows reach similarity scoring.
                     if (
-                        not source_is_available(
-                            document.file_blob,
-                            source_health.get(document.content_hash),
-                        )
+                        not document_source_available(document)
                         or not _status_allowed(document, scope)
                     ):
                         continue
-                    similarity = cosine_similarity(query_vector, row.embedding)
+                    similarity = (
+                        1.0 - distance_value
+                        if distance_value is not None
+                        else cosine_similarity(query_vector, row.embedding)
+                    )
                     if similarity <= 0:
                         continue
                     semantic_hits.append(
@@ -428,7 +468,7 @@ def search(
             for rank, hit in enumerate(lexical_hits[:100], start=1):
                 by_chunk[hit.chunk.id] = hit
                 rrf_scores[hit.chunk.id] = rrf_scores.get(hit.chunk.id, 0.0) + (
-                    1.0 / (60 + rank)
+                    LEXICAL_RRF_WEIGHT / (60 + rank)
                 )
         for rank, hit in enumerate(semantic_hits[:100], start=1):
             current = by_chunk.get(hit.chunk.id)
@@ -437,7 +477,7 @@ def search(
             else:
                 by_chunk[hit.chunk.id] = hit
             rrf_scores[hit.chunk.id] = rrf_scores.get(hit.chunk.id, 0.0) + (
-                1.0 / (60 + rank)
+                SEMANTIC_RRF_WEIGHT / (60 + rank)
             )
         hits = []
         for chunk_id, hit in by_chunk.items():
@@ -515,15 +555,16 @@ def search(
         }
         for hit in selected_documents
     ]
+    # Keep one result card per file while preserving page-level citations.
     citations = [
         {
-            "document_id": item["document_id"],
-            "title": item["title"],
-            "version": item["version"],
-            "page": item["page"],
-            "citation_basis": item["citation_basis"],
+            "document_id": hit.document.id,
+            "title": hit.document.title,
+            "version": hit.document.version,
+            "page": hit.chunk.page,
+            "citation_basis": hit.document.citation_basis,
         }
-        for item in results
+        for hit in selected
     ]
     if not results:
         answer = "资料中未找到"

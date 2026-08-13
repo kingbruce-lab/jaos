@@ -161,7 +161,48 @@ def test_search_groups_multiple_matching_pages_from_the_same_document(
 
     assert len(result["results"]) == 1
     assert set(result["results"][0]["matched_pages"]) == {1, 2, 3}
+    assert {(item["document_id"], item["page"]) for item in result["citations"]} == {
+        (document.id, 1),
+        (document.id, 2),
+        (document.id, 3),
+    }
     assert "找到 1 条" in result["answer"]
+
+
+def test_source_availability_is_checked_once_per_document(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"test")
+    db, founder, _employee = seeded_db(str(source))
+    document = db.scalar(select(Document))
+    db.add(
+        Chunk(
+            document=document,
+            page=3,
+            chunk_index=1,
+            text="second matching page",
+        )
+    )
+    db.commit()
+    calls = 0
+    original = retrieval.source_is_available
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(retrieval, "source_is_available", counted)
+    result = search(
+        db,
+        user=founder,
+        query="second matching page",
+        requested_scope="history",
+        requested_retrieval="exact",
+        generate=False,
+    )
+
+    assert result["results"]
+    assert calls == 1
 
 
 def test_candidate_is_not_searchable_until_confirmed(tmp_path) -> None:
@@ -412,7 +453,7 @@ def test_semantic_failure_degrades_to_exact_without_losing_citations(
     result = search(
         db,
         user=founder,
-        query="高校电竞培训",
+        query="高校 课程 实训",
         requested_scope="history",
         requested_retrieval="hybrid",
     )
@@ -572,3 +613,26 @@ def test_l3_result_stays_local_without_founder_outbound_switch(
     assert len(result["results"]) == 1
     assert skipped_audit is not None
     assert json.loads(skipped_audit.document_ids_json) == []
+def test_score_treats_spacing_and_punctuation_variants_as_exact_match() -> None:
+    chunk = SimpleNamespace(
+        text="14:55 2025.07.29 星期二 北京市 · JDG 英特尔电子竞技中心",
+    )
+    document = SimpleNamespace(
+        title="现场照片",
+        is_final=False,
+        role="material",
+        knowledge_status="approved",
+    )
+    project = SimpleNamespace(name="英雄联盟项目")
+
+    score, _matched = retrieval._score(
+        "14:55 2025.07.29星期二北京市·JDG英特尔电子竞技中心",
+        retrieval.query_terms(
+            "14:55 2025.07.29星期二北京市·JDG英特尔电子竞技中心"
+        ),
+        chunk,
+        document,
+        project,
+    )
+
+    assert score >= 80

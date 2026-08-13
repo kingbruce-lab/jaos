@@ -1002,6 +1002,7 @@ def run_technical_evaluation(
             requested_retrieval="exact",
             limit=5,
             audit=False,
+            generate=False,
         )
         latencies.append((time.perf_counter() - started) * 1000)
         citation_keys = {
@@ -1033,6 +1034,7 @@ def run_technical_evaluation(
             requested_retrieval="exact",
             limit=5,
             audit=False,
+            generate=False,
         )
         if not result["results"] and result["answer"] == "资料中未找到":
             refusal_passed += 1
@@ -1061,10 +1063,16 @@ def run_technical_evaluation(
             requested_retrieval="exact",
             limit=5,
             audit=False,
+            generate=False,
         )
+        # The same phrase can legitimately occur in an authorized lower-level
+        # document. That is not a permission leak. Fail only if the restricted
+        # source itself is returned or hidden-corpus diagnostics are exposed.
+        returned_document_ids = {
+            item["document_id"] for item in result["results"]
+        }
         passed = (
-            not result["results"]
-            and result["answer"] == "资料中未找到"
+            case["expected_document_id"] not in returned_document_ids
             and result["denied_count"] == 0
             and result["unavailable_count"] == 0
         )

@@ -22,6 +22,7 @@ from .evaluation import (
     run_concurrency_evaluation,
     run_technical_evaluation,
 )
+from .recall_evaluation import run_recall_quality_evaluation
 from .ingest import ingest_manifest, scan_inbox
 from .maintained_artifacts import run_due_artifact_reviews
 from .models import AuditLog, Chunk, Document, InboxIssue, Project, User
@@ -152,6 +153,25 @@ def command_concurrency() -> int:
     return 0 if report["status"] == "passed" else 1
 
 
+def command_recall_evaluate(
+    mode: str,
+    max_cases: int,
+    limit: int,
+    label: str,
+) -> int:
+    init_database()
+    with SessionLocal() as db:
+        report = run_recall_quality_evaluation(
+            db,
+            mode=mode,
+            max_cases=max_cases,
+            limit=limit,
+            label=label,
+        )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def command_governance_ai(actor: str, apply_changes: bool) -> int:
     from .main import ai_classify_governance_documents
     from .schemas import GovernanceAIClassifyRequest
@@ -256,6 +276,15 @@ def main() -> int:
     embed_parser.add_argument("--force", action="store_true")
     subparsers.add_parser("evaluate")
     subparsers.add_parser("concurrency")
+    recall_parser = subparsers.add_parser("recall-evaluate")
+    recall_parser.add_argument(
+        "--mode",
+        choices=("intended", "exact", "hybrid", "semantic"),
+        default="intended",
+    )
+    recall_parser.add_argument("--max-cases", type=int, default=150)
+    recall_parser.add_argument("--limit", type=int, default=8, choices=range(1, 21))
+    recall_parser.add_argument("--label", default="manual")
     governance_parser = subparsers.add_parser("governance-ai")
     governance_parser.add_argument("--actor", default="founder")
     governance_parser.add_argument("--apply", action="store_true")
@@ -293,6 +322,13 @@ def main() -> int:
         return command_evaluate()
     if args.command == "concurrency":
         return command_concurrency()
+    if args.command == "recall-evaluate":
+        return command_recall_evaluate(
+            args.mode,
+            max(1, min(args.max_cases, 150)),
+            args.limit,
+            args.label,
+        )
     if args.command == "governance-ai":
         return command_governance_ai(args.actor, args.apply)
     if args.command == "business-gold-generate":

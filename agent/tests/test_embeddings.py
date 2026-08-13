@@ -63,6 +63,14 @@ def test_production_embedding_table_uses_pgvector() -> None:
     assert "VECTOR" in statement
 
 
+def test_portable_vector_exposes_postgres_cosine_distance() -> None:
+    statement = select(ChunkEmbedding.id).order_by(
+        ChunkEmbedding.embedding.cosine_distance([1.0, 0.0])
+    )
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    assert "<=>" in compiled
+
+
 def test_indexer_never_sends_l4_l5_and_defaults_l3_to_local_only(
     tmp_path,
     monkeypatch,

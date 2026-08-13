@@ -64,6 +64,7 @@ next-env.d.ts
 **/__pycache__/
 *.py[cod]
 /agent/.local/
+/artifacts/recall/
 
 # Presentation template build intermediates
 /build/pptx-template/node_modules/
