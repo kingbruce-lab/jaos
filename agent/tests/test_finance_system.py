@@ -232,6 +232,10 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
             f"/v1/finance/statements/{first.json()['id']}/confirm"
         )
         assert confirmed.status_code == 200
+        confirmed_batch = client.get("/v1/finance/statements").json()[0]
+        assert confirmed_batch["status"] == "confirmed"
+        assert confirmed_batch["confirmer"] == "财务"
+        assert confirmed_batch["confirmed_at"] is not None
 
         dashboard = client.get(
             "/v1/finance/dashboard?from_date=2026-08-01&to_date=2026-08-07"

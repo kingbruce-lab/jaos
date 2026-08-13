@@ -1148,6 +1148,11 @@ def _batch_payload(batch: BankStatementBatch, db: Session) -> dict:
     entity = db.get(BusinessEntity, batch.entity_id)
     account = db.get(FinancialAccount, batch.account_id)
     uploader = db.get(User, batch.uploaded_by_user_id)
+    confirmer = (
+        db.get(User, batch.confirmed_by_user_id)
+        if batch.confirmed_by_user_id
+        else None
+    )
     return {
         "id": batch.id,
         "entity_id": batch.entity_id,
@@ -1162,6 +1167,8 @@ def _batch_payload(batch: BankStatementBatch, db: Session) -> dict:
         "duplicate_count": batch.duplicate_count,
         "error_count": batch.error_count,
         "uploader": uploader.display_name if uploader else "",
+        "confirmer": confirmer.display_name if confirmer else "",
+        "confirmed_at": batch.confirmed_at,
         "created_at": batch.created_at,
     }
 

@@ -408,6 +408,8 @@ type FinanceBatch = {
   duplicate_count: number;
   error_count: number;
   uploader: string;
+  confirmer: string;
+  confirmed_at: string | null;
   created_at: string;
 };
 
@@ -6882,6 +6884,14 @@ function FinanceWorkspace({
 
       <section className="panel financeLedgerPanel">
         <PanelTitle eyebrow="RECONCILIATION" title="银行流水批次" />
+        <div className="noticeBar financeConfirmationNotice">
+          <strong>{canEditBank ? "财务核对确认" : "确认责任说明"}</strong>
+          <span>
+            {canEditBank
+              ? "请在逐条核对日期、对方、收支金额和余额后确认；确认后流水进入财务分析。"
+              : "银行流水由财务负责人上传、修正并确认；管理账号查看确认结果和审计记录。"}
+          </span>
+        </div>
         <div className="financeBatchList">
           {batches.map((item) => (
             <article className={selectedBatch === item.id ? "active" : ""} key={item.id}>
@@ -6889,8 +6899,14 @@ function FinanceWorkspace({
                 <strong>{item.company}</strong>
                 <span>{item.bank_name} {item.account} · {item.period_start} 至 {item.period_end}</span>
                 <small>{item.filename} · 上传者 {item.uploader} · {item.row_count} 条 · 去重 {item.duplicate_count} 条</small>
+                {item.status === "confirmed" && (
+                  <small className="financeConfirmationMeta">
+                    财务确认人 {item.confirmer || "未记录"}
+                    {item.confirmed_at ? ` · ${formatShanghaiDateTime(item.confirmed_at)}` : ""}
+                  </small>
+                )}
               </button>
-              <b className={`statusPill ${item.status}`}>{item.status === "confirmed" ? "已确认" : "待确认"}</b>
+              <b className={`statusPill ${item.status}`}>{item.status === "confirmed" ? "财务已确认" : "待财务确认"}</b>
               {canEditBank && item.status !== "confirmed" && (
                 <button type="button" className="secondaryButton" disabled={busy === `confirm-${item.id}`} onClick={() => void onConfirmBatch(item.id)}>确认流水</button>
               )}
@@ -6927,7 +6943,7 @@ function FinanceWorkspace({
                       <td className="financeIncomeAmount">{Number(item.income) ? formatMoney(item.income) : "—"}</td>
                       <td className="financeExpenseAmount">{Number(item.expense) ? formatMoney(item.expense) : "—"}</td>
                       <td>{item.balance === null ? "—" : formatMoney(item.balance)}</td>
-                      <td><span>{item.category || "未分类"}{item.pm_project_id ? " · 已关联项目" : ""}</span></td>
+                      <td><span>{(!item.category || item.category === "待确认") ? "未分类" : item.category}{item.pm_project_id ? " · 已关联项目" : ""}</span></td>
                     </tr>
                     {editingTransactionId === item.id && canEditBank && selected.status !== "confirmed" && (
                       <tr className="transactionEditorRow">
@@ -6973,7 +6989,7 @@ function FinanceWorkspace({
                 <p>{item.summary || "无摘要"}</p>
                 <dl>
                   <div><dt>余额</dt><dd>{item.balance === null ? "—" : formatMoney(item.balance)}</dd></div>
-                  <div><dt>分类</dt><dd>{item.category || "未分类"}</dd></div>
+                  <div><dt>分类</dt><dd>{(!item.category || item.category === "待确认") ? "未分类" : item.category}</dd></div>
                   <div><dt>项目</dt><dd>{item.pm_project_id ? "已关联项目" : "未关联"}</dd></div>
                 </dl>
                 {canEditBank && selected.status !== "confirmed" && (

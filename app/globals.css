@@ -201,12 +201,14 @@
 .fileInputCard input { padding: 7px 0 0; border: 0; background: transparent; }
 .full { width: 100%; }
 .financeBatchList { display: grid; gap: 9px; margin-top: 16px; }
+.financeConfirmationNotice { margin-top: 16px; margin-bottom: 0; }
 .financeBatchList article { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid #e6e9ee; border-radius: 10px; }
 .financeBatchList article.active { border-color: #6a9ac5; box-shadow: 0 0 0 3px rgba(31,104,166,.08); }
 .batchMain { min-width: 0; padding: 0; border: 0; text-align: left; background: transparent; }
 .batchMain strong, .batchMain span, .batchMain small { display: block; }
 .batchMain span { margin: 4px 0; color: #687387; font-size: 11px; }
 .batchMain small { color: #9aa2ae; font-size: 9px; }
+.batchMain .financeConfirmationMeta { margin-top: 4px; color: #287252; font-weight: 750; }
 .statusPill { padding: 6px 9px; border-radius: 20px; color: #ae6a00; background: #fff3dc; font-size: 10px; white-space: nowrap; }
 .statusPill.confirmed { color: #12764e; background: #e7f7ef; }
 .secondaryButton { border: 1px solid #d8dee6; color: #33435b; background: #fff; border-radius: 8px; padding: 9px 13px; font-weight: 750; }

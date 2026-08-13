@@ -73,6 +73,13 @@ AUTO_APPROVED_ASSET_SUFFIXES = {
 }
 TEMPORARY_SUFFIXES = {".tmp", ".part", ".crdownload", ".download"}
 TEMPORARY_NAME_RE = re.compile(r"\.~#\d+$", re.IGNORECASE)
+# System-owned records are governed by their own workflow and permissions.  They
+# must never be picked up by the knowledge-library scanner merely because the
+# scanner is pointed at the shared NAS root.
+SYSTEM_MANAGED_SCAN_EXCLUSIONS = {"财务系统"}
+SYSTEM_MANAGED_SCAN_EXCLUSION_KEYS = frozenset(
+    item.casefold() for item in SYSTEM_MANAGED_SCAN_EXCLUSIONS
+)
 GENERIC_FOLDERS = {
     "99_ai入库待审核",
     "ai入库待审核",
@@ -747,6 +754,14 @@ def scan_inbox(
     for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().lower()):
         relative = path.relative_to(root)
         relative_value = relative.as_posix()
+        if (
+            relative.parts
+            and relative.parts[0].strip().casefold()
+            in SYSTEM_MANAGED_SCAN_EXCLUSION_KEYS
+        ):
+            if path.is_file():
+                counts["skipped"] += 1
+            continue
         if any(
             part.startswith(".") or part.startswith("~$")
             for part in relative.parts

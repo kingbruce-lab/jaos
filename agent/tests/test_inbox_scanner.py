@@ -96,6 +96,26 @@ def test_scan_ingests_candidate_and_deduplicates_by_content(
         db.close()
 
 
+def test_scan_skips_system_managed_finance_records(tmp_path, monkeypatch) -> None:
+    library = tmp_path / "knowledge"
+    finance_file = library / "财务系统" / "银行流水" / "京奥电竞" / "流水.xlsx"
+    finance_file.parent.mkdir(parents=True)
+    finance_file.write_bytes(b"system-managed-finance-record")
+    make_old(finance_file)
+    configure_scanner(monkeypatch, library)
+    db = scanner_db()
+    try:
+        result = ingest.scan_inbox(db, library, settle_seconds=0)
+
+        assert result["status"] == "ok"
+        assert result["counts"]["discovered"] == 0
+        assert result["counts"]["skipped"] == 1
+        assert db.scalar(select(func.count(Document.id))) == 0
+        assert db.scalar(select(func.count(InboxIssue.id))) == 0
+    finally:
+        db.close()
+
+
 def test_exact_copy_is_filtered_across_different_projects(
     tmp_path,
     monkeypatch,
