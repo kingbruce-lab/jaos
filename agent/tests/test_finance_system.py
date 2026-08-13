@@ -278,6 +278,32 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
         db.close()
 
 
+def test_finance_statement_upload_reports_read_only_storage(tmp_path, monkeypatch) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    blocked_root = tmp_path / "knowledge-is-a-file"
+    blocked_root.write_text("not a directory", encoding="utf-8")
+    finance_system.settings.knowledge_root = blocked_root
+    try:
+        response = client.post(
+            "/v1/finance/statements/upload",
+            data={
+                "company_name": "京奥电竞（北京）科技有限公司",
+                "bank_name": "测试银行",
+                "account_name": "基本户",
+                "account_number": "6222000012345678",
+            },
+            files={"file": ("2026年8月流水.xlsx", _xlsx(), "application/octet-stream")},
+        )
+        assert response.status_code == 503
+        assert response.json()["detail"] == "财务原件目录当前不可写，请联系系统管理员检查NAS挂载权限"
+        assert db.scalar(select(func.count(BankStatementBatch.id))) == 0
+        assert db.scalar(select(func.count(FinancialAccount.id))) == 0
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
 def test_finance_health_excludes_exact_internal_transfer_but_keeps_real_balance(
     tmp_path, monkeypatch
 ) -> None:

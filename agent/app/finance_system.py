@@ -1453,9 +1453,20 @@ async def upload_statement(
         / _safe_part(f"{account.bank_name}_{account.account_number_masked}", "银行账户")
         / str(year)
     )
-    target.mkdir(parents=True, exist_ok=True)
     source = target / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{secrets.token_hex(3)}_{_safe_part(filename, '流水'+suffix)}"
-    source.write_bytes(payload)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(payload)
+    except OSError as exc:
+        db.rollback()
+        try:
+            source.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=503,
+            detail="财务原件目录当前不可写，请联系系统管理员检查NAS挂载权限",
+        ) from exc
     batch = BankStatementBatch(
         entity_id=entity.id,
         account_id=account.id,
