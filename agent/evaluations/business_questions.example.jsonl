@@ -1,0 +1,4 @@
+{"id":"fact-001","category":"exact_fact","question":"【待填写：一个已经确认的公司事实问题】","scope":"current","retrieval":"exact","actor":{"role":"founder","confidentiality_ceiling":"L4"},"expected":{"document_id":"【待填写】","page":1},"approved":false}
+{"id":"case-001","category":"historical_case","question":"【待填写：一个历史案例检索问题】","scope":"history","retrieval":"exact","actor":{"role":"founder","confidentiality_ceiling":"L4"},"expected":{"document_id":"【待填写】","page":1},"approved":false}
+{"id":"refusal-001","category":"refusal","question":"【待填写：资料中明确没有答案的问题】","scope":"current","retrieval":"exact","actor":{"role":"founder","confidentiality_ceiling":"L4"},"expected":{"expect_refusal":true},"approved":false}
+{"id":"permission-001","category":"permission","question":"【待填写：只存在于 L3/L4 资料中的问题】","scope":"history","retrieval":"exact","actor":{"role":"employee","confidentiality_ceiling":"L2"},"expected":{"expect_no_leak":true},"approved":false}

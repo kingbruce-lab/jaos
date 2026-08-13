@@ -1,0 +1,259 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jingao
+      POSTGRES_USER: jingao
+      POSTGRES_PASSWORD: ${JINGAO_DB_PASSWORD:?请在NAS环境文件中设置JINGAO_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jingao -d jingao"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [internal]
+    mem_limit: 3g
+
+  agent:
+    image: jingao-agent:local
+    pull_policy: build
+    build:
+      context: ./agent
+    restart: unless-stopped
+    environment:
+      JINGAO_ENV: production
+      JINGAO_DEV_MODE: "false"
+      JINGAO_BOOTSTRAP_USERNAME: founder
+      JINGAO_BOOTSTRAP_PASSWORD: ${JINGAO_BOOTSTRAP_PASSWORD:?请设置首次管理员密码}
+      JINGAO_SESSION_HOURS: "8"
+      JINGAO_DB_HOST: db
+      JINGAO_DB_PORT: "5432"
+      JINGAO_DB_NAME: jingao
+      JINGAO_DB_USER: jingao
+      JINGAO_DB_PASSWORD: ${JINGAO_DB_PASSWORD}
+      JINGAO_DATA_DIR: /data
+      JINGAO_KNOWLEDGE_ROOT: /knowledge
+      JINGAO_INBOX_DIR: /knowledge/99_AI入库待审核
+      JINGAO_INBOX_MAX_FILE_BYTES: ${JINGAO_INBOX_MAX_FILE_BYTES:-2147483648}
+      JINGAO_SOURCE_RECONCILE_INTERVAL_SECONDS: ${JINGAO_SOURCE_RECONCILE_INTERVAL_SECONDS:-86400}
+      JINGAO_SOURCE_HEALTH_MAX_AGE_SECONDS: ${JINGAO_SOURCE_HEALTH_MAX_AGE_SECONDS:-93600}
+      JINGAO_CORS_ORIGINS: ${JINGAO_WEB_ORIGINS:-http://localhost:3000}
+      ORIGINGAME_BASE_URL: https://api.origingame.dev/v1
+      ORIGINGAME_API_KEY: ${ORIGINGAME_API_KEY:-}
+      JINGAO_PRIMARY_MODEL: grok-4.5
+      JINGAO_FALLBACK_MODEL: deepseek-v4-flash
+      JINGAO_LLM_ENABLED: ${JINGAO_LLM_ENABLED:-false}
+      JINGAO_LLM_L3_ENABLED: ${JINGAO_LLM_L3_ENABLED:-false}
+      JINGAO_LLM_TIMEOUT_SECONDS: "45"
+      JINGAO_LLM_MAX_CONTEXT_CHARACTERS: "10000"
+      JINGAO_EMBEDDING_MODEL: gemini-embedding-2
+      JINGAO_EMBEDDING_ENABLED: ${JINGAO_EMBEDDING_ENABLED:-false}
+      JINGAO_EMBEDDING_L3_ENABLED: ${JINGAO_EMBEDDING_L3_ENABLED:-false}
+      JINGAO_EMBEDDING_BATCH_SIZE: "16"
+      JINGAO_EMBEDDING_CONCURRENCY: "4"
+      JINGAO_LOGIN_MAX_ATTEMPTS: "5"
+      JINGAO_LOGIN_WINDOW_SECONDS: "900"
+      JINGAO_LOGIN_LOCKOUT_SECONDS: "900"
+      JINGAO_BACKUP_DIR: /backup
+      JINGAO_OFFSITE_STATUS_FILE: /backup/.jaos-offsite-status.json
+      JINGAO_EVALUATION_DIR: /data/evaluations
+      JINGAO_BACKUP_MAX_AGE_SECONDS: ${JINGAO_BACKUP_MAX_AGE_SECONDS:-93600}
+      JINGAO_OFFSITE_BACKUP_MAX_AGE_SECONDS: ${JINGAO_OFFSITE_BACKUP_MAX_AGE_SECONDS:-604800}
+      JINGAO_DISK_WARNING_PERCENT: ${JINGAO_DISK_WARNING_PERCENT:-80}
+      JINGAO_DISK_CRITICAL_PERCENT: ${JINGAO_DISK_CRITICAL_PERCENT:-90}
+      JINGAO_MEMORY_WARNING_PERCENT: ${JINGAO_MEMORY_WARNING_PERCENT:-80}
+      JINGAO_MEMORY_CRITICAL_PERCENT: ${JINGAO_MEMORY_CRITICAL_PERCENT:-90}
+    volumes:
+      - agent_data:/data
+      - ${JINGAO_KNOWLEDGE_PATH:?请设置NAS资料目录}:/knowledge:rw
+      - ${JINGAO_BACKUP_PATH:-./agent/backups}:/backup:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    expose: ["8000"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks: [internal]
+    mem_limit: 2g
+
+  backup:
+    image: jingao-agent:local
+    pull_policy: build
+    build:
+      context: ./agent
+    restart: unless-stopped
+    environment:
+      JINGAO_ENV: production
+      JINGAO_DEV_MODE: "false"
+      JINGAO_DB_HOST: db
+      JINGAO_DB_PORT: "5432"
+      JINGAO_DB_NAME: jingao
+      JINGAO_DB_USER: jingao
+      JINGAO_DB_PASSWORD: ${JINGAO_DB_PASSWORD}
+      JINGAO_DATA_DIR: /data
+      JINGAO_KNOWLEDGE_ROOT: /knowledge
+      JINGAO_BACKUP_DIR: /backup
+      JINGAO_BACKUP_INTERVAL_SECONDS: ${JINGAO_BACKUP_INTERVAL_SECONDS:-86400}
+      JINGAO_BACKUP_START_DELAY_SECONDS: ${JINGAO_BACKUP_START_DELAY_SECONDS:-120}
+    volumes:
+      - agent_data:/data:ro
+      - ${JINGAO_KNOWLEDGE_PATH:?请设置NAS资料目录}:/knowledge:ro
+      - ${JINGAO_BACKUP_PATH:-./agent/backups}:/backup
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        sleep "$${JINGAO_BACKUP_START_DELAY_SECONDS:-120}";
+        while true; do
+          python -m app.cli reconcile-sources;
+          python -m app.cli backup --output /backup;
+          sleep "$${JINGAO_BACKUP_INTERVAL_SECONDS:-86400}";
+        done
+    networks: [internal]
+    mem_limit: 512m
+
+  ingest:
+    image: jingao-agent:local
+    pull_policy: build
+    build:
+      context: ./agent
+    restart: unless-stopped
+    environment:
+      JINGAO_ENV: production
+      JINGAO_DEV_MODE: "false"
+      JINGAO_DB_HOST: db
+      JINGAO_DB_PORT: "5432"
+      JINGAO_DB_NAME: jingao
+      JINGAO_DB_USER: jingao
+      JINGAO_DB_PASSWORD: ${JINGAO_DB_PASSWORD}
+      JINGAO_DATA_DIR: /data
+      JINGAO_INBOX_DIR: /knowledge/99_AI入库待审核
+      JINGAO_INBOX_SCAN_INTERVAL_SECONDS: ${JINGAO_INBOX_SCAN_INTERVAL_SECONDS:-60}
+      JINGAO_INBOX_SETTLE_SECONDS: ${JINGAO_INBOX_SETTLE_SECONDS:-120}
+      JINGAO_INBOX_MAX_FILE_BYTES: ${JINGAO_INBOX_MAX_FILE_BYTES:-2147483648}
+      ORIGINGAME_BASE_URL: https://api.origingame.dev/v1
+      ORIGINGAME_API_KEY: ${ORIGINGAME_API_KEY:-}
+      JINGAO_EMBEDDING_MODEL: gemini-embedding-2
+      JINGAO_EMBEDDING_ENABLED: ${JINGAO_EMBEDDING_ENABLED:-false}
+      JINGAO_EMBEDDING_L3_ENABLED: ${JINGAO_EMBEDDING_L3_ENABLED:-false}
+      JINGAO_EMBEDDING_BATCH_SIZE: "16"
+      JINGAO_EMBEDDING_CONCURRENCY: "4"
+    volumes:
+      - agent_data:/data
+      - ${JINGAO_KNOWLEDGE_PATH:?请设置NAS资料目录}:/knowledge:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        while true; do
+          python -m app.cli scan-inbox --path /knowledge;
+          python -m app.cli derive --only-new;
+          python -m app.cli embed;
+          sleep "$${JINGAO_INBOX_SCAN_INTERVAL_SECONDS:-60}";
+        done
+    networks: [internal]
+    mem_limit: 2g
+    cpus: 2.0
+
+  reconcile:
+    image: jingao-agent:local
+    pull_policy: build
+    build:
+      context: ./agent
+    restart: unless-stopped
+    environment:
+      JINGAO_ENV: production
+      JINGAO_DEV_MODE: "false"
+      JINGAO_DB_HOST: db
+      JINGAO_DB_PORT: "5432"
+      JINGAO_DB_NAME: jingao
+      JINGAO_DB_USER: jingao
+      JINGAO_DB_PASSWORD: ${JINGAO_DB_PASSWORD}
+      JINGAO_DATA_DIR: /data
+      JINGAO_KNOWLEDGE_ROOT: /knowledge
+      JINGAO_SOURCE_RECONCILE_INTERVAL_SECONDS: ${JINGAO_SOURCE_RECONCILE_INTERVAL_SECONDS:-86400}
+    volumes:
+      - agent_data:/data
+      - ${JINGAO_KNOWLEDGE_PATH:?请设置NAS资料目录}:/knowledge:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        while true; do
+          python -m app.cli reconcile-sources --path /knowledge;
+          sleep "$${JINGAO_SOURCE_RECONCILE_INTERVAL_SECONDS:-86400}";
+        done
+    networks: [internal]
+    mem_limit: 512m
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.3.2
+    restart: unless-stopped
+    volumes:
+      - uptime_kuma_data:/app/data
+    ports:
+      - "3001:3001"
+    networks: [internal]
+    mem_limit: 384m
+
+  web:
+    image: jingao-web:local
+    pull_policy: build
+    build:
+      context: .
+    restart: unless-stopped
+    init: true
+    environment:
+      JINGAO_AGENT_URL: http://agent:8000
+      JINGAO_WEB_INTERNAL_PORT: "3001"
+      JINGAO_WEB_HOSTS: ${JINGAO_WEB_HOSTS:-localhost,127.0.0.1,web,jadj-nas.local,192.168.2.53,knowledge.jingao.club}
+      JINGAO_WEB_MAX_REQUEST_BODY_BYTES: ${JINGAO_WEB_MAX_REQUEST_BODY_BYTES:-2147483648}
+      PORT: "3000"
+    depends_on: [agent]
+    ports:
+      - "${JINGAO_WEB_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/').then(r => {
+            if (!r.ok) process.exit(1)
+          }).catch(() => process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks: [internal]
+    mem_limit: 1g
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  agent_data:
+  uptime_kuma_data:

@@ -1,0 +1,15 @@
+{
+  "documents": [
+    {
+      "path": "D:/请替换为本机授权测试资料/项目方案.pdf",
+      "project_name": "待确认项目名称",
+      "title": "项目方案.pdf",
+      "role": "proposal",
+      "year": 2026,
+      "domain": "training",
+      "confidentiality": "L3",
+      "knowledge_status": "candidate",
+      "is_final": false
+    }
+  ]
+}

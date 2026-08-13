@@ -1,0 +1,75 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/node_modules.corrupt-*/
+/.pnpm-store-local/
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+/.local-ui-check/
+/tmp/
+/pytest-*/
+*.tsbuildinfo
+
+# next.js
+/.next/
+/.vinext/
+/out/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+/dev-server*.log
+/.local-*.log
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+next-env.d.ts
+/dist/
+/.wrangler/
+/outputs/
+/work/
+/.nas-deploy/
+/.nas-maintenance/
+
+# Jingao Agent local runtime data
+/agent/.venv/
+/agent/data/
+/agent/backups/
+/agent/.pytest_cache/
+/agent/.pytest-*/
+/agent/pytest-*/
+/.pytest_cache/
+/agent/**/__pycache__/
+**/__pycache__/
+*.py[cod]
+/agent/.local/
+
+# Presentation template build intermediates
+/build/pptx-template/node_modules/
+/build/pptx-template/previews/
+/build/sample-proposal/
+/build/sample-proposal.pptx
+/build/sample-proposal-montage.png
+/build/live-*
+/build/skill-proposal.pptx

@@ -1,0 +1,3 @@
+Brand source: Jingao Esports logo supplied by the user and stored at public/jingao-logo.jpg.
+Visible sample copy: neutral proposal-framework language only; no external facts or unverified project outcomes.
+Dynamic source placeholders: each slide speaker note contains a [Sources] block that the server replaces with the submitted Brief and authorized candidate citations.

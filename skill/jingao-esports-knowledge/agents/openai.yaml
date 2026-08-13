@@ -1,0 +1,10 @@
+interface:
+  display_name: "京奥电竞知识库"
+  short_description: "调用京奥智库资料，生成带来源的文稿、方案和PPT"
+  icon_small: "./assets/jingao-logo.jpg"
+  icon_large: "./assets/jingao-logo.jpg"
+  brand_color: "#DF1E2F"
+  default_prompt: "使用 $jingao-esports-knowledge 调用我有权限查看的京奥智库资料，完成一份带来源的可编辑文稿。"
+
+policy:
+  allow_implicit_invocation: true
