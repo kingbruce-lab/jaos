@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app import project_system
-from app.auth import current_user
+from app.auth import current_user, hash_password, verify_password
 from app.database import get_db
 from app.main import app
 from app.models import (
@@ -466,9 +466,22 @@ def test_project_owner_can_edit_and_founder_controls_deletion(tmp_path, monkeypa
         second_request_id = requested_again.json()["request_id"]
 
         app.dependency_overrides[current_user] = lambda: users["founder"]
+        users["founder"].project_delete_password_hash = hash_password("Delete-Project-2026")
+        db.commit()
+        missing_delete_password = client.post(
+            f"/v1/pm/deletion-requests/{second_request_id}/decide",
+            json={"decision": "approved", "note": "未输入删除密码"},
+        )
+        assert missing_delete_password.status_code == 403
+        assert db.get(ProjectDeletionRequest, second_request_id).status == "pending"
+        assert db.get(ManagedProject, project_id).status == "draft"
         approved = client.post(
             f"/v1/pm/deletion-requests/{second_request_id}/decide",
-            json={"decision": "approved", "note": "批准删除"},
+            json={
+                "decision": "approved",
+                "note": "批准删除",
+                "deletion_password": "Delete-Project-2026",
+            },
         )
         assert approved.status_code == 200
         assert approved.json()["project_deleted"] is True
@@ -476,6 +489,115 @@ def test_project_owner_can_edit_and_founder_controls_deletion(tmp_path, monkeypa
         assert client.get(f"/v1/pm/projects/{project_id}").status_code == 404
         assert all(item["id"] != project_id for item in client.get("/v1/pm/projects").json()["items"])
     finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_founder_configures_separate_password_and_directly_soft_deletes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    project_system.project_delete_rate_limiter.reset()
+    login_password = "Founder-Login-2026"
+    deletion_password = "Founder-Delete-2026"
+    users["founder"].password_hash = hash_password(login_password)
+    db.commit()
+    client = _configure(monkeypatch, tmp_path, db, users["business"])
+    try:
+        created = client.post(
+            "/v1/pm/projects",
+            data={
+                "project_no": "JADJ-Cc26DEL",
+                "name": "创始人删除验证项目",
+                "company_name": "京奥电竞",
+                "client": "测试甲方",
+                "business_category": "电竞培训",
+                "planned_start": "2026-08-01",
+                "planned_end": "2026-08-31",
+                "objective": "验证创始人独立删除密码和软删除审计链。",
+                "members_json": '["执行成员"]',
+            },
+        )
+        assert created.status_code == 200
+        project_id = created.json()["id"]
+        requested = client.post(
+            f"/v1/pm/projects/{project_id}/deletion-request",
+            json={"reason": "测试项目需要清理"},
+        )
+        request_id = requested.json()["request_id"]
+
+        app.dependency_overrides[current_user] = lambda: users["anli"]
+        assert client.get("/v1/pm/founder-delete-password/status").status_code == 403
+        assert client.post(
+            f"/v1/pm/projects/{project_id}/founder-delete",
+            json={"deletion_password": deletion_password, "reason": "越权删除"},
+        ).status_code == 403
+
+        app.dependency_overrides[current_user] = lambda: users["founder"]
+        initial = client.get("/v1/pm/founder-delete-password/status")
+        assert initial.status_code == 200
+        assert initial.json()["configured"] is False
+
+        wrong_login = client.patch(
+            "/v1/pm/founder-delete-password",
+            json={
+                "current_login_password": "wrong-login-password",
+                "new_password": deletion_password,
+            },
+        )
+        assert wrong_login.status_code == 400
+        assert users["founder"].project_delete_password_hash is None
+
+        same_as_login = client.patch(
+            "/v1/pm/founder-delete-password",
+            json={
+                "current_login_password": login_password,
+                "new_password": login_password,
+            },
+        )
+        assert same_as_login.status_code == 400
+
+        configured = client.patch(
+            "/v1/pm/founder-delete-password",
+            json={
+                "current_login_password": login_password,
+                "new_password": deletion_password,
+            },
+        )
+        assert configured.status_code == 200
+        assert configured.json()["configured"] is True
+        stored_hash = users["founder"].project_delete_password_hash
+        assert stored_hash and stored_hash != deletion_password
+        assert verify_password(deletion_password, stored_hash)
+
+        wrong_delete = client.post(
+            f"/v1/pm/projects/{project_id}/founder-delete",
+            json={"deletion_password": "wrong-delete-password", "reason": "直接删除"},
+        )
+        assert wrong_delete.status_code == 403
+        assert db.get(ManagedProject, project_id).status == "draft"
+
+        deleted = client.post(
+            f"/v1/pm/projects/{project_id}/founder-delete",
+            json={"deletion_password": deletion_password, "reason": "确认是测试项目"},
+        )
+        assert deleted.status_code == 200
+        assert deleted.json()["deletion_mode"] == "soft_delete"
+        assert db.get(ManagedProject, project_id).status == "deleted"
+        request = db.get(ProjectDeletionRequest, request_id)
+        assert request.status == "approved"
+        assert request.decided_by_user_id == users["founder"].id
+
+        audit_rows = db.scalars(
+            select(AuditLog).where(AuditLog.user_id == users["founder"].id)
+        ).all()
+        assert any(item.action == "pm_founder_project_deleted" for item in audit_rows)
+        audit_text = "\n".join(item.details_json for item in audit_rows)
+        assert deletion_password not in audit_text
+        assert login_password not in audit_text
+    finally:
+        project_system.project_delete_rate_limiter.reset()
         app.dependency_overrides.clear()
         db.close()
 

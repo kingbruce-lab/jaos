@@ -3704,6 +3704,148 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   padding-bottom: 9px;
 }
 
+.pmProjectAdminFooter .deletionReviewForm {
+  grid-template-columns: 130px minmax(170px, 1fr) minmax(180px, .85fr) auto;
+}
+
+.pmFounderDeleteControl {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #f0dadd;
+}
+
+.pmFounderDeleteControl > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pmFounderDeleteControl > header span,
+.pmFounderDeleteControl > header strong,
+.pmFounderDeleteControl > header small {
+  display: block;
+}
+
+.pmFounderDeleteControl > header span {
+  color: #b4232f;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.pmFounderDeleteControl > header strong {
+  margin-top: 4px;
+  color: #2f3b4d;
+  font-size: 15px;
+}
+
+.pmFounderDeleteControl > header small {
+  margin-top: 4px;
+  color: #7d8796;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pmFounderDeleteControl > header > b {
+  flex: none;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #8a5a00;
+  background: #fff2d6;
+  font-size: 11px;
+}
+
+.pmFounderDeleteControl > header > b.configured {
+  color: #087a57;
+  background: #e5f6ef;
+}
+
+.pmFounderDeleteForm,
+.pmDeletePasswordSettings form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(180px, .75fr) auto;
+  gap: 9px;
+  align-items: end;
+  margin-top: 13px;
+}
+
+.pmFounderDeleteForm label,
+.pmDeletePasswordSettings label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #5c6676;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pmFounderDeleteForm input,
+.pmDeletePasswordSettings input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #e0c7ca;
+  border-radius: 8px;
+  color: #172033;
+  background: #fff;
+  font-size: 14px;
+  outline: none;
+}
+
+.pmFounderDeleteForm input:focus,
+.pmDeletePasswordSettings input:focus {
+  border-color: #bd4650;
+  box-shadow: 0 0 0 3px rgba(180, 35, 47, .09);
+}
+
+.pmFounderDeleteForm button,
+.pmDeletePasswordSettings button {
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid #c73945;
+  border-radius: 8px;
+  color: #fff;
+  background: #b4232f;
+  font-size: 13px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.pmFounderDeleteForm button:disabled,
+.pmDeletePasswordSettings button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.pmDeletePasswordSettings {
+  margin-top: 11px;
+  padding: 10px 12px;
+  border: 1px solid #e7e9ed;
+  border-radius: 9px;
+  background: #fafbfc;
+}
+
+.pmDeletePasswordSettings > summary {
+  min-height: 32px;
+  color: #4a576a;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.pmDeletePasswordSettings form {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+}
+
+.pmDeletePasswordSettings > p {
+  margin: 9px 0 0;
+  color: #7e8795;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
 @media (max-width: 760px) {
   .pmProjectAdminFooter {
     margin-top: 22px;
@@ -3739,6 +3881,26 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
 
   .pmManagementBody {
     padding: 12px;
+  }
+
+  .pmProjectAdminFooter .deletionReviewForm,
+  .pmFounderDeleteForm,
+  .pmDeletePasswordSettings form {
+    grid-template-columns: 1fr;
+  }
+
+  .pmFounderDeleteControl > header {
+    display: grid;
+    gap: 9px;
+  }
+
+  .pmFounderDeleteControl > header > b {
+    width: fit-content;
+  }
+
+  .pmFounderDeleteForm button,
+  .pmDeletePasswordSettings button {
+    width: 100%;
   }
 }
 

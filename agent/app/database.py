@@ -40,6 +40,12 @@ def init_database() -> None:
                     "organization_role VARCHAR(40)"
                 )
             )
+            connection.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "project_delete_password_hash TEXT"
+                )
+            )
             # ``create_all`` cannot add columns to a table that already
             # exists. Keep additive migrations inside the same advisory
             # transaction so older NAS installations are upgraded once,

@@ -63,6 +63,13 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(Text)
+    # A separate second factor for founder-only project deletion.  This is
+    # intentionally independent from the login password and is never exposed
+    # by user/account payloads.
+    project_delete_password_hash: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
     role: Mapped[str] = mapped_column(String(40), default="employee")
     # Organizational function is intentionally separate from application
     # privileges so finance/HR/project systems can reuse one account model.

@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .auth import current_user
+from .auth import LoginRateLimiter, current_user, hash_password, verify_password
 from .business_entities import (
     BUSINESS_ENTITY_BY_NAME,
     canonical_business_entity_name,
@@ -36,6 +36,11 @@ from .retrieval import CONFIDENTIALITY_RANK
 
 
 router = APIRouter(prefix="/v1/pm", tags=["project-management"])
+project_delete_rate_limiter = LoginRateLimiter(
+    max_attempts=5,
+    window_seconds=5 * 60,
+    lockout_seconds=15 * 60,
+)
 EXECUTIVE_APPROVERS = {
     "founder": {"found", "founder"},
 }
@@ -124,6 +129,17 @@ class ProjectDeletionCreate(BaseModel):
 class ProjectDeletionDecision(BaseModel):
     decision: str = Field(pattern="^(approved|rejected)$")
     note: str | None = Field(default=None, max_length=1000)
+    deletion_password: str | None = Field(default=None, max_length=200)
+
+
+class FounderDeletePasswordUpdate(BaseModel):
+    current_login_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
+
+
+class FounderProjectDeleteRequest(BaseModel):
+    deletion_password: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=2, max_length=1000)
 
 
 class ProjectArchiveRequest(BaseModel):
@@ -164,6 +180,45 @@ def _reviewer_slot(user: User) -> str | None:
             if username in usernames:
                 return slot
     return None
+
+
+def _require_project_founder(user: User) -> None:
+    if _reviewer_slot(user) != "founder":
+        raise HTTPException(status_code=403, detail="仅叶靖波创始人账号可执行此操作")
+
+
+def _delete_rate_limit_key(user: User, action: str) -> str:
+    return f"{action}:{user.id}"
+
+
+def _check_delete_rate_limit(user: User, action: str) -> str:
+    key = _delete_rate_limit_key(user, action)
+    retry_after = project_delete_rate_limiter.retry_after(key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail=f"密码尝试次数过多，请在 {retry_after} 秒后重试",
+            headers={"Retry-After": str(retry_after)},
+        )
+    return key
+
+
+def _audit_password_failure(
+    db: Session,
+    *,
+    user: User,
+    action: str,
+    project_id: str | None = None,
+) -> None:
+    db.add(AuditLog(
+        user_id=user.id,
+        action=action,
+        details_json=json.dumps({
+            "project_id": project_id,
+            "result": "password_verification_failed",
+        }, ensure_ascii=False),
+    ))
+    db.commit()
 
 
 def _project_visible(user: User, project: ManagedProject) -> bool:
@@ -962,6 +1017,115 @@ def review_project(
     return _project_payload(db, project, detail=True)
 
 
+@router.get("/founder-delete-password/status")
+def founder_delete_password_status(
+    user: User = Depends(current_user),
+) -> dict:
+    _require_project_founder(user)
+    return {
+        "configured": bool(user.project_delete_password_hash),
+        "minimum_length": 8,
+    }
+
+
+@router.patch("/founder-delete-password")
+def configure_founder_delete_password(
+    payload: FounderDeletePasswordUpdate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_project_founder(user)
+    rate_key = _check_delete_rate_limit(user, "configure")
+    if not verify_password(payload.current_login_password, user.password_hash):
+        project_delete_rate_limiter.record_failure(rate_key)
+        _audit_password_failure(
+            db,
+            user=user,
+            action="pm_founder_delete_password_configure_failed",
+        )
+        raise HTTPException(status_code=400, detail="当前登录密码错误")
+    if verify_password(payload.new_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="项目删除密码不能与登录密码相同")
+
+    was_configured = bool(user.project_delete_password_hash)
+    user.project_delete_password_hash = hash_password(payload.new_password)
+    db.add(AuditLog(
+        user_id=user.id,
+        action="pm_founder_delete_password_updated",
+        details_json=json.dumps({
+            "previously_configured": was_configured,
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+    project_delete_rate_limiter.record_success(rate_key)
+    return {
+        "configured": True,
+        "minimum_length": 8,
+        "status": "updated" if was_configured else "configured",
+    }
+
+
+@router.post("/projects/{project_id}/founder-delete")
+def founder_delete_project(
+    project_id: str,
+    payload: FounderProjectDeleteRequest,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_project_founder(user)
+    project = db.get(ManagedProject, project_id)
+    if project is None or project.status == "deleted":
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if not user.project_delete_password_hash:
+        raise HTTPException(status_code=409, detail="请先设置创始人项目删除密码")
+
+    rate_key = _check_delete_rate_limit(user, "delete")
+    if not verify_password(payload.deletion_password, user.project_delete_password_hash):
+        project_delete_rate_limiter.record_failure(rate_key)
+        _audit_password_failure(
+            db,
+            user=user,
+            action="pm_founder_project_delete_failed",
+            project_id=project.id,
+        )
+        raise HTTPException(status_code=403, detail="项目删除密码错误")
+
+    now = datetime.now(timezone.utc)
+    pending_requests = db.scalars(
+        select(ProjectDeletionRequest).where(
+            ProjectDeletionRequest.project_id == project.id,
+            ProjectDeletionRequest.status == "pending",
+        )
+    ).all()
+    reason = payload.reason.strip()
+    for request in pending_requests:
+        request.status = "approved"
+        request.decision_note = f"创始人直接删除：{reason}"
+        request.decided_by_user_id = user.id
+        request.decided_at = now
+
+    project.status = "deleted"
+    db.add(AuditLog(
+        user_id=user.id,
+        action="pm_founder_project_deleted",
+        details_json=json.dumps({
+            "project_id": project.id,
+            "project_no": project.project_no,
+            "reason": reason,
+            "resolved_pending_request_ids": [item.id for item in pending_requests],
+            "deletion_mode": "soft_delete",
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+    project_delete_rate_limiter.record_success(rate_key)
+    return {
+        "project_id": project.id,
+        "project_no": project.project_no,
+        "project_deleted": True,
+        "deletion_mode": "soft_delete",
+    }
+
+
 @router.post("/projects/{project_id}/deletion-request")
 def request_project_deletion(
     project_id: str,
@@ -1017,6 +1181,23 @@ def decide_project_deletion(
     project = db.get(ManagedProject, request.project_id)
     if project is None or project.status == "deleted":
         raise HTTPException(status_code=404, detail="项目不存在")
+    if payload.decision == "approved":
+        if not user.project_delete_password_hash:
+            raise HTTPException(status_code=409, detail="请先设置创始人项目删除密码")
+        rate_key = _check_delete_rate_limit(user, "delete")
+        if not payload.deletion_password or not verify_password(
+            payload.deletion_password,
+            user.project_delete_password_hash,
+        ):
+            project_delete_rate_limiter.record_failure(rate_key)
+            _audit_password_failure(
+                db,
+                user=user,
+                action="pm_project_deletion_approval_failed",
+                project_id=project.id,
+            )
+            raise HTTPException(status_code=403, detail="项目删除密码错误")
+        project_delete_rate_limiter.record_success(rate_key)
     request.status = payload.decision
     request.decision_note = payload.note.strip() if payload.note else None
     request.decided_by_user_id = user.id

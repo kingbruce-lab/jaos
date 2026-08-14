@@ -591,6 +591,12 @@ type ManagedProjectRegistry = {
   items: ManagedProject[];
 };
 
+type FounderDeletePasswordStatus = {
+  configured: boolean;
+  minimum_length: number;
+  status?: "configured" | "updated";
+};
+
 type SearchResult = {
   document_id: string;
   title: string;
@@ -1490,6 +1496,7 @@ export default function Home() {
   const [selectedManagedProject, setSelectedManagedProject] = useState<ManagedProject | null>(null);
   const [projectBusy, setProjectBusy] = useState("");
   const [projectMessage, setProjectMessage] = useState("");
+  const [projectDeletePasswordConfigured, setProjectDeletePasswordConfigured] = useState<boolean | null>(null);
   const [inboxScanBusy, setInboxScanBusy] = useState(false);
   const [accountBusy, setAccountBusy] = useState("");
   const [evaluationBusy, setEvaluationBusy] = useState(false);
@@ -1798,6 +1805,29 @@ export default function Home() {
       cancelled = true;
     };
   }, [active, token]);
+
+  useEffect(() => {
+    const isProjectFounder = Boolean(
+      user?.organization_role === "management"
+      && user?.confidentiality_ceiling === "L5"
+      && ["found", "founder"].includes(user?.username.toLowerCase() || ""),
+    );
+    if (!token || active !== "项目管理" || !isProjectFounder) {
+      setProjectDeletePasswordConfigured(null);
+      return;
+    }
+    let cancelled = false;
+    kbFetch<FounderDeletePasswordStatus>("v1/pm/founder-delete-password/status", {}, token)
+      .then((status) => {
+        if (!cancelled) setProjectDeletePasswordConfigured(status.configured);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : "项目删除密码状态加载失败");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, token, user?.confidentiality_ceiling, user?.organization_role, user?.username]);
 
   useEffect(() => {
     if (!token || active !== "智能创作") return;
@@ -3267,12 +3297,78 @@ export default function Home() {
     try {
       await kbFetch(`v1/pm/deletion-requests/${requestId}/decide`, {
         method: "POST",
-        body: JSON.stringify({ decision, note: data.get("note") || null }),
+        body: JSON.stringify({
+          decision,
+          note: data.get("note") || null,
+          deletion_password: data.get("deletion_password") || null,
+        }),
       }, token);
       setProjectMessage(decision === "approved" ? "项目删除申请已批准。" : "项目删除申请已驳回。");
       await refreshManagedProjects();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "删除复核失败");
+    } finally {
+      setProjectBusy("");
+    }
+  }
+
+  async function handleConfigureProjectDeletePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const newPassword = String(data.get("new_password") || "");
+    const confirmation = String(data.get("confirm_password") || "");
+    if (newPassword !== confirmation) {
+      setError("两次输入的项目删除密码不一致");
+      return;
+    }
+    setProjectBusy("delete-password");
+    setError("");
+    try {
+      const response = await kbFetch<FounderDeletePasswordStatus>(
+        "v1/pm/founder-delete-password",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            current_login_password: data.get("current_login_password"),
+            new_password: newPassword,
+          }),
+        },
+        token,
+      );
+      setProjectDeletePasswordConfigured(response.configured);
+      setProjectMessage(response.status === "updated" ? "项目删除密码已修改。" : "项目删除密码已设置。");
+      form.reset();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "项目删除密码设置失败");
+    } finally {
+      setProjectBusy("");
+    }
+  }
+
+  async function handleFounderProjectDelete(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token || !selectedManagedProject) return;
+    const project = selectedManagedProject;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    if (!window.confirm(`确认删除项目“${project.name}”？\n\n项目会从项目组合隐藏，但项目编号、附件、财务关联和审计记录都会保留。`)) return;
+    setProjectBusy("founder-delete");
+    setError("");
+    try {
+      await kbFetch(`v1/pm/projects/${project.id}/founder-delete`, {
+        method: "POST",
+        body: JSON.stringify({
+          deletion_password: data.get("deletion_password"),
+          reason: data.get("reason"),
+        }),
+      }, token);
+      form.reset();
+      setProjectMessage(`项目 ${project.project_no} 已执行软删除；原始记录与审计链完整保留。`);
+      await refreshManagedProjects(project.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "项目删除失败");
     } finally {
       setProjectBusy("");
     }
@@ -4428,12 +4524,15 @@ export default function Home() {
             canReview={canReviewManagedProject}
             canArchive={canArchiveManagedProject}
             canFinanceConfirm={canEditBankStatements}
+            deletePasswordConfigured={projectDeletePasswordConfigured}
             onCreate={handleCreateManagedProject}
             onUpdate={handleUpdateManagedProject}
             onContractStatus={handleUpdateProjectContractStatus}
             onProcessFinance={handleProjectProcessFinance}
             onRequestDeletion={handleRequestProjectDeletion}
             onDeletionDecision={handleProjectDeletionDecision}
+            onConfigureDeletePassword={handleConfigureProjectDeletePassword}
+            onFounderDelete={handleFounderProjectDelete}
             onArchive={handleProjectArchive}
             onSelect={handleManagedProjectSelect}
             onCashflow={handleProjectCashflow}
@@ -7316,12 +7415,15 @@ function ProjectManagementWorkspace({
   canReview,
   canArchive,
   canFinanceConfirm,
+  deletePasswordConfigured,
   onCreate,
   onUpdate,
   onContractStatus,
   onProcessFinance,
   onRequestDeletion,
   onDeletionDecision,
+  onConfigureDeletePassword,
+  onFounderDelete,
   onArchive,
   onSelect,
   onCashflow,
@@ -7340,12 +7442,15 @@ function ProjectManagementWorkspace({
   canReview: boolean;
   canArchive: boolean;
   canFinanceConfirm: boolean;
+  deletePasswordConfigured: boolean | null;
   onCreate: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onUpdate: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onContractStatus: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onProcessFinance: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onRequestDeletion: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onDeletionDecision: (event: FormEvent<HTMLFormElement>, requestId: string) => Promise<void>;
+  onConfigureDeletePassword: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onFounderDelete: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onArchive: (action: "archive" | "restore") => Promise<void>;
   onSelect: (projectId: string) => Promise<void>;
   onCashflow: (event: FormEvent<HTMLFormElement>) => Promise<void>;
@@ -7624,7 +7729,7 @@ function ProjectManagementWorkspace({
 
                 <details className="pmManagementItem pmDeletionPanel" defaultOpen={selected.deletion_request?.status === "pending"} key={`${selected.id}-deletion-${selected.deletion_request?.status || "none"}`}>
                   <summary>
-                    <div><strong>项目删除</strong><small>项目经理申请，叶靖波复核</small></div>
+                    <div><strong>项目删除</strong><small>项目经理可申请；创始人删除必须验证独立密码</small></div>
                     <span className={selected.deletion_request?.status === "pending" ? "danger" : selected.deletion_request?.status === "rejected" ? "rejected" : "neutral"}>{selected.deletion_request?.status === "pending" ? "待复核" : selected.deletion_request?.status === "rejected" ? "已驳回" : "无申请"}</span>
                   </summary>
                   <div className="pmManagementBody">
@@ -7634,9 +7739,10 @@ function ProjectManagementWorkspace({
                         <p>{selected.deletion_request.reason}</p>
                         <small>申请人：{selected.deletion_request.requester}</small>
                         {canReview && (
-                          <form className="inlineReviewForm" onSubmit={(event) => void onDeletionDecision(event, selected.deletion_request!.id)}>
+                          <form className="inlineReviewForm deletionReviewForm" onSubmit={(event) => void onDeletionDecision(event, selected.deletion_request!.id)}>
                             <select name="decision" defaultValue="rejected"><option value="rejected">驳回删除</option><option value="approved">批准删除</option></select>
                             <input name="note" placeholder="删除复核意见（选填）" />
+                            <input name="deletion_password" type="password" autoComplete="off" placeholder="批准删除时输入删除密码" />
                             <button className="primaryButton" disabled={busy === "deletion-decision"}>提交删除复核</button>
                           </form>
                         )}
@@ -7649,6 +7755,41 @@ function ProjectManagementWorkspace({
                       </form>
                     ) : (
                       <p>只有项目经理可以发起删除申请，批准权归叶靖波。</p>
+                    )}
+                    {canReview && (
+                      <section className="pmFounderDeleteControl">
+                        <header>
+                          <div>
+                            <span>FOUNDER SECURITY</span>
+                            <strong>创始人直接删除</strong>
+                            <small>仅执行软删除；项目编号、附件、财务关联和审计记录仍保留。</small>
+                          </div>
+                          <b className={deletePasswordConfigured ? "configured" : "unconfigured"}>
+                            {deletePasswordConfigured === null ? "读取中" : deletePasswordConfigured ? "删除密码已设置" : "尚未设置删除密码"}
+                          </b>
+                        </header>
+
+                        {deletePasswordConfigured && (
+                          <form className="pmFounderDeleteForm" onSubmit={onFounderDelete}>
+                            <label>删除原因<input name="reason" minLength={2} maxLength={1000} required placeholder="说明删除原因，内容将写入审计日志" /></label>
+                            <label>项目删除密码<input name="deletion_password" type="password" required autoComplete="off" placeholder="输入独立删除密码" /></label>
+                            <button type="submit" disabled={busy === "founder-delete"}>{busy === "founder-delete" ? "正在删除…" : "验证密码并删除项目"}</button>
+                          </form>
+                        )}
+
+                        {deletePasswordConfigured !== null && (
+                          <details className="pmDeletePasswordSettings" open={!deletePasswordConfigured}>
+                            <summary>{deletePasswordConfigured ? "修改项目删除密码" : "首次设置项目删除密码"}</summary>
+                            <form onSubmit={onConfigureDeletePassword}>
+                              <label>当前登录密码<input name="current_login_password" type="password" required autoComplete="current-password" /></label>
+                              <label>新的删除密码<input name="new_password" type="password" required minLength={8} maxLength={200} autoComplete="new-password" placeholder="至少 8 位，且不能与登录密码相同" /></label>
+                              <label>再次输入删除密码<input name="confirm_password" type="password" required minLength={8} maxLength={200} autoComplete="new-password" /></label>
+                              <button type="submit" disabled={busy === "delete-password"}>{busy === "delete-password" ? "保存中…" : deletePasswordConfigured ? "确认修改删除密码" : "设置删除密码"}</button>
+                            </form>
+                            <p>删除密码只以加盐哈希保存在 JAOS 数据库，不保存或显示明文；设置和修改均需验证当前登录密码。</p>
+                          </details>
+                        )}
+                      </section>
                     )}
                   </div>
                 </details>
