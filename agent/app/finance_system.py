@@ -76,9 +76,10 @@ class FinanceTransactionUpdate(BaseModel):
     transacted_at: datetime | None = None
     counterparty: str | None = Field(default=None, max_length=240)
     summary: str | None = Field(default=None, max_length=2000)
-    category: str = Field(min_length=1, max_length=80)
+    category: str | None = Field(default=None, min_length=1, max_length=80)
     note: str | None = Field(default=None, max_length=1000)
     pm_project_id: str | None = Field(default=None, max_length=36)
+    project_reference: str | None = Field(default=None, max_length=80)
 
 
 class InternalTransferReview(BaseModel):
@@ -1590,6 +1591,7 @@ def statement_transactions(
         "category": item.category,
         "note": item.note,
         "pm_project_id": item.pm_project_id,
+        "project_reference": item.project_reference,
         "status": item.status,
         **{
             key: value
@@ -1787,8 +1789,14 @@ def update_transaction(
     if item is None or (entity_id and item.entity_id != entity_id):
         raise HTTPException(status_code=404, detail="流水不存在")
     batch = db.get(BankStatementBatch, item.batch_id)
+    updated_fields = payload.model_fields_set
     if batch and batch.status == "confirmed":
-        raise HTTPException(status_code=409, detail="已确认批次不能直接修改")
+        immutable_fields = updated_fields.intersection({"transacted_at", "counterparty", "summary"})
+        if immutable_fields:
+            raise HTTPException(
+                status_code=409,
+                detail="已确认流水的银行原始字段不可修改；仍可补充业务事由、项目段和财务分类",
+            )
     if payload.pm_project_id:
         project = db.get(ManagedProject, payload.pm_project_id)
         if project is None:
@@ -1802,8 +1810,8 @@ def update_transaction(
         "category": item.category,
         "note": item.note,
         "pm_project_id": item.pm_project_id,
+        "project_reference": item.project_reference,
     }
-    updated_fields = payload.model_fields_set
     if "transacted_at" in updated_fields and payload.transacted_at is not None:
         edited_at = payload.transacted_at
         if edited_at.tzinfo is None:
@@ -1813,9 +1821,18 @@ def update_transaction(
         item.counterparty = payload.counterparty.strip() if payload.counterparty else None
     if "summary" in updated_fields:
         item.summary = payload.summary.strip() if payload.summary else None
-    item.category = payload.category.strip()
-    item.note = payload.note
-    item.pm_project_id = payload.pm_project_id
+    if "category" in updated_fields and payload.category is not None:
+        item.category = payload.category.strip()
+    if "note" in updated_fields:
+        item.note = payload.note.strip() if payload.note else None
+    if "pm_project_id" in updated_fields:
+        item.pm_project_id = payload.pm_project_id
+    if "project_reference" in updated_fields:
+        item.project_reference = (
+            unicodedata.normalize("NFKC", payload.project_reference).strip()
+            if payload.project_reference
+            else None
+        )
     db.add(AuditLog(
         user_id=user.id,
         action="finance_transaction_update",
@@ -1829,6 +1846,7 @@ def update_transaction(
                 "category": item.category,
                 "note": item.note,
                 "pm_project_id": item.pm_project_id,
+                "project_reference": item.project_reference,
             },
         }, ensure_ascii=False),
     ))

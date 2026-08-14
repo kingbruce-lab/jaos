@@ -178,6 +178,10 @@ class BankTransaction(Base):
     bank_serial: Mapped[str | None] = mapped_column(String(160), nullable=True)
     category: Mapped[str] = mapped_column(String(80), default="待确认", index=True)
     pm_project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # A human-entered Feishu/project segment reference (for example Cc2609).
+    # This remains useful even when the historical project has not yet been
+    # created in JAOS and can later be reconciled to pm_project_id.
+    project_reference: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(24), default="pending", index=True)

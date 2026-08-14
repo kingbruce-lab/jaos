@@ -123,6 +123,12 @@ def init_database() -> None:
             connection.execute(
                 text(
                     "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS "
+                    "project_reference VARCHAR(80)"
+                )
+            )
+            connection.execute(
+                text(
+                    "ALTER TABLE bank_transactions ADD COLUMN IF NOT EXISTS "
                     "internal_transfer_status VARCHAR(24) NOT NULL DEFAULT 'unreviewed'"
                 )
             )
@@ -155,6 +161,12 @@ def init_database() -> None:
                 text(
                     "CREATE INDEX IF NOT EXISTS ix_bank_transactions_counterparty_account_hash "
                     "ON bank_transactions (counterparty_account_hash)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_bank_transactions_project_reference "
+                    "ON bank_transactions (project_reference)"
                 )
             )
             connection.execute(

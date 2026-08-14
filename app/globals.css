@@ -329,12 +329,24 @@
 .transactionDateCell { min-width: 118px; white-space: nowrap; }
 .transactionIdentityCell { min-width: 300px; }
 .transactionIdentityCell small { display: -webkit-box; overflow: hidden; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.transactionBusinessPurpose { color: #24344c !important; font-weight: 800; }
+.transactionPurposeMissing { color: #b56b00 !important; font-weight: 800; }
+.transactionClassificationCell span,
+.transactionClassificationCell small { display: block; }
+.transactionClassificationCell small { margin-top: 6px; color: #65748a; font-size: 12px; font-weight: 750; overflow-wrap: anywhere; }
+.bankRawSummary { margin-top: 7px; max-width: 520px; color: #66768b; }
+.bankRawSummary summary { width: fit-content; color: #1763a4; font-size: 12px; font-weight: 750; cursor: pointer; user-select: none; }
+.bankRawSummary p { margin: 7px 0 0; padding: 9px 10px; border-left: 3px solid #c6d8e7; color: #647185; background: #f5f8fb; line-height: 1.55; white-space: normal; overflow-wrap: anywhere; }
 .transactionRowEditButton { margin-top: 9px; padding: 6px 10px; border: 1px solid #b9d2e8; border-radius: 7px; color: #1763a4; background: #edf6fd; font-size: 10px; font-weight: 750; }
 .transactionEditorRow td { padding: 0 10px 16px; background: #f7fbfe; }
 .transactionEditExpanded { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 16px; border: 1px solid #cfe0ef; border-radius: 10px; background: #fff; box-shadow: 0 8px 24px rgba(29, 74, 113, .08); }
 .transactionEditExpanded label { display: grid; gap: 6px; color: #596579; font-size: 10px; font-weight: 750; }
 .transactionEditExpanded .summaryField { grid-column: 1 / -1; }
 .transactionEditExpanded textarea { resize: vertical; line-height: 1.55; }
+.transactionAnnotationNotice,
+.transactionEditExpanded .editorRawSummary { grid-column: 1 / -1; }
+.transactionAnnotationNotice { margin: 0; padding: 10px 12px; border: 1px solid #d7e5f0; border-radius: 8px; color: #4c6580; background: #f3f8fc; font-size: 12px; font-weight: 700; line-height: 1.55; }
+.transactionEditExpanded .editorRawSummary { max-width: none; margin: 0; }
 .transactionEditActions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 9px; }
 .transactionEditActions button { min-width: 100px; padding: 10px 14px; border: 0; border-radius: 8px; color: #fff; background: #1763a4; font-weight: 750; }
 .transactionEditActions .secondaryButton { border: 1px solid #d8dee6; color: #33435b; background: #fff; }

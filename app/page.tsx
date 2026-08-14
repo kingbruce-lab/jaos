@@ -476,6 +476,7 @@ type FinanceTransaction = {
   category: string;
   note: string | null;
   pm_project_id: string | null;
+  project_reference: string | null;
   status: string;
 };
 
@@ -3020,22 +3021,28 @@ export default function Home() {
     event.preventDefault();
     if (!token) return;
     const data = new FormData(event.currentTarget);
+    const annotationOnly = String(data.get("annotation_only") || "") === "true";
     setFinanceBusy(`transaction-${transactionId}`);
     setError("");
     try {
+      const payload: Record<string, string | null> = {
+        category: String(data.get("category") || "其他"),
+        note: String(data.get("note") || "").trim() || null,
+        project_reference: String(data.get("project_reference") || "").trim() || null,
+        pm_project_id: String(data.get("pm_project_id") || "") || null,
+      };
+      if (!annotationOnly) {
+        payload.transacted_at = String(data.get("transacted_at") || "") || null;
+        payload.counterparty = String(data.get("counterparty") || "") || null;
+      }
       await kbFetch(`v1/finance/transactions/${transactionId}?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          transacted_at: String(data.get("transacted_at") || "") || null,
-          counterparty: String(data.get("counterparty") || "") || null,
-          summary: String(data.get("summary") || "") || null,
-          category: String(data.get("category") || "其他"),
-          note: String(data.get("note") || "") || null,
-          pm_project_id: String(data.get("pm_project_id") || "") || null,
-        }),
+        body: JSON.stringify(payload),
       }, token);
       if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch);
-      setFinanceMessage("流水日期、对方、摘要和分类已更新。");
+      setFinanceMessage(annotationOnly
+        ? "业务事由、项目段和财务分类已补充，银行原始流水未改动。"
+        : "流水基础信息与业务核对信息已更新。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "流水修改失败");
     } finally {
@@ -6739,6 +6746,11 @@ function FinanceWorkspace({
   const financeHeroEntityName = entity.is_headquarters ? entity.display_name : entity.name;
   const [editingTransactionId, setEditingTransactionId] = useState("");
   const [financeView, setFinanceView] = useState<"bank" | "cash">("bank");
+  const transactionProjectLabel = (item: FinanceTransaction) => {
+    const linked = projects.find((project) => project.id === item.pm_project_id);
+    if (linked) return `${linked.project_no} · ${linked.name}`;
+    return item.project_reference || "未关联项目";
+  };
 
   const entitySwitcher = (
     <section className="financeEntitySwitcher" aria-label="选择财务公司账套">
@@ -7159,7 +7171,7 @@ function FinanceWorkspace({
           <PanelTitle eyebrow="TRANSACTIONS" title={`${selected.company} · ${selected.row_count} 条流水`} />
           <div className="tableScroll desktopDataTable financeTransactionTable">
             <table className="businessTable">
-              <thead><tr><th>日期</th><th>对方 / 摘要</th><th>收入</th><th>支出</th><th>余额</th><th>分类与关联</th></tr></thead>
+              <thead><tr><th>日期</th><th>收 / 付款人及业务事由</th><th>收入</th><th>支出</th><th>余额</th><th>分类与项目</th></tr></thead>
               <tbody>
                 {transactions.map((item) => (
                   <Fragment key={item.id}>
@@ -7167,23 +7179,36 @@ function FinanceWorkspace({
                       <td className="transactionDateCell">{formatShanghaiDateTime(item.transacted_at)}</td>
                       <td className="transactionIdentityCell">
                         <strong>{item.counterparty || "—"}</strong>
-                        <small>{item.summary || "无摘要"}</small>
-                        {canEditBank && selected.status !== "confirmed" && (
+                        <small className={item.note ? "transactionBusinessPurpose" : "transactionPurposeMissing"}>
+                          {item.note ? `业务事由：${item.note}` : "业务事由待补充"}
+                        </small>
+                        {item.summary && (
+                          <details className="bankRawSummary">
+                            <summary>查看银行原始附言</summary>
+                            <p>{item.summary}</p>
+                          </details>
+                        )}
+                        {canEditBank && (
                           <button
                             type="button"
                             className="transactionRowEditButton"
                             onClick={() => setEditingTransactionId((current) => current === item.id ? "" : item.id)}
                           >
-                            {editingTransactionId === item.id ? "收起修改" : "核对 / 修改"}
+                            {editingTransactionId === item.id
+                              ? "收起"
+                              : selected.status === "confirmed" ? "补充业务信息" : "核对 / 补充"}
                           </button>
                         )}
                       </td>
                       <td className="financeIncomeAmount">{Number(item.income) ? formatMoney(item.income) : "—"}</td>
                       <td className="financeExpenseAmount">{Number(item.expense) ? formatMoney(item.expense) : "—"}</td>
                       <td>{item.balance === null ? "—" : formatMoney(item.balance)}</td>
-                      <td><span>{(!item.category || item.category === "待确认") ? "未分类" : item.category}{item.pm_project_id ? " · 已关联项目" : ""}</span></td>
+                      <td className="transactionClassificationCell">
+                        <span>{(!item.category || item.category === "待确认") ? "未分类" : item.category}</span>
+                        <small>{transactionProjectLabel(item)}</small>
+                      </td>
                     </tr>
-                    {editingTransactionId === item.id && canEditBank && selected.status !== "confirmed" && (
+                    {editingTransactionId === item.id && canEditBank && (
                       <tr className="transactionEditorRow">
                         <td colSpan={6}>
                           <form
@@ -7193,12 +7218,15 @@ function FinanceWorkspace({
                               setEditingTransactionId("");
                             }}
                           >
-                            <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>
-                            <label><span>收 / 付款单位</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写真实对手方名称" /></label>
-                            <label className="summaryField"><span>用途 / 备注 / 银行摘要</span><textarea name="summary" rows={3} defaultValue={item.summary || ""} placeholder="补充这笔流水的实际用途或银行摘要" /></label>
+                            <input type="hidden" name="annotation_only" value={selected.status === "confirmed" ? "true" : "false"} />
+                            {selected.status !== "confirmed" && <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>}
+                            {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
+                            {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认，只补充业务信息；金额、日期、收付款人及银行原始附言不会被改动。</p>}
+                            <label className="summaryField"><span>业务事由 / 报销说明</span><textarea name="note" rows={3} defaultValue={item.note || ""} placeholder="例如：白楼912办公室刷漆" /></label>
                             <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
-                            <label><span>关联项目</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">不关联项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
-                            <label><span>内部核对备注</span><input name="note" defaultValue={item.note || ""} placeholder="可选，仅供内部核对" /></label>
+                            <label><span>飞书项目段</span><input name="project_reference" defaultValue={item.project_reference || ""} placeholder="例如：Cc2609" /></label>
+                            <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
+                            {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
                             <div className="transactionEditActions">
                               <button type="button" className="secondaryButton" onClick={() => setEditingTransactionId("")}>取消</button>
                               <button type="submit" disabled={busy === `transaction-${item.id}`}>{busy === `transaction-${item.id}` ? "保存中…" : "保存修改"}</button>
@@ -7224,22 +7252,27 @@ function FinanceWorkspace({
                     {Number(item.income) ? `收入 ${formatMoney(item.income)}` : `支出 ${formatMoney(item.expense)}`}
                   </span>
                 </header>
-                <p>{item.summary || "无摘要"}</p>
+                <p className={item.note ? "transactionBusinessPurpose" : "transactionPurposeMissing"}>
+                  {item.note ? `业务事由：${item.note}` : "业务事由待补充"}
+                </p>
+                {item.summary && <details className="bankRawSummary"><summary>查看银行原始附言</summary><p>{item.summary}</p></details>}
                 <dl>
                   <div><dt>余额</dt><dd>{item.balance === null ? "—" : formatMoney(item.balance)}</dd></div>
                   <div><dt>分类</dt><dd>{(!item.category || item.category === "待确认") ? "未分类" : item.category}</dd></div>
-                  <div><dt>项目</dt><dd>{item.pm_project_id ? "已关联项目" : "未关联"}</dd></div>
+                  <div><dt>项目</dt><dd>{transactionProjectLabel(item)}</dd></div>
                 </dl>
-                {canEditBank && selected.status !== "confirmed" && (
+                {canEditBank && (
                   <button
                     type="button"
                     className="transactionRowEditButton"
                     onClick={() => setEditingTransactionId((current) => current === item.id ? "" : item.id)}
                   >
-                    {editingTransactionId === item.id ? "收起修改" : "核对 / 修改"}
+                    {editingTransactionId === item.id
+                      ? "收起"
+                      : selected.status === "confirmed" ? "补充业务信息" : "核对 / 补充"}
                   </button>
                 )}
-                {editingTransactionId === item.id && canEditBank && selected.status !== "confirmed" && (
+                {editingTransactionId === item.id && canEditBank && (
                   <form
                     className="transactionEditExpanded mobileTransactionEditor"
                     onSubmit={async (event) => {
@@ -7247,12 +7280,15 @@ function FinanceWorkspace({
                       setEditingTransactionId("");
                     }}
                   >
-                    <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>
-                    <label><span>收 / 付款单位</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写真实对手方名称" /></label>
-                    <label className="summaryField"><span>用途 / 备注 / 银行摘要</span><textarea name="summary" rows={3} defaultValue={item.summary || ""} placeholder="补充这笔流水的实际用途或银行摘要" /></label>
+                    <input type="hidden" name="annotation_only" value={selected.status === "confirmed" ? "true" : "false"} />
+                    {selected.status !== "confirmed" && <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>}
+                    {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
+                    {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认，只补充业务信息；银行原始数据不会被改动。</p>}
+                    <label className="summaryField"><span>业务事由 / 报销说明</span><textarea name="note" rows={3} defaultValue={item.note || ""} placeholder="例如：白楼912办公室刷漆" /></label>
                     <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
-                    <label><span>关联项目</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">不关联项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
-                    <label><span>内部核对备注</span><input name="note" defaultValue={item.note || ""} placeholder="可选，仅供内部核对" /></label>
+                    <label><span>飞书项目段</span><input name="project_reference" defaultValue={item.project_reference || ""} placeholder="例如：Cc2609" /></label>
+                    <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
+                    {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
                     <div className="transactionEditActions">
                       <button type="button" className="secondaryButton" onClick={() => setEditingTransactionId("")}>取消</button>
                       <button type="submit" disabled={busy === `transaction-${item.id}`}>{busy === `transaction-${item.id}` ? "保存中…" : "保存修改"}</button>

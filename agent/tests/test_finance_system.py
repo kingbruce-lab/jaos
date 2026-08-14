@@ -238,6 +238,29 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
         assert confirmed_batch["confirmer"] == "财务"
         assert confirmed_batch["confirmed_at"] is not None
 
+        # Confirmation locks the bank-originated facts, while finance may
+        # still add the real reimbursement purpose and Feishu project segment.
+        annotation = client.patch(
+            f"/v1/finance/transactions/{transactions.json()[0]['id']}",
+            json={
+                "category": "办公场地",
+                "note": "白楼912办公室刷漆",
+                "project_reference": " Cc2609 ",
+                "pm_project_id": None,
+            },
+        )
+        assert annotation.status_code == 200
+        annotated = client.get(
+            f"/v1/finance/statements/{first.json()['id']}/transactions"
+        ).json()[0]
+        assert annotated["note"] == "白楼912办公室刷漆"
+        assert annotated["project_reference"] == "Cc2609"
+        immutable_edit = client.patch(
+            f"/v1/finance/transactions/{transactions.json()[0]['id']}",
+            json={"summary": "覆盖银行原始附言"},
+        )
+        assert immutable_edit.status_code == 409
+
         dashboard = client.get(
             "/v1/finance/dashboard?from_date=2026-08-01&to_date=2026-08-07"
         )
