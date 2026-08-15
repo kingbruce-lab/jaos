@@ -7279,7 +7279,11 @@ function FinanceWorkspace({
                       <td className="transactionIdentityCell">
                         <strong>{item.counterparty || "—"}</strong>
                         <small className={item.note ? "transactionBusinessPurpose" : "transactionPurposeMissing"}>
-                          {item.note ? `业务事由：${item.note}` : "业务事由待补充"}
+                          {item.note
+                            ? `业务事由：${item.note}`
+                            : item.summary?.includes("网银报销")
+                              ? "银行原表仅标注“网银报销”，需补充具体事由"
+                              : "业务事由待补充"}
                         </small>
                         {item.summary && (
                           <details className="bankRawSummary">
@@ -7352,7 +7356,11 @@ function FinanceWorkspace({
                   </span>
                 </header>
                 <p className={item.note ? "transactionBusinessPurpose" : "transactionPurposeMissing"}>
-                  {item.note ? `业务事由：${item.note}` : "业务事由待补充"}
+                  {item.note
+                    ? `业务事由：${item.note}`
+                    : item.summary?.includes("网银报销")
+                      ? "银行原表仅标注“网银报销”，需补充具体事由"
+                      : "业务事由待补充"}
                 </p>
                 {item.summary && <details className="bankRawSummary"><summary>查看银行原始附言</summary><p>{item.summary}</p></details>}
                 <dl>

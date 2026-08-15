@@ -133,6 +133,66 @@ def _beijing_bank_xlsx() -> bytes:
     return output.getvalue()
 
 
+def _multi_sheet_minsheng_xlsx() -> bytes:
+    """Model the query-cover + detail-sheet structure used by Minsheng."""
+    workbook = Workbook()
+    cover = workbook.active
+    cover.title = "查询条件"
+    cover.append(["账户名称", "北京王牌猎豹电竞科技文化发展有限公司"])
+    cover.append(["账号", "655984649"])
+    cover.append(["起始日期", "2026-01-01"])
+    cover.append(["截至日期", "2026-01-31"])
+    cover.append([])
+    cover.append(["借方累计笔数", 1, "借方累计发生额", 4000])
+    cover.append(["贷方累计笔数", 1, "贷方累计发生额", 1000000])
+
+    detail = workbook.create_sheet("交易明细")
+    for index in range(35):
+        detail.append([f"查询说明 {index + 1}"])
+    detail.append([
+        "交易日期", "交易时间", "借贷标志", "交易金额", "账户余额",
+        "收/付方名称", "收/付方账号", "交易说明", "客户附言", "交易参考号",
+    ])
+    detail.append([
+        "2026-01-05", "16:21:00", "借", 4000, 268056.01,
+        "杜萌萌", "6214680050815388", "Cc2609办公室912刷漆", "本系统转账", "M001",
+    ])
+    detail.append([
+        "2026-01-06", "09:15:00", "贷", 1000000, 1268056.01,
+        "项目客户", "123456789", "项目回款", "", "M002",
+    ])
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _cmb_xlsx() -> bytes:
+    """Model a CMB export whose detail header follows account metadata."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "交易查询"
+    sheet.append(["交易查询"])
+    sheet.append(["账户名称", "上海劲腾豹跃文化传播有限责任公司"])
+    sheet.append(["账号", "121991350810001"])
+    for index in range(32):
+        sheet.append([f"打印条件 {index + 1}"])
+    sheet.append([
+        "交易日", "交易时间", "借方金额", "贷方金额", "账面余额",
+        "收款方名称", "收款方账号", "交易摘要", "银行参考号",
+    ])
+    sheet.append([
+        "2026-03-01", "08:30:00", None, 250000, 300000,
+        "赛事客户", "88880001", "赛事服务收入", "CMB001",
+    ])
+    sheet.append([
+        "2026-03-02", "10:20:00", 50000, None, 250000,
+        "执行供应商", "88880002", "Cc2610活动执行费", "CMB002",
+    ])
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def _analysis_warning_xlsx() -> bytes:
     workbook = Workbook()
     sheet = workbook.active
@@ -157,6 +217,40 @@ def test_beijing_bank_column_priority_summary_and_timezone() -> None:
     assert item["counterparty"] == "上海哔哩哔哩电竞信息科技有限公司"
     assert item["counterparty_account"] == "121928339410201"
     assert item["summary"] == "服务费 · 网银清算，贷记来帐79311262 · 本系统转帐"
+    assert item["business_note"] == "服务费"
+
+
+def test_multisheet_minsheng_and_cmb_templates_are_parsed() -> None:
+    minsheng, minsheng_errors = finance_system.parse_statement(
+        _multi_sheet_minsheng_xlsx(), ".xlsx"
+    )
+    assert minsheng_errors == 0
+    assert len(minsheng) == 2
+    assert minsheng[0]["expense"] == Decimal("4000.00")
+    assert minsheng[0]["income"] == Decimal("0")
+    assert minsheng[0]["counterparty"] == "杜萌萌"
+    assert minsheng[0]["business_note"] == "Cc2609办公室912刷漆"
+    assert minsheng[0]["project_reference"] == "Cc2609"
+    assert minsheng[0]["transacted_at"].astimezone(
+        finance_system.SHANGHAI_ZONE
+    ).isoformat() == "2026-01-05T16:21:00+08:00"
+
+    cmb, cmb_errors = finance_system.parse_statement(_cmb_xlsx(), ".xlsx")
+    assert cmb_errors == 0
+    assert len(cmb) == 2
+    assert cmb[0]["income"] == Decimal("250000.00")
+    assert cmb[0]["counterparty"] == "赛事客户"
+    assert cmb[0]["business_note"] == "赛事服务收入"
+    assert cmb[1]["expense"] == Decimal("50000.00")
+    assert cmb[1]["project_reference"] == "Cc2610"
+
+
+def test_generic_reimbursement_metadata_does_not_fake_business_purpose() -> None:
+    raw = (
+        "渠道流水号：ANET001##业务细类：代发##协议编号：2503"
+        "##对公回单摘要：网银报销 网银报销##备注："
+    )
+    assert finance_system._meaningful_business_note(raw, "本系统转帐") is None
 
 
 def _configure(monkeypatch, tmp_path, db: Session, user: User) -> TestClient:
@@ -212,6 +306,36 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
             f"/v1/finance/statements/{first.json()['id']}/transactions"
         )
         assert transactions.status_code == 200
+        assert transactions.json()[0]["note"] == "项目回款"
+        assert transactions.json()[1]["note"] == "场地费用"
+        transaction_rows = db.scalars(
+            select(BankTransaction).where(
+                BankTransaction.batch_id == first.json()["id"]
+            )
+        ).all()
+        for transaction_row in transaction_rows:
+            transaction_row.note = None
+            transaction_row.project_reference = None
+        db.commit()
+        repeated = client.post(
+            "/v1/finance/statements/upload",
+            data=form,
+            files={
+                "file": (
+                    "statement.xlsx",
+                    statement_bytes,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+        assert repeated.status_code == 200
+        assert repeated.json()["duplicate_file"] is True
+        assert repeated.json()["annotation_updates"]["note_updates"] == 2
+        refreshed = client.get(
+            f"/v1/finance/statements/{first.json()['id']}/transactions"
+        )
+        assert refreshed.json()[0]["note"] == "项目回款"
+        assert refreshed.json()[1]["note"] == "场地费用"
         update = client.patch(
             f"/v1/finance/transactions/{transactions.json()[0]['id']}",
             json={

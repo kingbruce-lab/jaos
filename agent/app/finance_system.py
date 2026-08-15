@@ -201,28 +201,67 @@ def _normalize_header(value: object) -> str:
 
 
 HEADER_ALIASES = {
-    "date": {"交易日期", "交易时间", "记账日期", "入账日期", "交易日", "日期", "tradedate", "transactiondate"},
-    "time": {"交易时刻", "交易时间点", "时间", "tradetime", "transactiontime"},
-    "income": {"贷方发生额", "收入金额", "收入", "转入金额", "收方金额", "creditamount", "credit"},
-    "expense": {"借方发生额", "支出金额", "支出", "转出金额", "付方金额", "debitamount", "debit"},
-    "amount": {"交易金额", "发生额", "金额", "transactionamount", "amount"},
-    "direction": {"收付标志", "借贷标志", "交易方向", "资金方向", "收入支出", "direction"},
-    "balance": {"交易后余额", "账户余额", "余额", "balance", "availablebalance"},
-    "counterparty": {"对手方", "对方户名", "对方名称", "对手名称", "counterparty", "counterpartyname"},
-    "counterparty_fallback": {"收款人", "付款人"},
-    "counterparty_account": {"对手方账号", "对方账号", "对方账户", "counterpartyaccount"},
+    "date": {
+        "交易日期", "交易时间", "记账日期", "入账日期", "起息日", "起息日期",
+        "记账时间", "入账时间", "交易日", "日期", "tradedate", "transactiondate",
+    },
+    "time": {"交易时刻", "交易时间点", "交易时分秒", "时间", "tradetime", "transactiontime"},
+    "income": {
+        "贷方发生额", "贷方金额", "贷方交易金额", "贷方发生金额", "收入金额",
+        "收入", "转入金额", "收方金额", "收款金额", "creditamount", "credit",
+    },
+    "expense": {
+        "借方发生额", "借方金额", "借方交易金额", "借方发生金额", "支出金额",
+        "支出", "转出金额", "付方金额", "付款金额", "debitamount", "debit",
+    },
+    "amount": {"交易金额", "交易发生额", "本次发生额", "发生额", "金额", "transactionamount", "amount"},
+    "direction": {
+        "收付标志", "借贷标志", "借贷标识", "借贷方向", "收支方向", "收付方向",
+        "交易方向", "资金方向", "收入支出", "direction",
+    },
+    "balance": {
+        "交易后余额", "账户余额", "可用余额", "联机余额", "账面余额", "余额",
+        "balance", "availablebalance",
+    },
+    "counterparty": {
+        "对手方", "对方户名", "对方名称", "对方单位名称", "对方客户名称",
+        "对手名称", "收付方名称", "收/付方名称", "收方户名", "付方户名",
+        "收款方名称", "付款方名称", "counterparty", "counterpartyname",
+    },
+    "counterparty_fallback": {"收款人", "付款人", "收款方", "付款方"},
+    "counterparty_account": {
+        "对手方账号", "对方账号", "对方账户", "收付方账号", "收/付方账号",
+        "收款方账号", "付款方账号", "counterpartyaccount",
+    },
     "counterparty_account_fallback": {"收款账号", "付款账号"},
-    "purpose": {"用途", "交易用途", "purpose"},
-    "remark": {"备注", "附言", "remark"},
-    "summary": {"摘要", "交易摘要", "summary"},
-    "serial": {"流水号", "交易流水号", "银行流水号", "凭证号", "交易序号", "serial", "transactionid"},
+    "purpose": {
+        "用途", "交易用途", "交易说明", "业务事由", "款项用途", "用途摘要",
+        "附言用途", "purpose",
+    },
+    "remark": {
+        "备注", "附言", "客户附言", "附加信息", "交易附言", "交易备注",
+        "银行备注", "remark",
+    },
+    "summary": {
+        "摘要", "交易摘要", "业务摘要", "明细摘要", "交易描述", "摘要说明", "summary",
+    },
+    "serial": {
+        "流水号", "交易流水号", "银行流水号", "业务流水号", "网银流水号",
+        "交易参考号", "银行参考号", "参考号", "回单编号", "凭证号", "交易序号",
+        "serial", "transactionid",
+    },
+}
+
+NORMALIZED_HEADER_ALIASES = {
+    field: {_normalize_header(item) for item in aliases}
+    for field, aliases in HEADER_ALIASES.items()
 }
 
 
 def _field_for_header(value: object) -> str | None:
     normalized = _normalize_header(value)
-    for field, aliases in HEADER_ALIASES.items():
-        if normalized in {_normalize_header(item) for item in aliases}:
+    for field, aliases in NORMALIZED_HEADER_ALIASES.items():
+        if normalized in aliases:
             return field
     return None
 
@@ -1048,26 +1087,53 @@ def _csv_rows(payload: bytes) -> list[list[object]]:
     return [list(row) for row in csv.reader(io.StringIO(decoded))]
 
 
-def _xlsx_rows(payload: bytes) -> list[list[object]]:
+def _xlsx_sources(payload: bytes) -> list[tuple[str, list[list[object]]]]:
     workbook = load_workbook(io.BytesIO(payload), read_only=True, data_only=True)
     try:
         if not workbook.worksheets:
             return []
-        return [list(row) for row in workbook.worksheets[0].iter_rows(values_only=True)]
+        return [
+            (
+                sheet.title,
+                [list(row) for row in sheet.iter_rows(values_only=True)],
+            )
+            for sheet in workbook.worksheets
+        ]
     finally:
         workbook.close()
 
 
-def parse_statement(payload: bytes, suffix: str) -> tuple[list[dict], int]:
-    rows = _xlsx_rows(payload) if suffix == ".xlsx" else _csv_rows(payload)
-    header_index = None
+def _statement_header(
+    rows: list[list[object]],
+) -> tuple[int | None, dict[str, int]]:
+    """Find a transaction header below bank query metadata or print titles."""
+    header_index: int | None = None
     columns: dict[str, int] = {}
-    for index, row in enumerate(rows[:30]):
-        candidate = {
-            field: column_index
-            for column_index, value in enumerate(row)
-            if (field := _field_for_header(value))
-        }
+    for index, row in enumerate(rows[:200]):
+        candidate: dict[str, int] = {}
+        explicit_date_column: int | None = None
+        possible_time_column: int | None = None
+        for column_index, value in enumerate(row):
+            field = _field_for_header(value)
+            if not field:
+                continue
+            normalized = _normalize_header(value)
+            if normalized in {
+                _normalize_header("交易时间"),
+                _normalize_header("记账时间"),
+                _normalize_header("入账时间"),
+            }:
+                possible_time_column = column_index
+            elif field == "date":
+                explicit_date_column = column_index
+            candidate.setdefault(field, column_index)
+        # Some banks export separate “交易日” and “交易时间” columns, while
+        # Beijing Bank uses a single “交易时间” column containing both.  Keep
+        # the latter as the date unless a distinct date column is present.
+        if explicit_date_column is not None:
+            candidate["date"] = explicit_date_column
+            if possible_time_column is not None:
+                candidate["time"] = possible_time_column
         if "date" in candidate and (
             {"income", "expense"}.intersection(candidate)
             or "amount" in candidate
@@ -1075,13 +1141,65 @@ def parse_statement(payload: bytes, suffix: str) -> tuple[list[dict], int]:
             header_index = index
             columns = candidate
             break
-    if header_index is None:
-        raise ValueError("未找到交易日期和收支金额表头")
+    return header_index, columns
 
+
+def _meaningful_business_note(*values: object) -> str | None:
+    """Return a concise bank-provided business purpose, not protocol noise.
+
+    Personal reimbursements exported by Beijing Bank only say ``网银报销``
+    and do not contain the actual expense purpose.  Those rows deliberately
+    stay blank so finance is prompted to add the OA/reimbursement detail.
+    """
+    generic = {
+        "本系统转帐", "本系统转账", "二代小额", "网银报销", "代发", "转账",
+        "转帐", "收入", "支出", "借", "贷", "其他", "无", "暂无",
+    }
+    machine_prefixes = (
+        "渠道流水号", "网银清算", "小额网银往账", "小额来账", "大额来账",
+        "大额往账", "业务流水号", "协议编号",
+    )
+    for value in values:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if not text or text in {"-", "--"}:
+            continue
+        compact = re.sub(r"\s+", "", text)
+        if compact in generic or text.startswith(machine_prefixes):
+            continue
+        if "##" in text and any(mark in text for mark in ("业务细类：代发", "对公回单摘要：网银报销")):
+            continue
+        if re.fullmatch(r"[A-Za-z0-9_.:/-]{8,}", text):
+            continue
+        return text[:500]
+    return None
+
+
+def _project_reference_from_text(value: str | None) -> str | None:
+    text = unicodedata.normalize("NFKC", value or "")
+    match = re.search(r"(?<![A-Za-z0-9])cc[\s_-]?(\d{4,6})(?!\d)", text, re.IGNORECASE)
+    return f"Cc{match.group(1)}" if match else None
+
+
+def _parse_statement_rows(
+    rows: list[list[object]],
+    header_index: int,
+    columns: dict[str, int],
+) -> tuple[list[dict], int]:
     parsed: list[dict] = []
     errors = 0
+
     for row in rows[header_index + 1:]:
         if not any(value not in (None, "") for value in row):
+            continue
+
+        repeated_header = {
+            field
+            for value in row
+            if (field := _field_for_header(value))
+        }
+        if "date" in repeated_header and (
+            {"income", "expense", "amount"}.intersection(repeated_header)
+        ):
             continue
 
         def value(field: str):
@@ -1103,9 +1221,16 @@ def parse_statement(payload: bytes, suffix: str) -> tuple[list[dict], int]:
                     expense = abs(amount)
                 elif amount > 0:
                     income = amount
-        if transacted_at is None or (income == 0 and expense == 0):
+        if transacted_at is None:
+            if income or expense or _decimal(value("amount")):
+                errors += 1
+            continue
+        if income == 0 and expense == 0:
             errors += 1
             continue
+        business_note = _meaningful_business_note(
+            value("purpose"), value("remark"), value("summary")
+        )
         parsed.append({
             "transacted_at": transacted_at,
             "income": income,
@@ -1120,10 +1245,37 @@ def parse_statement(payload: bytes, suffix: str) -> tuple[list[dict], int]:
             "summary": _combined_summary(
                 value("purpose"), value("remark"), value("summary")
             ),
+            "business_note": business_note,
+            "project_reference": _project_reference_from_text(business_note),
             "serial": str(value("serial") or "").strip() or None,
         })
+    return parsed, errors
+
+
+def parse_statement(payload: bytes, suffix: str) -> tuple[list[dict], int]:
+    sources = (
+        _xlsx_sources(payload)
+        if suffix == ".xlsx"
+        else [("CSV", _csv_rows(payload))]
+    )
+    parsed: list[dict] = []
+    errors = 0
+    scanned_names: list[str] = []
+    for source_name, rows in sources:
+        scanned_names.append(source_name)
+        header_index, columns = _statement_header(rows)
+        if header_index is None:
+            continue
+        source_rows, source_errors = _parse_statement_rows(
+            rows, header_index, columns
+        )
+        parsed.extend(source_rows)
+        errors += source_errors
     if not parsed:
-        raise ValueError("没有解析到有效流水，请检查银行导出格式")
+        detail = "、".join(scanned_names[:6]) or "空工作簿"
+        raise ValueError(
+            f"没有解析到有效流水；已检查工作表：{detail}。请上传银行导出的交易明细表，不要只上传查询条件或汇总页"
+        )
     return parsed, errors
 
 
@@ -1143,6 +1295,46 @@ def _transaction_fingerprint(account_id: str, row: dict) -> str:
         row["summary"] or "",
     ]
     return hashlib.sha256("|".join(values).encode("utf-8")).hexdigest().upper()
+
+
+def _merge_statement_annotations(
+    db: Session,
+    batch: BankStatementBatch,
+    rows: list[dict],
+) -> dict[str, int]:
+    """Fill newly recognised annotations without touching human corrections.
+
+    Parser support grows as finance supplies more bank templates.  A repeated
+    upload must therefore be able to enrich an existing batch, while the bank
+    facts and every value already confirmed by finance remain immutable.
+    """
+    transactions = {
+        item.fingerprint: item
+        for item in db.scalars(
+            select(BankTransaction).where(
+                BankTransaction.batch_id == batch.id
+            )
+        ).all()
+    }
+    note_updates = 0
+    project_reference_updates = 0
+    for row in rows:
+        fingerprint = _transaction_fingerprint(batch.account_id, row)
+        item = transactions.get(fingerprint)
+        if item is None:
+            continue
+        business_note = str(row.get("business_note") or "").strip()
+        project_reference = str(row.get("project_reference") or "").strip()
+        if not (item.note or "").strip() and business_note:
+            item.note = business_note
+            note_updates += 1
+        if not (item.project_reference or "").strip() and project_reference:
+            item.project_reference = project_reference
+            project_reference_updates += 1
+    return {
+        "note_updates": note_updates,
+        "project_reference_updates": project_reference_updates,
+    }
 
 
 def _batch_payload(batch: BankStatementBatch, db: Session) -> dict:
@@ -1450,7 +1642,23 @@ async def upload_statement(
         )
     )
     if existing:
-        return {**_batch_payload(existing, db), "duplicate_file": True}
+        annotation_updates = _merge_statement_annotations(db, existing, rows)
+        if any(annotation_updates.values()):
+            db.add(AuditLog(
+                user_id=user.id,
+                action="finance_statement_annotation_refresh",
+                details_json=json.dumps({
+                    "batch_id": existing.id,
+                    **annotation_updates,
+                    "source": "duplicate_upload",
+                }, ensure_ascii=False),
+            ))
+            db.commit()
+        return {
+            **_batch_payload(existing, db),
+            "duplicate_file": True,
+            "annotation_updates": annotation_updates,
+        }
 
     year = min(_business_date(row["transacted_at"]).year for row in rows)
     target = (
@@ -1520,6 +1728,8 @@ async def upload_statement(
             ),
             summary=row["summary"],
             bank_serial=row["serial"],
+            note=row.get("business_note"),
+            project_reference=row.get("project_reference"),
             fingerprint=fingerprint,
         ))
         inserted += 1
