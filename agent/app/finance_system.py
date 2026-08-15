@@ -1126,7 +1126,10 @@ def _statement_header(
                 possible_time_column = column_index
             elif field == "date":
                 explicit_date_column = column_index
-            candidate.setdefault(field, column_index)
+            # Keep the right-most match, preserving the original parser's
+            # priority when a bank exports both “凭证号” and the more useful
+            # “流水号” (or both fallback and canonical columns).
+            candidate[field] = column_index
         # Some banks export separate “交易日” and “交易时间” columns, while
         # Beijing Bank uses a single “交易时间” column containing both.  Keep
         # the latter as the date unless a distinct date column is present.

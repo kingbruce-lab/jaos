@@ -218,6 +218,7 @@ def test_beijing_bank_column_priority_summary_and_timezone() -> None:
     assert item["counterparty_account"] == "121928339410201"
     assert item["summary"] == "服务费 · 网银清算，贷记来帐79311262 · 本系统转帐"
     assert item["business_note"] == "服务费"
+    assert item["serial"] == "ASOB001000535425969"
 
 
 def test_multisheet_minsheng_and_cmb_templates_are_parsed() -> None:
