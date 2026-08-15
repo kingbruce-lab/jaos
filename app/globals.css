@@ -350,6 +350,59 @@
 .transactionEditActions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 9px; }
 .transactionEditActions button { min-width: 100px; padding: 10px 14px; border: 0; border-radius: 8px; color: #fff; background: #1763a4; font-weight: 750; }
 .transactionEditActions .secondaryButton { border: 1px solid #d8dee6; color: #33435b; background: #fff; }
+.transactionPurposePendingBadge { display: block; margin-top: 7px; padding: 7px 9px; border-left: 3px solid #e29a22; border-radius: 5px; color: #925800 !important; background: #fff8e9; font-size: 11px; font-weight: 800; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+.transactionEditWorkflow { display: grid; gap: 12px; }
+.transactionPurposeWorkflow { display: grid; gap: 11px; padding: 16px; border: 1px solid #edd7b5; border-radius: 10px; background: #fffcf6; }
+.transactionPurposeWorkflow.pending { border-color: #e6b861; background: #fff8e9; }
+.transactionPurposeWorkflow > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.transactionPurposeWorkflow > header div span, .transactionPurposeWorkflow > header div strong { display: block; }
+.transactionPurposeWorkflow > header div span { color: #9a6a1b; font-size: 10px; font-weight: 850; letter-spacing: 1.2px; }
+.transactionPurposeWorkflow > header div strong { margin-top: 3px; color: #25344b; font-size: 14px; }
+.transactionPurposeWorkflow > p { margin: 0; color: #516077; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.purposeStatus { display: inline-flex; align-items: center; width: fit-content; padding: 6px 9px; border-radius: 999px; font-size: 11px; font-style: normal; white-space: nowrap; }
+.purposeStatus.pending { color: #9a5d00; background: #fff0cf; }
+.purposeStatus.approved { color: #08754e; background: #e5f7ee; }
+.purposeStatus.rejected { color: #b72838; background: #fdecef; }
+.transactionPurposeDecision { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid rgba(157, 112, 30, .16); border-radius: 8px; background: rgba(255,255,255,.72); }
+.transactionPurposeDecision span, .transactionPurposeDecision small { color: #7c8797; font-size: 11px; }
+.transactionPurposeDecision strong { color: #17243a; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.transactionPurposeDecision em { color: #59687b; font-size: 11px; font-style: normal; }
+.purposeCorrectionForm { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.purposeCorrectionForm label { display: grid; gap: 6px; color: #596579; font-size: 11px; font-weight: 750; }
+.purposeCorrectionForm textarea { width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid #d9c397; border-radius: 8px; background: #fff; resize: vertical; line-height: 1.55; }
+.purposeCorrectionForm button, .purposeApproveButton { min-height: 42px; padding: 10px 15px; border: 0; border-radius: 8px; color: #fff; background: #d91d2b; font-weight: 800; }
+.purposePendingHint { color: #8b6729; font-size: 11px; line-height: 1.55; }
+.financePurposeReviewPanel { padding: 26px; }
+.financePurposeReviewPanel.attention { border-color: #ebc277; box-shadow: 0 12px 34px rgba(132, 87, 14, .08); }
+.financePurposeReviewHeader { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.financePurposeReviewHeader p { margin: 0 0 7px; color: #9a6a1b; font-size: 11px; font-weight: 850; letter-spacing: 1.7px; }
+.financePurposeReviewHeader h2 { margin: 0; font-size: 24px; }
+.financePurposeReviewHeader > div > span { display: block; margin-top: 8px; color: #708096; font-size: 13px; line-height: 1.6; }
+.financePurposeReviewHeader aside { display: grid; place-items: center; min-width: 100px; padding: 14px; border-radius: 12px; color: #934f00; background: #fff4dd; }
+.financePurposeReviewHeader aside strong { font-size: 27px; }
+.financePurposeReviewHeader aside span { font-size: 11px; font-weight: 750; }
+.financePurposeReviewList { display: grid; gap: 11px; margin-top: 18px; }
+.financePurposeReviewList > article { display: grid; gap: 12px; padding: 16px; border: 1px solid #e3e8ee; border-radius: 11px; background: #fff; }
+.financePurposeReviewList > article.pending { border-color: #e8c47f; background: #fffdf8; }
+.financePurposeReviewList > article > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.financePurposeReviewList > article > header > div { display: flex; align-items: center; gap: 10px; }
+.financePurposeReviewList time { color: #778398; font-size: 12px; }
+.financePurposeReviewList > article > header > strong { font-size: 17px; }
+.financePurposeTransactionMeta { display: grid; gap: 4px; }
+.financePurposeTransactionMeta > strong { color: #1d2b40; font-size: 15px; }
+.financePurposeTransactionMeta span, .financePurposeTransactionMeta small { color: #7c8899; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.financePurposeCompare { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 11px; }
+.financePurposeCompare > div { padding: 11px 12px; border-radius: 8px; background: #f5f7fa; }
+.financePurposeCompare > div:last-child { background: #fff5f0; }
+.financePurposeCompare span { color: #7b8798; font-size: 10px; font-weight: 750; }
+.financePurposeCompare p { margin: 5px 0 0; color: #26344a; font-size: 13px; font-weight: 750; line-height: 1.55; overflow-wrap: anywhere; }
+.financePurposeCompare > i { align-self: center; color: #ca3542; font-size: 18px; font-style: normal; }
+.financePurposeReviewList footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 9px 14px; }
+.financePurposeReviewList footer > span, .financePurposeReviewList footer > em { color: #7d8898; font-size: 11px; font-style: normal; }
+.financePurposeReviewList footer > div { display: flex; gap: 8px; margin-left: auto; }
+.purposeRejectButton { min-height: 42px; padding: 9px 14px; border: 1px solid #efb7be; border-radius: 8px; color: #af2735; background: #fff6f7; font-weight: 800; }
+.financePurposeReviewEmpty { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 92px; border: 1px dashed #dbe3ea; border-radius: 10px; color: #728196; }
+.financePurposeReviewEmpty b { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: #11825b; background: #e8f7f0; }
 .cashEntryList { display: grid; }
 .cashEntryList article { display: grid; grid-template-columns: 90px minmax(0,1fr) auto; gap: 14px; align-items: center; padding: 12px 0; border-bottom: 1px solid #edf0f3; }
 .cashEntryList span, .cashEntryList small { color: #8b94a3; font-size: 10px; }
@@ -4121,6 +4174,104 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
 
   .pmProcessFinanceEditor button {
     min-height: 46px;
+    width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .financePurposeReviewPanel {
+    padding: 16px;
+  }
+
+  .financePurposeReviewHeader {
+    align-items: flex-start;
+  }
+
+  .financePurposeReviewHeader h2 {
+    font-size: 21px;
+  }
+
+  .financePurposeReviewHeader > div > span {
+    font-size: 13px;
+  }
+
+  .financePurposeReviewHeader aside {
+    min-width: 72px;
+    padding: 10px;
+  }
+
+  .financePurposeReviewList > article {
+    padding: 14px;
+  }
+
+  .financePurposeReviewList > article > header,
+  .financePurposeReviewList footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .financePurposeReviewList > article > header > div {
+    flex-wrap: wrap;
+  }
+
+  .financePurposeCompare {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .financePurposeCompare > i {
+    transform: rotate(90deg);
+    justify-self: center;
+  }
+
+  .financePurposeReviewList footer > div {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .financePurposeReviewList footer > div > button {
+    min-height: 46px;
+    width: 100%;
+  }
+
+  .financePurposeReviewList footer > div > .secondaryButton:first-child:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .transactionPurposeWorkflow {
+    padding: 14px;
+  }
+
+  .transactionPurposeWorkflow > header {
+    align-items: flex-start;
+  }
+
+  .purposeCorrectionForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .purposeCorrectionForm textarea {
+    min-height: 112px;
+    font-size: 16px;
+  }
+
+  .purposeCorrectionForm button {
+    min-height: 46px;
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .financePurposeReviewHeader {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .financePurposeReviewHeader aside {
+    display: flex;
+    justify-content: center;
+    gap: 7px;
     width: 100%;
   }
 }

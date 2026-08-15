@@ -214,6 +214,47 @@ class BankTransaction(Base):
     )
 
 
+class BankTransactionPurposeCorrection(Base):
+    """Founder-reviewed correction to a bank transaction's business purpose.
+
+    ``BankTransaction.summary`` remains the immutable bank-originated memo.
+    Finance proposes a corrected business purpose here; only an approved
+    correction is copied to ``BankTransaction.note``.  ``pending_key`` is set
+    to the transaction id while a request is pending and cleared after review,
+    providing a portable one-pending-request-per-transaction constraint in
+    both PostgreSQL and the SQLite test database.
+    """
+
+    __tablename__ = "bank_transaction_purpose_corrections"
+    __table_args__ = (
+        UniqueConstraint(
+            "pending_key",
+            name="uq_bank_transaction_purpose_correction_pending",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    transaction_id: Mapped[str] = mapped_column(
+        ForeignKey("bank_transactions.id"), index=True
+    )
+    entity_id: Mapped[str] = mapped_column(ForeignKey("business_entities.id"), index=True)
+    pending_key: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    previous_purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    proposed_purpose: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    requested_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class CashEntry(Base):
     __tablename__ = "cash_entries"
 

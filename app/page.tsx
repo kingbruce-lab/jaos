@@ -478,6 +478,38 @@ type FinanceTransaction = {
   pm_project_id: string | null;
   project_reference: string | null;
   status: string;
+  purpose_correction: FinancePurposeCorrection | null;
+};
+
+type FinancePurposeCorrection = {
+  id: string;
+  transaction_id: string;
+  entity_id: string;
+  previous_purpose: string | null;
+  proposed_purpose: string;
+  status: "pending" | "approved" | "rejected";
+  requested_by: string;
+  requested_at: string;
+  reviewed_by: string;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  transaction: {
+    transacted_at: string | null;
+    counterparty: string | null;
+    income: MoneyValue;
+    expense: MoneyValue;
+    summary: string | null;
+    current_purpose: string | null;
+    batch_id: string | null;
+    batch_filename: string;
+  };
+};
+
+type FinancePurposeCorrectionRegistry = {
+  items: FinancePurposeCorrection[];
+  pending_count: number;
+  approved_count: number;
+  rejected_count: number;
 };
 
 type CashLedgerEntry = {
@@ -1490,6 +1522,12 @@ export default function Home() {
   const [financeIncludeInternalTransfers, setFinanceIncludeInternalTransfers] = useState(false);
   const [selectedFinanceBatch, setSelectedFinanceBatch] = useState("");
   const [financeTransactions, setFinanceTransactions] = useState<FinanceTransaction[]>([]);
+  const [financePurposeCorrections, setFinancePurposeCorrections] = useState<FinancePurposeCorrectionRegistry>({
+    items: [],
+    pending_count: 0,
+    approved_count: 0,
+    rejected_count: 0,
+  });
   const [financeBusy, setFinanceBusy] = useState("");
   const [financeMessage, setFinanceMessage] = useState("");
   const [financeUploadError, setFinanceUploadError] = useState("");
@@ -1743,13 +1781,15 @@ export default function Home() {
         : Promise.resolve([] as CashLedgerEntry[]),
       kbFetch<FinanceInternalTransferApiRegistry>(`v1/finance/internal-transfers${transferQuery}&review_status=all&limit=100`, {}, token),
       kbFetch<FinanceAnnualYears>(`v1/finance/annual-years${transferQuery}`, {}, token),
-    ]).then(([dashboard, batches, cash, transfers, annualYears]) => {
+      kbFetch<FinancePurposeCorrectionRegistry>(`v1/finance/purpose-corrections${transferQuery}&review_status=all&limit=100`, {}, token),
+    ]).then(([dashboard, batches, cash, transfers, annualYears, purposeCorrections]) => {
       if (cancelled) return;
       setFinanceDashboard(dashboard);
       setFinanceBatches(batches);
       setFinanceCash(cash);
       setFinanceTransfers(normalizeFinanceTransferRegistry(transfers));
       setFinanceAnnualYears(annualYears.years);
+      setFinancePurposeCorrections(purposeCorrections);
     }).catch((cause) => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : "公司财务数据加载失败");
     }).finally(() => {
@@ -2917,7 +2957,7 @@ export default function Home() {
     if (!entity) return;
     const query = `?entity_id=${encodeURIComponent(selectedFinanceEntityId)}&include_internal_transfers=${financeIncludeInternalTransfers ? "true" : "false"}`;
     const transferQuery = `?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`;
-    const [dashboard, batches, cash, transfers, annualYears, annualDashboard] = await Promise.all([
+    const [dashboard, batches, cash, transfers, annualYears, annualDashboard, purposeCorrections] = await Promise.all([
       kbFetch<FinanceDashboard>(`v1/finance/dashboard${query}`, {}, token),
       kbFetch<FinanceBatch[]>(`v1/finance/statements${query}`, {}, token),
       entity.show_cash
@@ -2932,12 +2972,14 @@ export default function Home() {
             {},
             token,
           ),
+      kbFetch<FinancePurposeCorrectionRegistry>(`v1/finance/purpose-corrections${transferQuery}&review_status=all&limit=100`, {}, token),
     ]);
     setFinanceDashboard(dashboard);
     setFinanceBatches(batches);
     setFinanceCash(cash);
     setFinanceTransfers(normalizeFinanceTransferRegistry(transfers));
     setFinanceAnnualYears(annualYears.years);
+    setFinancePurposeCorrections(purposeCorrections);
     if (annualDashboard) setFinanceAnnualDashboard(annualDashboard);
   }
 
@@ -2952,6 +2994,7 @@ export default function Home() {
     setFinanceBatches([]);
     setFinanceCash([]);
     setFinanceTransfers({ confirmed_amount: 0, candidate_amount: 0, confirmed_count: 0, candidate_count: 0, items: [] });
+    setFinancePurposeCorrections({ items: [], pending_count: 0, approved_count: 0, rejected_count: 0 });
     setSelectedFinanceBatch("");
     setFinanceTransactions([]);
     setFinanceMessage("");
@@ -3062,7 +3105,6 @@ export default function Home() {
     try {
       const payload: Record<string, string | null> = {
         category: String(data.get("category") || "其他"),
-        note: String(data.get("note") || "").trim() || null,
         project_reference: String(data.get("project_reference") || "").trim() || null,
         pm_project_id: String(data.get("pm_project_id") || "") || null,
       };
@@ -3076,10 +3118,87 @@ export default function Home() {
       }, token);
       if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch);
       setFinanceMessage(annotationOnly
-        ? "业务事由、项目段和财务分类已补充，银行原始流水未改动。"
+        ? "财务分类和项目关联已更新；银行原始附言及已采用用途未改动。"
         : "流水基础信息与业务核对信息已更新。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "流水修改失败");
+    } finally {
+      setFinanceBusy("");
+    }
+  }
+
+  async function handlePurposeCorrectionRequest(
+    event: FormEvent<HTMLFormElement>,
+    transactionId: string,
+  ) {
+    event.preventDefault();
+    if (!token || !selectedFinanceEntityId) return;
+    const data = new FormData(event.currentTarget);
+    const proposedPurpose = String(data.get("proposed_purpose") || "").trim();
+    if (!proposedPurpose) {
+      setError("请填写修正后的实际业务用途");
+      return;
+    }
+    setFinanceBusy(`purpose-request-${transactionId}`);
+    setFinanceMessage("");
+    setError("");
+    try {
+      await kbFetch(
+        `v1/finance/transactions/${encodeURIComponent(transactionId)}/purpose-corrections?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`,
+        {
+          method: "POST",
+          body: JSON.stringify({ proposed_purpose: proposedPurpose }),
+        },
+        token,
+      );
+      setFinanceMessage("用途修正已提交，创始人复核通过后才会正式生效。");
+      await refreshFinance();
+      if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "用途修正提交失败");
+    } finally {
+      setFinanceBusy("");
+    }
+  }
+
+  async function handlePurposeCorrectionReview(
+    correctionId: string,
+    decision: "approve" | "reject",
+  ) {
+    if (!token || !selectedFinanceEntityId) return;
+    const reviewComment = window.prompt(
+      decision === "approve"
+        ? "确认批准这项用途修正？可填写复核说明（可留空）。"
+        : "请填写拒绝原因（必填）。",
+      "",
+    );
+    if (reviewComment === null) return;
+    if (decision === "reject" && !reviewComment.trim()) {
+      setError("拒绝用途修正时必须填写原因");
+      return;
+    }
+    setFinanceBusy(`purpose-review-${correctionId}`);
+    setFinanceMessage("");
+    setError("");
+    try {
+      await kbFetch(
+        `v1/finance/purpose-corrections/${encodeURIComponent(correctionId)}/review?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            decision,
+            review_comment: reviewComment.trim() || null,
+          }),
+        },
+        token,
+      );
+      setFinanceMessage(decision === "approve"
+        ? "用途修正已通过，系统已采用复核后的实际业务用途。"
+        : "用途修正已拒绝，系统继续保留原用途。");
+      await refreshFinance();
+      if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "用途修正复核失败");
     } finally {
       setFinanceBusy("");
     }
@@ -4491,6 +4610,7 @@ export default function Home() {
             batches={financeBatches}
             cashEntries={financeCash}
             transfers={financeTransfers}
+            purposeCorrections={financePurposeCorrections}
             includeInternalTransfers={financeIncludeInternalTransfers}
             selectedBatch={selectedFinanceBatch}
             transactions={financeTransactions}
@@ -4498,6 +4618,7 @@ export default function Home() {
             message={financeMessage}
             uploadError={financeUploadError}
             canEditBank={canEditBankStatements}
+            canReviewPurposeCorrections={canReviewManagedProject}
             canEditCash={canEditCash && selectedFinanceEntity.show_cash}
             projects={selectedFinanceProjects}
             onEntitySelect={handleFinanceEntitySelect}
@@ -4509,6 +4630,8 @@ export default function Home() {
             onSelectBatch={handleFinanceBatchSelect}
             onConfirmBatch={handleConfirmStatement}
             onUpdateTransaction={handleTransactionUpdate}
+            onPurposeCorrectionRequest={handlePurposeCorrectionRequest}
+            onPurposeCorrectionReview={handlePurposeCorrectionReview}
           />
         )}
 
@@ -6791,6 +6914,7 @@ function FinanceWorkspace({
   batches,
   cashEntries,
   transfers,
+  purposeCorrections,
   includeInternalTransfers,
   selectedBatch,
   transactions,
@@ -6798,6 +6922,7 @@ function FinanceWorkspace({
   message,
   uploadError,
   canEditBank,
+  canReviewPurposeCorrections,
   canEditCash,
   projects,
   onEntitySelect,
@@ -6809,6 +6934,8 @@ function FinanceWorkspace({
   onSelectBatch,
   onConfirmBatch,
   onUpdateTransaction,
+  onPurposeCorrectionRequest,
+  onPurposeCorrectionReview,
 }: {
   user: User;
   entity: FinanceEntity;
@@ -6820,6 +6947,7 @@ function FinanceWorkspace({
   batches: FinanceBatch[];
   cashEntries: CashLedgerEntry[];
   transfers: FinanceInternalTransferRegistry;
+  purposeCorrections: FinancePurposeCorrectionRegistry;
   includeInternalTransfers: boolean;
   selectedBatch: string;
   transactions: FinanceTransaction[];
@@ -6827,6 +6955,7 @@ function FinanceWorkspace({
   message: string;
   uploadError: string;
   canEditBank: boolean;
+  canReviewPurposeCorrections: boolean;
   canEditCash: boolean;
   projects: ManagedProject[];
   onEntitySelect: (entityId: string) => void;
@@ -6838,6 +6967,8 @@ function FinanceWorkspace({
   onSelectBatch: (batchId: string) => Promise<void>;
   onConfirmBatch: (batchId: string) => Promise<void>;
   onUpdateTransaction: (event: FormEvent<HTMLFormElement>, transactionId: string) => Promise<void>;
+  onPurposeCorrectionRequest: (event: FormEvent<HTMLFormElement>, transactionId: string) => Promise<void>;
+  onPurposeCorrectionReview: (correctionId: string, decision: "approve" | "reject") => Promise<void>;
 }) {
   const chartMax = Math.max(1, ...(dashboard?.weekly || []).flatMap((item) => [Number(item.income), Number(item.expense)]));
   const selected = batches.find((item) => item.id === selectedBatch);
@@ -6857,6 +6988,47 @@ function FinanceWorkspace({
     const linked = projects.find((project) => project.id === item.pm_project_id);
     if (linked) return `${linked.project_no} · ${linked.name}`;
     return item.project_reference || "未关联项目";
+  };
+  const purposeStatusLabel = (status: FinancePurposeCorrection["status"]) => ({
+    pending: "待创始人复核",
+    approved: "已通过",
+    rejected: "已拒绝",
+  })[status];
+  const renderPurposeCorrectionWorkflow = (item: FinanceTransaction) => {
+    const correction = item.purpose_correction;
+    const isPending = correction?.status === "pending";
+    return (
+      <section className={`transactionPurposeWorkflow ${isPending ? "pending" : ""}`}>
+        <header>
+          <div><span>实际业务用途</span><strong>修正需创始人复核</strong></div>
+          {correction && <b className={`purposeStatus ${correction.status}`}>{purposeStatusLabel(correction.status)}</b>}
+        </header>
+        <p>当前采用：{item.note || "尚未填写"}</p>
+        {correction && (
+          <div className="transactionPurposeDecision">
+            <span>{correction.status === "pending" ? "本次申请" : "最近申请"}</span>
+            <strong>{correction.proposed_purpose}</strong>
+            <small>
+              {correction.requested_by} · {formatShanghaiDateTime(correction.requested_at)}
+              {correction.reviewed_by ? ` · ${correction.reviewed_by}已复核` : ""}
+            </small>
+            {correction.review_comment && <em>复核说明：{correction.review_comment}</em>}
+          </div>
+        )}
+        {canEditBank && !isPending && (
+          <form className="purposeCorrectionForm" onSubmit={(event) => onPurposeCorrectionRequest(event, item.id)}>
+            <label>
+              <span>修正后的实际业务用途</span>
+              <textarea name="proposed_purpose" rows={3} required maxLength={1000} placeholder="写清实际收入来源或支出用途；提交后需创始人复核" />
+            </label>
+            <button type="submit" disabled={busy === `purpose-request-${item.id}`}>
+              {busy === `purpose-request-${item.id}` ? "提交中…" : "提交创始人复核"}
+            </button>
+          </form>
+        )}
+        {isPending && <small className="purposePendingHint">复核完成前不会覆盖当前采用用途，也不会修改银行原始附言。</small>}
+      </section>
+    );
   };
 
   const entitySwitcher = (
@@ -7279,6 +7451,71 @@ function FinanceWorkspace({
         </div>
       </section>
 
+      <section className={`panel financePurposeReviewPanel ${purposeCorrections.pending_count ? "attention" : ""}`}>
+        <header className="financePurposeReviewHeader">
+          <div>
+            <p>PURPOSE CORRECTION REVIEW</p>
+            <h2>流水实际用途修正</h2>
+            <span>银行原始附言永久保留；财务提交的实际用途只有创始人复核通过后才生效。</span>
+          </div>
+          <aside>
+            <strong>{purposeCorrections.pending_count}</strong>
+            <span>项待复核</span>
+          </aside>
+        </header>
+        <div className="financePurposeReviewList">
+          {purposeCorrections.items.slice(0, 20).map((correction) => {
+            const isIncome = Number(correction.transaction.income) > 0;
+            return (
+              <article className={correction.status} key={correction.id}>
+                <header>
+                  <div>
+                    <b className={`purposeStatus ${correction.status}`}>{purposeStatusLabel(correction.status)}</b>
+                    <time>{correction.transaction.transacted_at ? formatShanghaiDateTime(correction.transaction.transacted_at) : "日期未知"}</time>
+                  </div>
+                  <strong className={isIncome ? "financeIncomeAmount" : "financeExpenseAmount"}>
+                    {isIncome ? "收入" : "支出"} {formatMoney(isIncome ? correction.transaction.income : correction.transaction.expense)}
+                  </strong>
+                </header>
+                <div className="financePurposeTransactionMeta">
+                  <strong>{correction.transaction.counterparty || "未识别对方单位"}</strong>
+                  <span>{correction.transaction.batch_filename}</span>
+                  {correction.transaction.summary && <small>银行原始附言：{correction.transaction.summary}</small>}
+                </div>
+                <div className="financePurposeCompare">
+                  <div><span>当前采用用途</span><p>{correction.previous_purpose || "尚未填写"}</p></div>
+                  <i>→</i>
+                  <div><span>财务申请修正为</span><p>{correction.proposed_purpose}</p></div>
+                </div>
+                <footer>
+                  <span>
+                    申请人 {correction.requested_by} · {formatShanghaiDateTime(correction.requested_at)}
+                    {correction.reviewed_by ? ` · 复核人 ${correction.reviewed_by}` : ""}
+                  </span>
+                  {correction.review_comment && <em>复核说明：{correction.review_comment}</em>}
+                  <div>
+                    {correction.transaction.batch_id && (
+                      <button type="button" className="secondaryButton" onClick={() => void onSelectBatch(correction.transaction.batch_id || "")}>查看所在批次</button>
+                    )}
+                    {canReviewPurposeCorrections && correction.status === "pending" && (
+                      <>
+                        <button type="button" className="purposeRejectButton" disabled={busy === `purpose-review-${correction.id}`} onClick={() => void onPurposeCorrectionReview(correction.id, "reject")}>拒绝</button>
+                        <button type="button" className="purposeApproveButton" disabled={busy === `purpose-review-${correction.id}`} onClick={() => void onPurposeCorrectionReview(correction.id, "approve")}>批准并采用</button>
+                      </>
+                    )}
+                  </div>
+                </footer>
+              </article>
+            );
+          })}
+          {!purposeCorrections.items.length && (
+            <div className="financePurposeReviewEmpty">
+              <b>✓</b><span>当前没有用途修正申请</span>
+            </div>
+          )}
+        </div>
+      </section>
+
       {selected && (
         <section className="panel transactionPanel">
           <PanelTitle eyebrow="TRANSACTIONS" title={`${selected.company} · ${selected.row_count} 条流水`} />
@@ -7299,6 +7536,9 @@ function FinanceWorkspace({
                               ? "银行原表仅标注“网银报销”，需补充具体事由"
                               : "业务事由待补充"}
                         </small>
+                        {item.purpose_correction?.status === "pending" && (
+                          <small className="transactionPurposePendingBadge">用途修正待创始人复核：{item.purpose_correction.proposed_purpose}</small>
+                        )}
                         {item.summary && (
                           <details className="bankRawSummary">
                             <summary>查看银行原始附言</summary>
@@ -7313,7 +7553,7 @@ function FinanceWorkspace({
                           >
                             {editingTransactionId === item.id
                               ? "收起"
-                              : selected.status === "confirmed" ? "补充业务信息" : "核对 / 补充"}
+                              : selected.status === "confirmed" ? "分类 / 用途修正" : "核对 / 用途修正"}
                           </button>
                         )}
                       </td>
@@ -7328,27 +7568,29 @@ function FinanceWorkspace({
                     {editingTransactionId === item.id && canEditBank && (
                       <tr className="transactionEditorRow">
                         <td colSpan={6}>
-                          <form
-                            className="transactionEditExpanded"
-                            onSubmit={async (event) => {
-                              await onUpdateTransaction(event, item.id);
-                              setEditingTransactionId("");
-                            }}
-                          >
-                            <input type="hidden" name="annotation_only" value={selected.status === "confirmed" ? "true" : "false"} />
-                            {selected.status !== "confirmed" && <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>}
-                            {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
-                            {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认，只补充业务信息；金额、日期、收付款人及银行原始附言不会被改动。</p>}
-                            <label className="summaryField"><span>业务事由 / 报销说明</span><textarea name="note" rows={3} defaultValue={item.note || ""} placeholder="例如：白楼912办公室刷漆" /></label>
-                            <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
-                            <label><span>飞书项目段</span><input name="project_reference" defaultValue={item.project_reference || ""} placeholder="例如：Cc2609" /></label>
-                            <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
-                            {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
-                            <div className="transactionEditActions">
-                              <button type="button" className="secondaryButton" onClick={() => setEditingTransactionId("")}>取消</button>
-                              <button type="submit" disabled={busy === `transaction-${item.id}`}>{busy === `transaction-${item.id}` ? "保存中…" : "保存修改"}</button>
-                            </div>
-                          </form>
+                          <div className="transactionEditWorkflow">
+                            <form
+                              className="transactionEditExpanded"
+                              onSubmit={async (event) => {
+                                await onUpdateTransaction(event, item.id);
+                                setEditingTransactionId("");
+                              }}
+                            >
+                              <input type="hidden" name="annotation_only" value={selected.status === "confirmed" ? "true" : "false"} />
+                              {selected.status !== "confirmed" && <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>}
+                              {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
+                              {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认；金额、日期、收付款人及银行原始附言不会被改动。实际用途修正须走下方创始人复核。</p>}
+                              <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
+                              <label><span>飞书项目段</span><input name="project_reference" defaultValue={item.project_reference || ""} placeholder="例如：Cc2609" /></label>
+                              <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
+                              {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
+                              <div className="transactionEditActions">
+                                <button type="button" className="secondaryButton" onClick={() => setEditingTransactionId("")}>取消</button>
+                                <button type="submit" disabled={busy === `transaction-${item.id}`}>{busy === `transaction-${item.id}` ? "保存中…" : "保存分类与项目"}</button>
+                              </div>
+                            </form>
+                            {renderPurposeCorrectionWorkflow(item)}
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -7376,6 +7618,9 @@ function FinanceWorkspace({
                       ? "银行原表仅标注“网银报销”，需补充具体事由"
                       : "业务事由待补充"}
                 </p>
+                {item.purpose_correction?.status === "pending" && (
+                  <p className="transactionPurposePendingBadge">用途修正待创始人复核：{item.purpose_correction.proposed_purpose}</p>
+                )}
                 {item.summary && <details className="bankRawSummary"><summary>查看银行原始附言</summary><p>{item.summary}</p></details>}
                 <dl>
                   <div><dt>余额</dt><dd>{item.balance === null ? "—" : formatMoney(item.balance)}</dd></div>
@@ -7390,31 +7635,33 @@ function FinanceWorkspace({
                   >
                     {editingTransactionId === item.id
                       ? "收起"
-                      : selected.status === "confirmed" ? "补充业务信息" : "核对 / 补充"}
+                      : selected.status === "confirmed" ? "分类 / 用途修正" : "核对 / 用途修正"}
                   </button>
                 )}
                 {editingTransactionId === item.id && canEditBank && (
-                  <form
-                    className="transactionEditExpanded mobileTransactionEditor"
-                    onSubmit={async (event) => {
-                      await onUpdateTransaction(event, item.id);
-                      setEditingTransactionId("");
-                    }}
-                  >
-                    <input type="hidden" name="annotation_only" value={selected.status === "confirmed" ? "true" : "false"} />
-                    {selected.status !== "confirmed" && <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>}
-                    {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
-                    {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认，只补充业务信息；银行原始数据不会被改动。</p>}
-                    <label className="summaryField"><span>业务事由 / 报销说明</span><textarea name="note" rows={3} defaultValue={item.note || ""} placeholder="例如：白楼912办公室刷漆" /></label>
-                    <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
-                    <label><span>飞书项目段</span><input name="project_reference" defaultValue={item.project_reference || ""} placeholder="例如：Cc2609" /></label>
-                    <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
-                    {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
-                    <div className="transactionEditActions">
-                      <button type="button" className="secondaryButton" onClick={() => setEditingTransactionId("")}>取消</button>
-                      <button type="submit" disabled={busy === `transaction-${item.id}`}>{busy === `transaction-${item.id}` ? "保存中…" : "保存修改"}</button>
-                    </div>
-                  </form>
+                  <div className="transactionEditWorkflow mobileTransactionEditor">
+                    <form
+                      className="transactionEditExpanded"
+                      onSubmit={async (event) => {
+                        await onUpdateTransaction(event, item.id);
+                        setEditingTransactionId("");
+                      }}
+                    >
+                      <input type="hidden" name="annotation_only" value={selected.status === "confirmed" ? "true" : "false"} />
+                      {selected.status !== "confirmed" && <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>}
+                      {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
+                      {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认；银行原始数据不会被改动。实际用途修正须经创始人复核。</p>}
+                      <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
+                      <label><span>飞书项目段</span><input name="project_reference" defaultValue={item.project_reference || ""} placeholder="例如：Cc2609" /></label>
+                      <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
+                      {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
+                      <div className="transactionEditActions">
+                        <button type="button" className="secondaryButton" onClick={() => setEditingTransactionId("")}>取消</button>
+                        <button type="submit" disabled={busy === `transaction-${item.id}`}>{busy === `transaction-${item.id}` ? "保存中…" : "保存分类与项目"}</button>
+                      </div>
+                    </form>
+                    {renderPurposeCorrectionWorkflow(item)}
+                  </div>
                 )}
               </article>
             ))}

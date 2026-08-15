@@ -34,6 +34,7 @@ from .models import (
     AuditLog,
     BankStatementBatch,
     BankTransaction,
+    BankTransactionPurposeCorrection,
     BusinessEntity,
     CashEntry,
     FinancialAccount,
@@ -46,6 +47,7 @@ from .retrieval import CONFIDENTIALITY_RANK
 router = APIRouter(prefix="/v1/finance", tags=["finance"])
 
 EXECUTIVE_USERNAMES = {"found", "founder", "jaanliyuan"}
+FOUNDER_USERNAMES = {"found", "founder"}
 SUPPORTED_STATEMENTS = {".xlsx", ".csv"}
 SHANGHAI_ZONE = ZoneInfo("Asia/Shanghai")
 FINANCE_ENTITY_DEFINITIONS = BUSINESS_ENTITY_DEFINITIONS
@@ -81,6 +83,15 @@ class FinanceTransactionUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
     pm_project_id: str | None = Field(default=None, max_length=36)
     project_reference: str | None = Field(default=None, max_length=80)
+
+
+class PurposeCorrectionCreate(BaseModel):
+    proposed_purpose: str = Field(min_length=1, max_length=1000)
+
+
+class PurposeCorrectionReview(BaseModel):
+    decision: Literal["approve", "reject"]
+    review_comment: str | None = Field(default=None, max_length=500)
 
 
 class InternalTransferReview(BaseModel):
@@ -120,6 +131,15 @@ def _finance_edit_allowed(user: User) -> bool:
     )
 
 
+def _founder_review_allowed(user: User) -> bool:
+    return bool(
+        user.active
+        and user.organization_role == "management"
+        and user.confidentiality_ceiling == "L5"
+        and user.username.casefold() in FOUNDER_USERNAMES
+    )
+
+
 def _cash_edit_allowed(user: User) -> bool:
     return _finance_edit_allowed(user) or bool(
         user.active
@@ -137,6 +157,11 @@ def _require_finance_view(user: User) -> None:
 def _require_finance_edit(user: User) -> None:
     if not _finance_edit_allowed(user):
         raise HTTPException(status_code=403, detail="仅财务角色可以维护银行流水")
+
+
+def _require_founder_review(user: User) -> None:
+    if not _founder_review_allowed(user):
+        raise HTTPException(status_code=403, detail="仅创始人可以复核流水用途修正")
 
 
 def _safe_part(value: str, fallback: str) -> str:
@@ -1474,6 +1499,61 @@ def _batch_payload(batch: BankStatementBatch, db: Session) -> dict:
     }
 
 
+def _purpose_correction_payload(
+    correction: BankTransactionPurposeCorrection,
+    db: Session,
+) -> dict:
+    item = db.get(BankTransaction, correction.transaction_id)
+    requester = db.get(User, correction.requested_by_user_id)
+    reviewer = (
+        db.get(User, correction.reviewed_by_user_id)
+        if correction.reviewed_by_user_id
+        else None
+    )
+    batch = db.get(BankStatementBatch, item.batch_id) if item else None
+    return {
+        "id": correction.id,
+        "transaction_id": correction.transaction_id,
+        "entity_id": correction.entity_id,
+        "previous_purpose": correction.previous_purpose,
+        "proposed_purpose": correction.proposed_purpose,
+        "status": correction.status,
+        "requested_by": requester.display_name if requester else "",
+        "requested_at": correction.requested_at,
+        "reviewed_by": reviewer.display_name if reviewer else "",
+        "reviewed_at": correction.reviewed_at,
+        "review_comment": correction.review_comment,
+        "transaction": {
+            "transacted_at": item.transacted_at if item else None,
+            "counterparty": item.counterparty if item else None,
+            "income": item.income if item else Decimal("0"),
+            "expense": item.expense if item else Decimal("0"),
+            "summary": item.summary if item else None,
+            "current_purpose": item.note if item else None,
+            "batch_id": item.batch_id if item else None,
+            "batch_filename": batch.original_filename if batch else "",
+        },
+    }
+
+
+def _latest_purpose_corrections(
+    db: Session,
+    transaction_ids: list[str],
+) -> dict[str, dict]:
+    if not transaction_ids:
+        return {}
+    rows = db.scalars(
+        select(BankTransactionPurposeCorrection)
+        .where(BankTransactionPurposeCorrection.transaction_id.in_(transaction_ids))
+        .order_by(BankTransactionPurposeCorrection.requested_at.desc())
+    ).all()
+    latest: dict[str, dict] = {}
+    for row in rows:
+        if row.transaction_id not in latest:
+            latest[row.transaction_id] = _purpose_correction_payload(row, db)
+    return latest
+
+
 def _migrate_legacy_finance_data(
     db: Session,
     headquarters: BusinessEntity,
@@ -1930,6 +2010,10 @@ def statement_transactions(
         .where(BankTransaction.batch_id == batch_id)
         .order_by(BankTransaction.transacted_at)
     ).all()
+    latest_corrections = _latest_purpose_corrections(
+        db,
+        [item.id for item in rows],
+    )
     return [{
         "id": item.id,
         "transacted_at": item.transacted_at,
@@ -1943,6 +2027,7 @@ def statement_transactions(
         "pm_project_id": item.pm_project_id,
         "project_reference": item.project_reference,
         "status": item.status,
+        "purpose_correction": latest_corrections.get(item.id),
         **{
             key: value
             for key, value in _internal_transfer_payload(db, item).items()
@@ -1958,6 +2043,156 @@ def statement_transactions(
             }
         },
     } for item in rows]
+
+
+@router.get("/purpose-corrections")
+def purpose_correction_registry(
+    entity_id: str | None = None,
+    review_status: Literal["all", "pending", "approved", "rejected"] = "all",
+    limit: int = Query(default=100, ge=1, le=200),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return an entity-scoped purpose-correction review register."""
+
+    _require_finance_view(user)
+    query = select(BankTransactionPurposeCorrection)
+    if entity_id:
+        _entity_by_id(db, entity_id)
+        query = query.where(BankTransactionPurposeCorrection.entity_id == entity_id)
+    if review_status != "all":
+        query = query.where(BankTransactionPurposeCorrection.status == review_status)
+    rows = db.scalars(
+        query.order_by(BankTransactionPurposeCorrection.requested_at.desc())
+    ).all()
+    rows.sort(key=lambda item: (item.status != "pending", -item.requested_at.timestamp()))
+    return {
+        "items": [_purpose_correction_payload(item, db) for item in rows[:limit]],
+        "pending_count": sum(1 for item in rows if item.status == "pending"),
+        "approved_count": sum(1 for item in rows if item.status == "approved"),
+        "rejected_count": sum(1 for item in rows if item.status == "rejected"),
+    }
+
+
+@router.post("/transactions/{transaction_id}/purpose-corrections")
+def request_purpose_correction(
+    transaction_id: str,
+    payload: PurposeCorrectionCreate,
+    entity_id: str | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Let finance propose a purpose without overwriting bank evidence."""
+
+    _require_finance_edit(user)
+    item = db.get(BankTransaction, transaction_id)
+    if item is None or (entity_id and item.entity_id != entity_id):
+        raise HTTPException(status_code=404, detail="流水不存在")
+    proposed = unicodedata.normalize("NFKC", payload.proposed_purpose).strip()
+    if not proposed:
+        raise HTTPException(status_code=422, detail="请填写修正后的实际业务用途")
+    current = unicodedata.normalize("NFKC", item.note or "").strip()
+    if proposed == current:
+        raise HTTPException(status_code=409, detail="修正用途与当前采用用途相同")
+    pending = db.scalar(
+        select(BankTransactionPurposeCorrection).where(
+            BankTransactionPurposeCorrection.pending_key == item.id
+        )
+    )
+    if pending is not None:
+        raise HTTPException(status_code=409, detail="该流水已有待创始人复核的用途修正")
+
+    correction = BankTransactionPurposeCorrection(
+        transaction_id=item.id,
+        entity_id=item.entity_id,
+        pending_key=item.id,
+        previous_purpose=item.note,
+        proposed_purpose=proposed,
+        status="pending",
+        requested_by_user_id=user.id,
+    )
+    db.add(correction)
+    db.flush()
+    db.add(AuditLog(
+        user_id=user.id,
+        action="finance_purpose_correction_request",
+        details_json=json.dumps({
+            "correction_id": correction.id,
+            "transaction_id": item.id,
+            "entity_id": item.entity_id,
+            "previous_purpose_hash": hashlib.sha256(
+                (item.note or "").encode("utf-8")
+            ).hexdigest(),
+            "proposed_purpose_hash": hashlib.sha256(
+                proposed.encode("utf-8")
+            ).hexdigest(),
+            "proposed_length": len(proposed),
+        }, ensure_ascii=False),
+    ))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="该流水已有待创始人复核的用途修正")
+    return _purpose_correction_payload(correction, db)
+
+
+@router.patch("/purpose-corrections/{correction_id}/review")
+def review_purpose_correction(
+    correction_id: str,
+    payload: PurposeCorrectionReview,
+    entity_id: str | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Approve or reject a finance-submitted purpose correction."""
+
+    _require_founder_review(user)
+    correction = db.get(BankTransactionPurposeCorrection, correction_id)
+    if correction is None or (entity_id and correction.entity_id != entity_id):
+        raise HTTPException(status_code=404, detail="用途修正申请不存在")
+    if correction.status != "pending":
+        raise HTTPException(status_code=409, detail="该用途修正已经完成复核")
+    review_comment = (
+        unicodedata.normalize("NFKC", payload.review_comment).strip()
+        if payload.review_comment
+        else None
+    )
+    if payload.decision == "reject" and not review_comment:
+        raise HTTPException(status_code=422, detail="拒绝时请填写复核说明")
+    item = db.get(BankTransaction, correction.transaction_id)
+    if item is None or item.entity_id != correction.entity_id:
+        raise HTTPException(status_code=404, detail="关联流水不存在")
+
+    previous_effective_purpose = item.note
+    if payload.decision == "approve":
+        item.note = correction.proposed_purpose
+        correction.status = "approved"
+    else:
+        correction.status = "rejected"
+    correction.pending_key = None
+    correction.reviewed_by_user_id = user.id
+    correction.reviewed_at = datetime.now(timezone.utc)
+    correction.review_comment = review_comment
+    db.add(AuditLog(
+        user_id=user.id,
+        action="finance_purpose_correction_review",
+        details_json=json.dumps({
+            "correction_id": correction.id,
+            "transaction_id": item.id,
+            "entity_id": item.entity_id,
+            "decision": payload.decision,
+            "previous_purpose_hash": hashlib.sha256(
+                (previous_effective_purpose or "").encode("utf-8")
+            ).hexdigest(),
+            "effective_purpose_hash": hashlib.sha256(
+                (item.note or "").encode("utf-8")
+            ).hexdigest(),
+            "review_comment_length": len(review_comment or ""),
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+    return _purpose_correction_payload(correction, db)
 
 
 @router.get("/internal-transfers")
@@ -2140,8 +2375,18 @@ def update_transaction(
         raise HTTPException(status_code=404, detail="流水不存在")
     batch = db.get(BankStatementBatch, item.batch_id)
     updated_fields = payload.model_fields_set
+    if "summary" in updated_fields:
+        raise HTTPException(
+            status_code=409,
+            detail="银行原始附言属于原始凭证，任何状态下都不可修改",
+        )
+    if "note" in updated_fields:
+        raise HTTPException(
+            status_code=409,
+            detail="实际业务用途必须提交修正申请，并由创始人复核后生效",
+        )
     if batch and batch.status == "confirmed":
-        immutable_fields = updated_fields.intersection({"transacted_at", "counterparty", "summary"})
+        immutable_fields = updated_fields.intersection({"transacted_at", "counterparty"})
         if immutable_fields:
             raise HTTPException(
                 status_code=409,
@@ -2169,12 +2414,8 @@ def update_transaction(
         item.transacted_at = edited_at.astimezone(timezone.utc)
     if "counterparty" in updated_fields:
         item.counterparty = payload.counterparty.strip() if payload.counterparty else None
-    if "summary" in updated_fields:
-        item.summary = payload.summary.strip() if payload.summary else None
     if "category" in updated_fields and payload.category is not None:
         item.category = payload.category.strip()
-    if "note" in updated_fields:
-        item.note = payload.note.strip() if payload.note else None
     if "pm_project_id" in updated_fields:
         item.pm_project_id = payload.pm_project_id
     if "project_reference" in updated_fields:

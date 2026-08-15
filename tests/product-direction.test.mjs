@@ -96,6 +96,17 @@ test("JAOS brand uses the transparent Jingao mark in a vertical sidebar lockup",
   assert.doesNotMatch(styles, /\.logoFrame \{[^}]*background:\s*#fff/s);
 });
 
+test("finance purpose corrections require founder review and preserve bank evidence", () => {
+  assert.match(page, /v1\/finance\/transactions\/\$\{encodeURIComponent\(transactionId\)\}\/purpose-corrections/);
+  assert.match(page, /v1\/finance\/purpose-corrections\/\$\{encodeURIComponent\(correctionId\)\}\/review/);
+  assert.match(page, /银行原始附言永久保留/);
+  assert.match(page, /提交创始人复核/);
+  assert.match(page, /批准并采用/);
+  assert.match(page, /拒绝用途修正时必须填写原因/);
+  assert.match(styles, /\.financePurposeReviewPanel/);
+  assert.match(styles, /\.transactionPurposeWorkflow/);
+});
+
 test("approved documents have local AI confidentiality governance with manual control", () => {
   assert.match(page, /name: "资料治理"/);
   assert.match(page, /v1\/governance\/documents/);

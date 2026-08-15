@@ -22,6 +22,7 @@ from app.models import (
     Base,
     BankStatementBatch,
     BankTransaction,
+    BankTransactionPurposeCorrection,
     BusinessEntity,
     CashEntry,
     FinancialAccount,
@@ -368,9 +369,7 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
             json={
                 "transacted_at": "2026-08-01T09:30:00",
                 "counterparty": "客户A（已核对）",
-                "summary": "项目回款 · 财务人工核对",
                 "category": "项目回款",
-                "note": "已核对",
                 "pm_project_id": None,
             },
         )
@@ -379,7 +378,7 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
             f"/v1/finance/statements/{first.json()['id']}/transactions"
         ).json()[0]
         assert updated["counterparty"] == "客户A（已核对）"
-        assert updated["summary"] == "项目回款 · 财务人工核对"
+        assert updated["summary"] == "项目回款"
         confirmed = client.post(
             f"/v1/finance/statements/{first.json()['id']}/confirm"
         )
@@ -395,7 +394,6 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
             f"/v1/finance/transactions/{transactions.json()[0]['id']}",
             json={
                 "category": "办公场地",
-                "note": "白楼912办公室刷漆",
                 "project_reference": " Cc2609 ",
                 "pm_project_id": None,
             },
@@ -404,7 +402,7 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
         annotated = client.get(
             f"/v1/finance/statements/{first.json()['id']}/transactions"
         ).json()[0]
-        assert annotated["note"] == "白楼912办公室刷漆"
+        assert annotated["note"] == "项目回款"
         assert annotated["project_reference"] == "Cc2609"
         immutable_edit = client.patch(
             f"/v1/finance/transactions/{transactions.json()[0]['id']}",
@@ -452,6 +450,173 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
             "expense": "3000.00",
             "net": "7000.00",
         }
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_finance_purpose_correction_requires_founder_review(tmp_path, monkeypatch) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        batch = client.post(
+            "/v1/finance/statements/upload",
+            data={
+                "company_name": "京奥电竞（北京）科技有限公司",
+                "bank_name": "测试银行",
+                "account_name": "基本户",
+                "account_number": "6222000099990000",
+            },
+            files={"file": ("用途审批.xlsx", _xlsx(), "application/octet-stream")},
+        ).json()
+        assert client.post(
+            f"/v1/finance/statements/{batch['id']}/confirm",
+            params={"entity_id": batch["entity_id"]},
+        ).status_code == 200
+        item = client.get(
+            f"/v1/finance/statements/{batch['id']}/transactions",
+            params={"entity_id": batch["entity_id"]},
+        ).json()[0]
+        assert item["note"] == "项目回款"
+
+        app.dependency_overrides[current_user] = lambda: users["business"]
+        assert client.post(
+            f"/v1/finance/transactions/{item['id']}/purpose-corrections",
+            params={"entity_id": batch["entity_id"]},
+            json={"proposed_purpose": "业务账号越权申请"},
+        ).status_code == 403
+        app.dependency_overrides[current_user] = lambda: users["finance"]
+
+        # The generic finance editor can never overwrite the bank memo or the
+        # effective purpose. Purpose changes must use the review workflow.
+        assert client.patch(
+            f"/v1/finance/transactions/{item['id']}",
+            params={"entity_id": batch["entity_id"]},
+            json={"note": "绕过审批直接修改"},
+        ).status_code == 409
+        assert client.patch(
+            f"/v1/finance/transactions/{item['id']}",
+            params={"entity_id": batch["entity_id"]},
+            json={"summary": "覆盖银行原始附言"},
+        ).status_code == 409
+
+        request = client.post(
+            f"/v1/finance/transactions/{item['id']}/purpose-corrections",
+            params={"entity_id": batch["entity_id"]},
+            json={"proposed_purpose": "  Cc2609 白楼912办公室刷漆  "},
+        )
+        assert request.status_code == 200
+        correction = request.json()
+        assert correction["status"] == "pending"
+        assert correction["previous_purpose"] == "项目回款"
+        assert correction["proposed_purpose"] == "Cc2609 白楼912办公室刷漆"
+        assert correction["requested_by"] == "财务"
+        assert correction["transaction"]["summary"] == "项目回款"
+        assert correction["transaction"]["current_purpose"] == "项目回款"
+        other_entity = BusinessEntity(
+            name="王牌猎豹（JAG三角洲）",
+            created_by_user_id=users["founder"].id,
+        )
+        db.add(other_entity)
+        db.commit()
+        assert client.get(
+            "/v1/finance/purpose-corrections",
+            params={"entity_id": other_entity.id},
+        ).json()["items"] == []
+        assert client.post(
+            f"/v1/finance/transactions/{item['id']}/purpose-corrections",
+            params={"entity_id": batch["entity_id"]},
+            json={"proposed_purpose": "另一用途"},
+        ).status_code == 409
+
+        registry = client.get(
+            "/v1/finance/purpose-corrections",
+            params={"entity_id": batch["entity_id"]},
+        )
+        assert registry.status_code == 200
+        assert registry.json()["pending_count"] == 1
+        assert registry.json()["items"][0]["id"] == correction["id"]
+        annotated = client.get(
+            f"/v1/finance/statements/{batch['id']}/transactions",
+            params={"entity_id": batch["entity_id"]},
+        ).json()[0]
+        assert annotated["note"] == "项目回款"
+        assert annotated["purpose_correction"]["status"] == "pending"
+
+        app.dependency_overrides[current_user] = lambda: users["manager"]
+        assert client.patch(
+            f"/v1/finance/purpose-corrections/{correction['id']}/review",
+            params={"entity_id": batch["entity_id"]},
+            json={"decision": "approve"},
+        ).status_code == 403
+        app.dependency_overrides[current_user] = lambda: users["finance"]
+        assert client.patch(
+            f"/v1/finance/purpose-corrections/{correction['id']}/review",
+            params={"entity_id": batch["entity_id"]},
+            json={"decision": "approve"},
+        ).status_code == 403
+
+        app.dependency_overrides[current_user] = lambda: users["founder"]
+        assert client.patch(
+            f"/v1/finance/purpose-corrections/{correction['id']}/review",
+            params={"entity_id": other_entity.id},
+            json={"decision": "approve"},
+        ).status_code == 404
+        approved = client.patch(
+            f"/v1/finance/purpose-corrections/{correction['id']}/review",
+            params={"entity_id": batch["entity_id"]},
+            json={"decision": "approve", "review_comment": "用途凭证已核实"},
+        )
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "approved"
+        assert approved.json()["reviewed_by"] == "叶靖波"
+        assert approved.json()["transaction"]["current_purpose"] == "Cc2609 白楼912办公室刷漆"
+        assert client.patch(
+            f"/v1/finance/purpose-corrections/{correction['id']}/review",
+            params={"entity_id": batch["entity_id"]},
+            json={"decision": "approve"},
+        ).status_code == 409
+
+        # A later proposal is allowed after review. Rejecting it requires a
+        # reason and leaves the last approved purpose unchanged.
+        app.dependency_overrides[current_user] = lambda: users["finance"]
+        second = client.post(
+            f"/v1/finance/transactions/{item['id']}/purpose-corrections",
+            params={"entity_id": batch["entity_id"]},
+            json={"proposed_purpose": "未经证明的其他用途"},
+        ).json()
+        app.dependency_overrides[current_user] = lambda: users["founder"]
+        assert client.patch(
+            f"/v1/finance/purpose-corrections/{second['id']}/review",
+            params={"entity_id": batch["entity_id"]},
+            json={"decision": "reject"},
+        ).status_code == 422
+        rejected = client.patch(
+            f"/v1/finance/purpose-corrections/{second['id']}/review",
+            params={"entity_id": batch["entity_id"]},
+            json={"decision": "reject", "review_comment": "缺少对应业务凭证"},
+        )
+        assert rejected.status_code == 200
+        assert rejected.json()["status"] == "rejected"
+        transaction = db.get(BankTransaction, item["id"])
+        assert transaction is not None
+        assert transaction.note == "Cc2609 白楼912办公室刷漆"
+        assert db.scalar(select(func.count(BankTransactionPurposeCorrection.id))) == 2
+
+        audit_payloads = [
+            row.details_json
+            for row in db.scalars(
+                select(AuditLog).where(
+                    AuditLog.action.in_({
+                        "finance_purpose_correction_request",
+                        "finance_purpose_correction_review",
+                    })
+                )
+            ).all()
+        ]
+        assert audit_payloads
+        assert all("白楼912办公室刷漆" not in payload for payload in audit_payloads)
+        assert all("未经证明的其他用途" not in payload for payload in audit_payloads)
     finally:
         app.dependency_overrides.clear()
         db.close()
