@@ -1039,6 +1039,9 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .reviewTable .success { color: #27875a; }
 
 .successNotice { color: #247250; background: #edf8f2; border-color: #cce9d9; }
+.errorNotice { color: #a22331; background: #fff1f2; border-color: #f3c6cc; }
+.financeUploadError { margin: 14px 0 0; align-items: flex-start; }
+.financeUploadError span { overflow-wrap: anywhere; }
 .uploadLayout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(260px, .55fr); gap: 16px; align-items: start; }
 .uploadForm { display: grid; gap: 16px; }
 .uploadPickerGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }

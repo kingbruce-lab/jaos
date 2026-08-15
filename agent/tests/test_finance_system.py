@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
@@ -16,6 +18,7 @@ from app.auth import current_user
 from app.database import get_db
 from app.main import app
 from app.models import (
+    AuditLog,
     Base,
     BankStatementBatch,
     BankTransaction,
@@ -193,6 +196,19 @@ def _cmb_xlsx() -> bytes:
     return output.getvalue()
 
 
+def _split_header_bank_xlsx() -> bytes:
+    """Model banks that split grouped labels and RMB units over two rows."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "交易明细"
+    sheet.append(["交易", "交易", "金额（人民币元）", "金额（人民币元）", "账户", "对方信息", "对方信息", "交易"])
+    sheet.append(["日期", "时间", "借方发生额", "贷方发生额", "余额", "户名", "账号", "用途"])
+    sheet.append(["2026-02-01", "09:30:00", 750, None, 9000, "杜萌萌", "62220001", "项目物料"])
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def _analysis_warning_xlsx() -> bytes:
     workbook = Workbook()
     sheet = workbook.active
@@ -245,6 +261,15 @@ def test_multisheet_minsheng_and_cmb_templates_are_parsed() -> None:
     assert cmb[1]["expense"] == Decimal("50000.00")
     assert cmb[1]["project_reference"] == "Cc2610"
 
+    split, split_errors = finance_system.parse_statement(
+        _split_header_bank_xlsx(), ".xlsx"
+    )
+    assert split_errors == 0
+    assert len(split) == 1
+    assert split[0]["expense"] == Decimal("750.00")
+    assert split[0]["counterparty"] == "杜萌萌"
+    assert split[0]["business_note"] == "项目物料"
+
 
 def test_generic_reimbursement_metadata_does_not_fake_business_purpose() -> None:
     raw = (
@@ -259,6 +284,7 @@ def _configure(monkeypatch, tmp_path, db: Session, user: User) -> TestClient:
         finance_system,
         "settings",
         SimpleNamespace(
+            data_dir=tmp_path / "agent-data",
             knowledge_root=tmp_path / "knowledge",
             inbox_max_file_bytes=10 * 1024 * 1024,
         ),
@@ -452,6 +478,61 @@ def test_finance_statement_upload_reports_read_only_storage(tmp_path, monkeypatc
         assert response.json()["detail"] == "财务原件目录当前不可写，请联系系统管理员检查NAS挂载权限"
         assert db.scalar(select(func.count(BankStatementBatch.id))) == 0
         assert db.scalar(select(func.count(FinancialAccount.id))) == 0
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_failed_statement_is_quarantined_outside_knowledge_and_audited(
+    tmp_path, monkeypatch
+) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "查询条件"
+    sheet.append(["账户名称", "测试公司"])
+    sheet.append(["借方累计发生额", 4000, "贷方累计发生额", 1000000])
+    output = BytesIO()
+    workbook.save(output)
+    payload = output.getvalue()
+    try:
+        response = client.post(
+            "/v1/finance/statements/upload",
+            data={
+                "company_name": "京奥电竞（北京）科技有限公司",
+                "bank_name": "测试银行",
+                "account_name": "基本户",
+                "account_number": "6222000012345678",
+            },
+            files={"file": ("只有汇总页.xlsx", payload, "application/octet-stream")},
+        )
+        assert response.status_code == 422
+        diagnostic_id = hashlib.sha256(payload).hexdigest().upper()[:12]
+        assert diagnostic_id in response.json()["detail"]
+        assert "无需反复上传" in response.json()["detail"]
+        quarantined = list(
+            (tmp_path / "agent-data" / "finance-import-failures").glob("*.xlsx")
+        )
+        assert len(quarantined) == 1
+        assert quarantined[0].read_bytes() == payload
+        assert not list((tmp_path / "knowledge").rglob("只有汇总页.xlsx"))
+        assert db.scalar(select(func.count(BankStatementBatch.id))) == 0
+        assert db.scalar(select(func.count(FinancialAccount.id))) == 0
+        audit = db.scalar(
+            select(AuditLog).where(
+                AuditLog.action == "finance_statement_parse_failed"
+            )
+        )
+        assert audit is not None
+        details = json.loads(audit.details_json)
+        assert details["diagnostic_id"] == diagnostic_id
+        assert details["structure"] == [{
+            "sheet": "查询条件",
+            "row_count": 2,
+            "max_columns": 4,
+            "recognised_fields": [],
+        }]
     finally:
         app.dependency_overrides.clear()
         db.close()

@@ -50,6 +50,7 @@ SUPPORTED_STATEMENTS = {".xlsx", ".csv"}
 SHANGHAI_ZONE = ZoneInfo("Asia/Shanghai")
 FINANCE_ENTITY_DEFINITIONS = BUSINESS_ENTITY_DEFINITIONS
 FINANCE_ENTITY_NAMES = BUSINESS_ENTITY_NAMES
+FAILED_STATEMENT_KEEP_COUNT = 20
 
 # A large payment is not inherently abnormal: the Top 10 panels already
 # explain amount concentration.  Behaviour alerts instead compare a party
@@ -197,7 +198,10 @@ def _account(
 
 
 def _normalize_header(value: object) -> str:
-    return re.sub(r"[\s\n\r（）()人民币RMB/CNY：:]", "", str(value or "")).casefold()
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    text = re.sub(r"[\s\n\r()（）,，、/\\|_\-:：]", "", text)
+    text = re.sub(r"(人民币|rmb|cny)", "", text, flags=re.IGNORECASE)
+    return re.sub(r"元$", "", text)
 
 
 HEADER_ALIASES = {
@@ -208,11 +212,11 @@ HEADER_ALIASES = {
     "time": {"交易时刻", "交易时间点", "交易时分秒", "时间", "tradetime", "transactiontime"},
     "income": {
         "贷方发生额", "贷方金额", "贷方交易金额", "贷方发生金额", "收入金额",
-        "收入", "转入金额", "收方金额", "收款金额", "creditamount", "credit",
+        "收入", "贷方", "转入金额", "收方金额", "收款金额", "creditamount", "credit",
     },
     "expense": {
         "借方发生额", "借方金额", "借方交易金额", "借方发生金额", "支出金额",
-        "支出", "转出金额", "付方金额", "付款金额", "debitamount", "debit",
+        "支出", "借方", "转出金额", "付方金额", "付款金额", "debitamount", "debit",
     },
     "amount": {"交易金额", "交易发生额", "本次发生额", "发生额", "金额", "transactionamount", "amount"},
     "direction": {
@@ -226,9 +230,10 @@ HEADER_ALIASES = {
     "counterparty": {
         "对手方", "对方户名", "对方名称", "对方单位名称", "对方客户名称",
         "对手名称", "收付方名称", "收/付方名称", "收方户名", "付方户名",
-        "收款方名称", "付款方名称", "counterparty", "counterpartyname",
+        "收款方名称", "付款方名称", "对方信息户名", "对方信息名称",
+        "交易对方信息户名", "counterparty", "counterpartyname",
     },
-    "counterparty_fallback": {"收款人", "付款人", "收款方", "付款方"},
+    "counterparty_fallback": {"户名", "收款人", "付款人", "收款方", "付款方"},
     "counterparty_account": {
         "对手方账号", "对方账号", "对方账户", "收付方账号", "收/付方账号",
         "收款方账号", "付款方账号", "counterpartyaccount",
@@ -1106,43 +1111,64 @@ def _xlsx_sources(payload: bytes) -> list[tuple[str, list[list[object]]]]:
 def _statement_header(
     rows: list[list[object]],
 ) -> tuple[int | None, dict[str, int]]:
-    """Find a transaction header below bank query metadata or print titles."""
+    """Find one-to-three-row transaction headers below bank query metadata."""
     header_index: int | None = None
     columns: dict[str, int] = {}
     for index, row in enumerate(rows[:200]):
-        candidate: dict[str, int] = {}
-        explicit_date_column: int | None = None
-        possible_time_column: int | None = None
-        for column_index, value in enumerate(row):
-            field = _field_for_header(value)
-            if not field:
+        for span in (1, 2, 3):
+            header_rows = rows[index:index + span]
+            if len(header_rows) != span:
                 continue
-            normalized = _normalize_header(value)
-            if normalized in {
-                _normalize_header("交易时间"),
-                _normalize_header("记账时间"),
-                _normalize_header("入账时间"),
-            }:
-                possible_time_column = column_index
-            elif field == "date":
-                explicit_date_column = column_index
-            # Keep the right-most match, preserving the original parser's
-            # priority when a bank exports both “凭证号” and the more useful
-            # “流水号” (or both fallback and canonical columns).
-            candidate[field] = column_index
-        # Some banks export separate “交易日” and “交易时间” columns, while
-        # Beijing Bank uses a single “交易时间” column containing both.  Keep
-        # the latter as the date unless a distinct date column is present.
-        if explicit_date_column is not None:
-            candidate["date"] = explicit_date_column
-            if possible_time_column is not None:
-                candidate["time"] = possible_time_column
-        if "date" in candidate and (
-            {"income", "expense"}.intersection(candidate)
-            or "amount" in candidate
-        ):
-            header_index = index
-            columns = candidate
+            candidate: dict[str, int] = {}
+            explicit_date_column: int | None = None
+            possible_time_column: int | None = None
+            width = max((len(item) for item in header_rows), default=0)
+            for column_index in range(width):
+                values = [
+                    item[column_index]
+                    for item in header_rows
+                    if column_index < len(item)
+                    and item[column_index] not in (None, "")
+                ]
+                options = list(reversed(values))
+                if len(values) > 1:
+                    options.append("".join(str(value) for value in values))
+                field = None
+                matched_value: object = ""
+                for option in options:
+                    field = _field_for_header(option)
+                    if field:
+                        matched_value = option
+                        break
+                if not field:
+                    continue
+                normalized = _normalize_header(matched_value)
+                if normalized in {
+                    _normalize_header("交易时间"),
+                    _normalize_header("记账时间"),
+                    _normalize_header("入账时间"),
+                }:
+                    possible_time_column = column_index
+                elif field == "date":
+                    explicit_date_column = column_index
+                # Keep the right-most match, preserving the original parser's
+                # priority when a bank exports both “凭证号” and the more useful
+                # “流水号” (or both fallback and canonical columns).
+                candidate[field] = column_index
+            # Some banks export separate “交易日” and “交易时间” columns, while
+            # Beijing Bank uses a single “交易时间” column containing both.
+            if explicit_date_column is not None:
+                candidate["date"] = explicit_date_column
+                if possible_time_column is not None:
+                    candidate["time"] = possible_time_column
+            if "date" in candidate and (
+                {"income", "expense"}.intersection(candidate)
+                or "amount" in candidate
+            ):
+                header_index = index + span - 1
+                columns = candidate
+                break
+        if header_index is not None:
             break
     return header_index, columns
 
@@ -1280,6 +1306,85 @@ def parse_statement(payload: bytes, suffix: str) -> tuple[list[dict], int]:
             f"没有解析到有效流水；已检查工作表：{detail}。请上传银行导出的交易明细表，不要只上传查询条件或汇总页"
         )
     return parsed, errors
+
+
+def _failed_statement_structure(payload: bytes, suffix: str) -> list[dict]:
+    """Return header-only diagnostics without copying financial row values."""
+    try:
+        sources = (
+            _xlsx_sources(payload)
+            if suffix == ".xlsx"
+            else [("CSV", _csv_rows(payload))]
+        )
+    except Exception as exc:  # pragma: no cover - defensive diagnostics only
+        return [{"read_error": type(exc).__name__}]
+    result: list[dict] = []
+    for source_name, rows in sources[:12]:
+        recognised = sorted({
+            field
+            for row in rows[:200]
+            for value in row
+            if (field := _field_for_header(value))
+        })
+        result.append({
+            "sheet": source_name[:120],
+            "row_count": len(rows),
+            "max_columns": max((len(row) for row in rows), default=0),
+            "recognised_fields": recognised,
+        })
+    return result
+
+
+def _quarantine_failed_statement(
+    payload: bytes,
+    suffix: str,
+    entity: BusinessEntity,
+) -> tuple[str, Path]:
+    """Keep an unreadable bank export in a private, non-indexed NAS volume.
+
+    `/data` is the Agent-only persistent Docker volume.  It is deliberately
+    outside `/knowledge`, so these L4 originals cannot enter the knowledge
+    ingestion/reconciliation pipeline or be exposed in the Web file library.
+    """
+    digest = hashlib.sha256(payload).hexdigest().upper()
+    diagnostic_id = digest[:12]
+    data_dir = Path(
+        getattr(
+            settings,
+            "data_dir",
+            settings.knowledge_root.parent / ".jaos-data",
+        )
+    )
+    target = data_dir / "finance-import-failures"
+    target.mkdir(parents=True, exist_ok=True)
+    try:
+        target.chmod(0o700)
+    except OSError:
+        pass
+    stored = target / (
+        f"{datetime.now(SHANGHAI_ZONE).strftime('%Y%m%d-%H%M%S')}_"
+        f"{_safe_part(entity.id, 'entity')[:12]}_{diagnostic_id}{suffix}"
+    )
+    if not any(target.glob(f"*_{diagnostic_id}{suffix}")):
+        stored.write_bytes(payload)
+        try:
+            stored.chmod(0o600)
+        except OSError:
+            pass
+    else:
+        stored = next(target.glob(f"*_{diagnostic_id}{suffix}"))
+
+    retained = sorted(
+        (item for item in target.iterdir() if item.is_file()),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for expired in retained[FAILED_STATEMENT_KEEP_COUNT:]:
+        try:
+            expired.unlink()
+        except OSError:
+            continue
+    return diagnostic_id, stored
 
 
 def _transaction_fingerprint(account_id: str, row: dict) -> str:
@@ -1625,10 +1730,6 @@ async def upload_statement(
         raise HTTPException(status_code=422, detail="不能上传空文件")
     if len(payload) > settings.inbox_max_file_bytes:
         raise HTTPException(status_code=413, detail="文件超过上传大小限制")
-    try:
-        rows, error_count = parse_statement(payload, suffix)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if entity_id:
         entity = _entity_by_id(db, entity_id)
@@ -1636,6 +1737,42 @@ async def upload_statement(
         entity = _entity(db, company_name, user)
     else:
         raise HTTPException(status_code=422, detail="请选择系统内已登记的公司主体")
+    try:
+        rows, error_count = parse_statement(payload, suffix)
+    except ValueError as exc:
+        diagnostic_id = ""
+        try:
+            diagnostic_id, _ = _quarantine_failed_statement(
+                payload,
+                suffix,
+                entity,
+            )
+        except OSError:
+            pass
+        db.add(AuditLog(
+            user_id=user.id,
+            action="finance_statement_parse_failed",
+            details_json=json.dumps({
+                "entity_id": entity.id,
+                "filename": filename,
+                "diagnostic_id": diagnostic_id or None,
+                "file_size": len(payload),
+                "structure": _failed_statement_structure(payload, suffix),
+                "error": str(exc),
+            }, ensure_ascii=False),
+        ))
+        db.commit()
+        suffix_message = (
+            f"；诊断号 {diagnostic_id}，原文件已安全暂存在NAS本地诊断区，"
+            "无需反复上传"
+            if diagnostic_id
+            else ""
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"{exc}{suffix_message}",
+        ) from exc
+
     account = _account(db, entity, bank_name, account_name, account_number)
     file_hash = hashlib.sha256(payload).hexdigest().upper()
     existing = db.scalar(

@@ -1492,6 +1492,7 @@ export default function Home() {
   const [financeTransactions, setFinanceTransactions] = useState<FinanceTransaction[]>([]);
   const [financeBusy, setFinanceBusy] = useState("");
   const [financeMessage, setFinanceMessage] = useState("");
+  const [financeUploadError, setFinanceUploadError] = useState("");
   const [managedProjects, setManagedProjects] = useState<ManagedProjectRegistry>({ counts: {}, portfolio_counts: {}, items: [] });
   const [selectedManagedProject, setSelectedManagedProject] = useState<ManagedProject | null>(null);
   const [projectBusy, setProjectBusy] = useState("");
@@ -2954,6 +2955,7 @@ export default function Home() {
     setSelectedFinanceBatch("");
     setFinanceTransactions([]);
     setFinanceMessage("");
+    setFinanceUploadError("");
   }
 
   async function handleFinanceTransferDecision(transferId: string, action: "confirm" | "reject" | "reset") {
@@ -3006,6 +3008,7 @@ export default function Home() {
     body.delete("company_name");
     setFinanceBusy("upload");
     setFinanceMessage("");
+    setFinanceUploadError("");
     setError("");
     try {
       const result = await kbFormFetch<FinanceBatch & { duplicate_file: boolean }>(
@@ -3020,7 +3023,9 @@ export default function Home() {
       await refreshFinance();
       await handleFinanceBatchSelect(result.id);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "银行流水上传失败");
+      const message = cause instanceof Error ? cause.message : "银行流水上传失败";
+      setFinanceUploadError(message);
+      setError(message);
     } finally {
       setFinanceBusy("");
     }
@@ -4491,6 +4496,7 @@ export default function Home() {
             transactions={financeTransactions}
             busy={financeBusy}
             message={financeMessage}
+            uploadError={financeUploadError}
             canEditBank={canEditBankStatements}
             canEditCash={canEditCash && selectedFinanceEntity.show_cash}
             projects={selectedFinanceProjects}
@@ -6790,6 +6796,7 @@ function FinanceWorkspace({
   transactions,
   busy,
   message,
+  uploadError,
   canEditBank,
   canEditCash,
   projects,
@@ -6818,6 +6825,7 @@ function FinanceWorkspace({
   transactions: FinanceTransaction[];
   busy: string;
   message: string;
+  uploadError: string;
   canEditBank: boolean;
   canEditCash: boolean;
   projects: ManagedProject[];
@@ -7226,6 +7234,12 @@ function FinanceWorkspace({
                 <label className="fileInputCard">选择银行导出的 XLSX 或 CSV<input name="file" type="file" required accept=".xlsx,.csv" /></label>
                 <button className="primaryButton full" disabled={busy === "upload"}>{busy === "upload" ? "正在解析…" : "上传并解析流水"}</button>
               </form>
+              {uploadError && (
+                <div className="noticeBar errorNotice financeUploadError" role="alert">
+                  <strong>本次未导入</strong>
+                  <span>{uploadError}</span>
+                </div>
+              )}
             </section>
           )}
         </section>
