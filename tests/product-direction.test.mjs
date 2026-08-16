@@ -107,6 +107,14 @@ test("finance purpose corrections require founder review and preserve bank evide
   assert.match(styles, /\.transactionPurposeWorkflow/);
 });
 
+test("finance trend distinguishes net inflow from net outflow using Chinese finance colors", () => {
+  assert.match(page, /近 26 周收支与净流入趋势/);
+  assert.match(page, /右侧显示当周净流入或净流出，不是收入金额/);
+  assert.match(page, /formatMoney\(Math\.abs\(net\)\)/);
+  assert.match(styles, /\.trendNetValue\.inflow b \{ color: #c83b45; \}/);
+  assert.match(styles, /\.trendNetValue\.outflow b \{ color: #128159; \}/);
+});
+
 test("approved documents have local AI confidentiality governance with manual control", () => {
   assert.match(page, /name: "资料治理"/);
   assert.match(page, /v1\/governance\/documents/);

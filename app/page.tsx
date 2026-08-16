@@ -7356,21 +7356,29 @@ function FinanceWorkspace({
 
       <section className="financeDashboardGrid">
         <section className="panel financeTrendPanel">
-          <PanelTitle eyebrow="CASHFLOW TREND" title="近 26 周资金趋势" />
+          <PanelTitle eyebrow="CASHFLOW TREND" title="近 26 周收支与净流入趋势" />
+          <p className="financeTrendExplanation">红柱为收入，绿柱为支出；右侧显示当周净流入或净流出，不是收入金额。</p>
           {(dashboard?.weekly.length || 0) === 0 ? (
             <div className="emptyState compact"><b>¥</b><h3>等待首批银行流水</h3><p>上传并确认后自动形成周度收支趋势。</p></div>
           ) : (
             <div className="financeTrendChart">
-              {dashboard?.weekly.map((item) => (
-                <div className="trendRow" key={`${item.year}-${item.week}`}>
-                  <span>{item.year} W{String(item.week).padStart(2, "0")}</span>
-                  <div className="trendBars">
-                    <i className="income" style={{ width: `${Math.max(2, Number(item.income) / chartMax * 100)}%` }} />
-                    <i className="expense" style={{ width: `${Math.max(2, Number(item.expense) / chartMax * 100)}%` }} />
+              {dashboard?.weekly.map((item) => {
+                const net = Number(item.net);
+                const netDirection = net > 0 ? "inflow" : net < 0 ? "outflow" : "balanced";
+                return (
+                  <div className="trendRow" key={`${item.year}-${item.week}`}>
+                    <span>{item.year} W{String(item.week).padStart(2, "0")}</span>
+                    <div className="trendBars">
+                      <i className="income" style={{ width: `${Math.max(2, Number(item.income) / chartMax * 100)}%` }} />
+                      <i className="expense" style={{ width: `${Math.max(2, Number(item.expense) / chartMax * 100)}%` }} />
+                    </div>
+                    <div className={`trendNetValue ${netDirection}`}>
+                      <small>{net > 0 ? "净流入" : net < 0 ? "净流出" : "收支平衡"}</small>
+                      <b>{formatMoney(Math.abs(net))}</b>
+                    </div>
                   </div>
-                  <b className={Number(item.net) >= 0 ? "positive" : "negative"}>{formatMoney(item.net)}</b>
-                </div>
-              ))}
+                );
+              })}
               <div className="trendLegend"><span><i className="income" />收入</span><span><i className="expense" />支出</span></div>
             </div>
           )}

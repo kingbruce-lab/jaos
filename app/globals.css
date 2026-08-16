@@ -272,9 +272,15 @@
   .financeAnnualMetricGrid article, .financeAnnualConcentrationGrid article { min-height: 112px; }
 }
 .financeTrendPanel, .financeAccountPanel, .financeLedgerPanel, .transactionPanel, .compactLedgerPanel { padding: 26px; }
+.financeTrendExplanation { margin: 8px 0 0; color: #748196; font-size: 12px; line-height: 1.6; }
 .financeTrendChart { display: grid; gap: 8px; margin-top: 18px; }
 .trendRow { display: grid; grid-template-columns: 74px minmax(120px, 1fr) 120px; align-items: center; gap: 12px; font-size: 10px; color: #7d8797; }
-.trendRow > b { text-align: right; font-variant-numeric: tabular-nums; }
+.trendNetValue { display: grid; justify-items: end; gap: 2px; text-align: right; font-variant-numeric: tabular-nums; }
+.trendNetValue small { color: #7d8797; font-size: 10px; font-weight: 750; }
+.trendNetValue b { font-size: 13px; }
+.trendNetValue.inflow b { color: #c83b45; }
+.trendNetValue.outflow b { color: #128159; }
+.trendNetValue.balanced b { color: #677488; }
 .trendBars { display: grid; gap: 3px; }
 .trendBars i { display: block; height: 5px; min-width: 2px; border-radius: 4px; }
 .trendBars .income, .trendLegend .income { background: linear-gradient(90deg, #c93643, #ee7a83); }
@@ -431,6 +437,8 @@
 .financeWorkspace .emptyState h3 { font-size: 18px; }
 .financeWorkspace .emptyState p { font-size: 13px; }
 .trendRow { grid-template-columns: 92px minmax(120px, 1fr) 150px; gap: 15px; font-size: 13px; }
+.trendNetValue small { font-size: 12px; }
+.trendNetValue b { font-size: 15px; }
 .trendBars { gap: 5px; }
 .trendBars i { height: 7px; }
 .trendLegend { margin-top: 8px; font-size: 13px; }
@@ -775,7 +783,7 @@
   .financeMetricGrid strong { font-size: 24px; }
   .financeTrendPanel, .financeAccountPanel, .financeLedgerPanel, .transactionPanel, .compactLedgerPanel, .financeOperationCard, .pmProjectListPanel, .pmProjectDetailPanel { padding: 18px; }
   .trendRow { grid-template-columns: 62px 1fr; }
-  .trendRow > b { grid-column: 2; }
+  .trendNetValue { grid-column: 2; }
   .formGrid.twoColumns, .formGrid.threeColumns { grid-template-columns: 1fr; }
   .formGrid .spanTwo { grid-column: auto; }
   .financeBatchList article { grid-template-columns: 1fr auto; }
