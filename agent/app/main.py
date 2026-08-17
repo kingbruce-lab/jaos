@@ -290,6 +290,17 @@ def _safe_upload_relative_parent(value: str | None) -> Path:
     return Path(*safe_parts)
 
 
+def _contract_document_folder_path(source_path: str, category_key: str) -> str:
+    """Return the user-created folder path below a contract category root."""
+    try:
+        category_root = ensure_contract_layout(settings.knowledge_root)[category_key].resolve()
+        source_parent = Path(source_path).resolve().parent
+        relative = source_parent.relative_to(category_root)
+    except (KeyError, OSError, ValueError):
+        return ""
+    return "" if relative == Path(".") else relative.as_posix()
+
+
 def _upload_department_allowed(user: User, department: str) -> bool:
     return bool(user.active and department)
 
@@ -707,6 +718,15 @@ async def upload_contract(
             entry,
             expected_stat=(stat.st_size, stat.st_mtime_ns),
         )
+        if result.get("duplicate_filtered"):
+            canonical_document = db.get(Document, result["document_id"])
+            canonical_path = (
+                Path(canonical_document.file_blob.source_path).resolve()
+                if canonical_document and canonical_document.file_blob
+                else None
+            )
+            if canonical_path is not None and final_path.resolve() != canonical_path:
+                final_path.unlink(missing_ok=True)
         existing_owner = db.scalar(
             select(ContractDocumentOwner).where(
                 ContractDocumentOwner.document_id == result["document_id"],
@@ -1640,6 +1660,23 @@ def list_contract_documents(
         item.content_hash: item
         for item in db.scalars(select(SourceHealth)).all()
     }
+    pending_statement = (
+        select(Document)
+        .join(Document.project)
+        .options(joinedload(Document.project))
+        .where(
+            Project.domain == contract_category.domain,
+            Document.knowledge_status == "candidate",
+        )
+    )
+    if owned_document_ids is not None:
+        pending_statement = pending_statement.where(Document.id.in_(owned_document_ids))
+    pending_documents = db.scalars(pending_statement).all()
+    pending_count = sum(
+        1
+        for document in pending_documents
+        if access_scope == "own" or is_authorized(user, document, document.project)
+    )
     items = [
         {
             "document_id": document.id,
@@ -1650,6 +1687,14 @@ def list_contract_documents(
             "knowledge_status": document.knowledge_status,
             "confidentiality": document.confidentiality,
             "created_at": document.ingested_at,
+            "folder_path": (
+                _contract_document_folder_path(
+                    document.file_blob.source_path,
+                    category,
+                )
+                if document.file_blob
+                else ""
+            ),
         }
         for document in documents
         if (
@@ -1681,6 +1726,7 @@ def list_contract_documents(
         "category_name": contract_category.name,
         "confidentiality": contract_category.confidentiality,
         "search_scope": access_scope,
+        "pending_count": pending_count,
         "items": items,
     }
 

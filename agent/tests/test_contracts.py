@@ -262,6 +262,11 @@ def test_l4_administrative_can_upload_and_read_own_executive_office_contracts(
         )
         assert upload.status_code == 200
         document = db.get(Document, upload.json()["document_id"])
+        waiting = client.get(
+            "/v1/contracts", params={"category": "executive_office"}
+        )
+        assert waiting.json()["pending_count"] == 1
+        assert waiting.json()["items"] == []
         document.knowledge_status = "approved"
         document.project.knowledge_status = "approved"
         db.commit()
@@ -269,6 +274,8 @@ def test_l4_administrative_can_upload_and_read_own_executive_office_contracts(
             "/v1/contracts", params={"category": "executive_office"}
         )
         assert [item["document_id"] for item in listed.json()["items"]] == [document.id]
+        assert listed.json()["pending_count"] == 0
+        assert listed.json()["items"][0]["folder_path"] == "涉密系列/第一批"
         assert list((tmp_path / "knowledge").rglob("涉密系列/第一批/总办合同.docx"))
     finally:
         app.dependency_overrides.clear()
@@ -300,6 +307,42 @@ def test_management_l5_can_upload_contracts(
         assert response.status_code == 200
         assert response.json()["review_required"] is True
         assert list(knowledge_root.rglob("管理上传.docx"))
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_exact_duplicate_contract_does_not_leave_a_second_nas_file(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    knowledge_root = tmp_path / "knowledge"
+    _configure(monkeypatch, db, users["l4"], knowledge_root)
+    client = TestClient(app)
+    payload = _word_payload("同一份系列合同。")
+    try:
+        first = client.post(
+            "/v1/contracts/uploads",
+            data={
+                "category": "administrative",
+                "relative_path": "系列合同/原件.docx",
+            },
+            files={"file": ("原件.docx", payload, "application/octet-stream")},
+        )
+        duplicate = client.post(
+            "/v1/contracts/uploads",
+            data={
+                "category": "administrative",
+                "relative_path": "系列合同/原件.docx",
+            },
+            files={"file": ("原件.docx", payload, "application/octet-stream")},
+        )
+
+        assert first.status_code == 200
+        assert duplicate.status_code == 200
+        assert duplicate.json()["duplicate_filtered"] is True
+        assert [path.name for path in knowledge_root.rglob("原件*.docx")] == ["原件.docx"]
     finally:
         app.dependency_overrides.clear()
         db.close()

@@ -789,6 +789,7 @@ type ContractCategory = {
 type ContractDocument = {
   document_id: string;
   title: string;
+  folder_path: string;
   version: string;
   page_count: number;
   citation_basis: string;
@@ -801,6 +802,7 @@ type ContractArchiveResponse = {
   category: string;
   category_name: string;
   confidentiality: string;
+  pending_count: number;
   items: ContractDocument[];
 };
 
@@ -1500,9 +1502,13 @@ export default function Home() {
   const [contractCategories, setContractCategories] = useState<ContractCategory[]>([]);
   const [contractCategory, setContractCategory] = useState("");
   const [contractDocuments, setContractDocuments] = useState<ContractDocument[]>([]);
+  const [contractPendingCount, setContractPendingCount] = useState(0);
   const [contractQuery, setContractQuery] = useState("");
   const [contractSearchResponse, setContractSearchResponse] = useState<SearchResponse | null>(null);
   const [contractFiles, setContractFiles] = useState<File[]>([]);
+  const [contractSelectionMode, setContractSelectionMode] = useState<"files" | "folder">("files");
+  const [contractFolderName, setContractFolderName] = useState("");
+  const [contractUploadProgress, setContractUploadProgress] = useState({ completed: 0, total: 0 });
   const [contractBusy, setContractBusy] = useState(false);
   const [contractMessage, setContractMessage] = useState("");
   const [financeEntities, setFinanceEntities] = useState<FinanceEntity[]>([]);
@@ -1728,7 +1734,10 @@ export default function Home() {
       {},
       token,
     ).then((response) => {
-      if (!cancelled) setContractDocuments(response.items);
+      if (!cancelled) {
+        setContractDocuments(response.items);
+        setContractPendingCount(response.pending_count || 0);
+      }
     }).catch((cause) => {
       if (!cancelled) {
         setError(cause instanceof Error ? cause.message : "合同档案加载失败");
@@ -2917,6 +2926,8 @@ export default function Home() {
     setError("");
     let completed = 0;
     let duplicatesFiltered = 0;
+    const uploadFolder = contractSelectionMode === "folder" ? contractFolderName : "";
+    setContractUploadProgress({ completed: 0, total: contractFiles.length });
     try {
       for (const file of contractFiles) {
         const body = new FormData();
@@ -2935,13 +2946,18 @@ export default function Home() {
         const payload = await response.json() as { duplicate_filtered?: boolean };
         if (payload.duplicate_filtered) duplicatesFiltered += 1;
         completed += 1;
+        setContractUploadProgress({ completed, total: contractFiles.length });
       }
       setContractFiles([]);
+      setContractFolderName("");
+      setContractPendingCount((current) => current + completed - duplicatesFiltered);
       form.reset();
       setContractMessage([
-        `已上传 ${completed} 份合同原件`,
+        uploadFolder
+          ? `文件夹“${uploadFolder}”已在 NAS 对应合同分类下重建，${completed} 份合同传输完成`
+          : `已上传 ${completed} 份合同原件`,
         completed - duplicatesFiltered > 0
-          ? `${completed - duplicatesFiltered} 份进入逐份审核`
+          ? `${completed - duplicatesFiltered} 份已进入入库审核；审核通过后按原文件夹展示`
           : "",
         duplicatesFiltered ? `${duplicatesFiltered} 份完全重复资料已过滤` : "",
       ].filter(Boolean).join("；") + "。");
@@ -2952,6 +2968,7 @@ export default function Home() {
       setError(`${completed} 份已完成；${cause instanceof Error ? cause.message : "合同上传失败"}`);
     } finally {
       setContractBusy(false);
+      setContractUploadProgress({ completed: 0, total: 0 });
     }
   }
 
@@ -4317,6 +4334,14 @@ export default function Home() {
     (item) => item.key === contractCategory,
   ) || null;
   const canUploadContracts = Boolean(selectedContractCategory?.can_upload);
+  const contractDocumentGroups = useMemo(() => {
+    const grouped = new Map<string, ContractDocument[]>();
+    for (const document of contractDocuments) {
+      const folder = document.folder_path?.trim() || "未分文件夹";
+      grouped.set(folder, [...(grouped.get(folder) || []), document]);
+    }
+    return Array.from(grouped.entries()).map(([folder, documents]) => ({ folder, documents }));
+  }, [contractDocuments]);
   const confidentialityRank = ({ L1: 1, L2: 2, L3: 3, L4: 4, L5: 5 } as Record<string, number>)[user?.confidentiality_ceiling || "L1"] || 1;
   const canUseFinance = (
     (user?.organization_role === "finance" && confidentialityRank >= 4)
@@ -4820,6 +4845,8 @@ export default function Home() {
                       setContractCategory(item.key);
                       setContractSearchResponse(null);
                       setContractFiles([]);
+                      setContractFolderName("");
+                      setContractPendingCount(0);
                       setContractMessage("");
                     }}
                   >
@@ -4846,6 +4873,8 @@ export default function Home() {
                         multiple
                         accept=".pdf,.doc,.docm,.docx"
                         onChange={(event) => {
+                          setContractSelectionMode("files");
+                          setContractFolderName("");
                           setContractFiles(Array.from(event.target.files || []).slice(0, 20));
                           setContractMessage("");
                         }}
@@ -4858,11 +4887,15 @@ export default function Home() {
                         type="file"
                         multiple
                         accept=".pdf,.doc,.docm,.docx"
-                        {...({ webkitdirectory: "" } as Record<string, string>)}
+                        {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
                         onChange={(event) => {
                           const selected = Array.from(event.target.files || []);
                           const supported = /\.(pdf|doc|docm|docx)$/i;
                           const files = selected.filter((file) => supported.test(file.name)).slice(0, 200);
+                          const firstPath = files[0]?.webkitRelativePath || "";
+                          const rootFolder = firstPath.split("/").filter(Boolean)[0] || "所选文件夹";
+                          setContractSelectionMode("folder");
+                          setContractFolderName(rootFolder);
                           setContractFiles(files);
                           setContractMessage(
                             selected.length > files.length
@@ -4876,19 +4909,47 @@ export default function Home() {
                     </label>
                   </div>
                   {contractFiles.length > 0 && (
-                    <div className="contractSelectedFiles">
-                      {contractFiles.map((file) => (
-                        <span key={`${file.webkitRelativePath || file.name}-${file.size}`}>
-                          {file.webkitRelativePath || file.name}
+                    <div className="contractSelectionSummary">
+                      <div>
+                        <strong>
+                          {contractSelectionMode === "folder"
+                            ? `合同文件夹：${contractFolderName}`
+                            : `已选择 ${contractFiles.length} 份合同`}
+                        </strong>
+                        <span>
+                          {contractSelectionMode === "folder"
+                            ? `共 ${contractFiles.length} 份支持的合同；上传后会在 NAS 自动重建这个文件夹及其子目录。`
+                            : "所选合同将逐份进入入库审核。"}
                         </span>
-                      ))}
+                      </div>
+                      <details className="contractSelectedFiles">
+                        <summary>查看文件清单</summary>
+                        <div>
+                          {contractFiles.map((file) => (
+                            <span key={`${file.webkitRelativePath || file.name}-${file.size}`}>
+                              {file.webkitRelativePath || file.name}
+                            </span>
+                          ))}
+                        </div>
+                      </details>
                     </div>
                   )}
                   <button className="primaryButton" disabled={contractBusy || !contractFiles.length || !contractCategory}>
-                    {contractBusy ? "处理中…" : "上传并进入审核"}
+                    {contractBusy
+                      ? `正在上传 ${contractUploadProgress.completed}/${contractUploadProgress.total}`
+                      : contractSelectionMode === "folder" && contractFiles.length
+                        ? `上传整个文件夹（${contractFiles.length}份）`
+                        : "上传并进入审核"}
                   </button>
                 </form>
-                {contractMessage && <div className="noticeBar successNotice"><span>{contractMessage}</span></div>}
+                {contractMessage && (
+                  <div className="noticeBar successNotice contractUploadSuccess">
+                    <span>{contractMessage}</span>
+                    {["founder", "knowledge_admin", "department_owner"].includes(user?.role || "") && (
+                      <button type="button" onClick={() => navigateToTab("入库审核")}>前往入库审核</button>
+                    )}
+                  </div>
+                )}
               </section>
               )}
 
@@ -4937,20 +4998,37 @@ export default function Home() {
             {contractCategories.find((item) => item.key === contractCategory)?.can_search && (
             <section className="panel contractDocuments">
               <PanelTitle eyebrow="APPROVED FILES" title={`已审核合同（${contractDocuments.length}）`} />
+              {contractPendingCount > 0 && (
+                <div className="noticeBar contractPendingNotice">
+                  <strong>{contractPendingCount} 份合同已安全保存，正在等待审核</strong>
+                  <span>审核前不会出现在“已审核合同”或检索结果中；文件夹层级已经保存在 NAS。</span>
+                </div>
+              )}
               {contractDocuments.length === 0 ? (
                 <div className="emptyState"><b>▣</b><h3>当前分类暂无已审核合同</h3><p>新上传合同审核通过后会显示在这里。</p></div>
               ) : (
-                <div className="contractDocumentList">
-                  {contractDocuments.map((item) => (
-                    <article key={item.document_id}>
-                      <div>
-                        <strong>{item.title}</strong>
-                        <small>{confidentialityLabel(item.confidentiality)} · {item.page_count}页 · {item.citation_basis === "ocr-page" ? "本地OCR" : "原文解析"}</small>
+                <div className="contractFolderGroups">
+                  {contractDocumentGroups.map((group) => (
+                    <section className="contractFolderGroup" key={group.folder}>
+                      <header>
+                        <div aria-hidden="true">▰</div>
+                        <strong>{group.folder}</strong>
+                        <span>{group.documents.length} 份</span>
+                      </header>
+                      <div className="contractDocumentList">
+                        {group.documents.map((item) => (
+                          <article key={item.document_id}>
+                            <div>
+                              <strong>{item.title}</strong>
+                              <small>{confidentialityLabel(item.confidentiality)} · {item.page_count}页 · {item.citation_basis === "ocr-page" ? "本地OCR" : "原文解析"}</small>
+                            </div>
+                            <button type="button" onClick={() => void handlePreview(item.document_id, 1)}>
+                              查看原件
+                            </button>
+                          </article>
+                        ))}
                       </div>
-                      <button type="button" onClick={() => void handlePreview(item.document_id, 1)}>
-                        查看原件
-                      </button>
-                    </article>
+                    </section>
                   ))}
                 </div>
               )}
