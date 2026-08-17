@@ -1530,7 +1530,9 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .contractUploadPanel, .contractSearchPanel, .contractDocuments, .contractResults { padding: 26px 30px; }
 .contractUploadPanel > p { color: var(--muted); line-height: 1.7; }
 .contractUploadPanel form, .contractSearchPanel form { margin-top: 18px; display: grid; gap: 14px; }
+.contractPickerGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .contractFilePicker { min-height: 120px; padding: 20px; display: grid; place-items: center; gap: 7px; border: 1px dashed #b9c8da; border-radius: 10px; text-align: center; background: #f7fafc; cursor: pointer; }
+.contractFilePicker.folderPicker { border-color: #e3a7ac; background: #fff7f7; }
 .contractFilePicker input { display: none; }
 .contractFilePicker small { color: #8190a2; }
 .contractSelectedFiles { display: grid; gap: 6px; }
@@ -3178,6 +3180,10 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .contractFilePicker {
     min-height: 108px;
     padding: 16px;
+  }
+
+  .contractPickerGrid {
+    grid-template-columns: 1fr;
   }
 
   .contractUploadPanel form > .primaryButton,

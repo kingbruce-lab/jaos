@@ -172,11 +172,14 @@ def test_contract_category_visibility_obeys_l4_l5_ceiling(
             "administrative",
             "personnel",
             "business",
+            "executive_office",
         }
         l4_policy = {item["key"]: item for item in l4.json()}
         assert l4_policy["administrative"]["can_search"] is True
         assert l4_policy["business"]["can_search"] is True
         assert l4_policy["personnel"]["can_search"] is False
+        assert l4_policy["executive_office"]["can_search"] is True
+        assert l4_policy["executive_office"]["search_scope"] == "own"
         assert all(item["can_upload"] for item in l4.json())
 
         app.dependency_overrides[current_user] = lambda: users["l5"]
@@ -236,7 +239,7 @@ def test_contract_upload_is_forced_to_review_and_exact_nas_folder(
         db.close()
 
 
-def test_l4_cannot_read_or_upload_executive_office_contracts(
+def test_l4_administrative_can_upload_and_read_own_executive_office_contracts(
     tmp_path,
     monkeypatch,
 ) -> None:
@@ -244,18 +247,29 @@ def test_l4_cannot_read_or_upload_executive_office_contracts(
     _configure(monkeypatch, db, users["l4"], tmp_path / "knowledge")
     client = TestClient(app)
     try:
-        assert client.get(
+        empty = client.get(
             "/v1/contracts", params={"category": "executive_office"}
-        ).status_code == 403
-        assert client.post(
-            "/v1/contracts/search",
-            json={"category": "executive_office", "query": "董事会"},
-        ).status_code == 403
-        assert client.post(
+        )
+        assert empty.status_code == 200
+        assert empty.json()["items"] == []
+        upload = client.post(
             "/v1/contracts/uploads",
-            data={"category": "executive_office"},
+            data={
+                "category": "executive_office",
+                "relative_path": "涉密系列/第一批/总办合同.docx",
+            },
             files={"file": ("总办合同.docx", _word_payload(), "application/octet-stream")},
-        ).status_code == 403
+        )
+        assert upload.status_code == 200
+        document = db.get(Document, upload.json()["document_id"])
+        document.knowledge_status = "approved"
+        document.project.knowledge_status = "approved"
+        db.commit()
+        listed = client.get(
+            "/v1/contracts", params={"category": "executive_office"}
+        )
+        assert [item["document_id"] for item in listed.json()["items"]] == [document.id]
+        assert list((tmp_path / "knowledge").rglob("涉密系列/第一批/总办合同.docx"))
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -306,10 +320,11 @@ def test_contract_search_scope_obeys_organization_role_matrix(
         }
         assert {
             key for key, item in admin_policy.items() if item["can_search"]
-        } == {"administrative", "business"}
+        } == {"administrative", "business", "executive_office"}
+        assert admin_policy["executive_office"]["search_scope"] == "own"
         assert set(admin_policy) == set(CONTRACT_CATEGORIES)
 
-        for denied_category in ("personnel", "executive_office"):
+        for denied_category in ("personnel",):
             assert client.get(
                 "/v1/contracts", params={"category": denied_category}
             ).status_code == 403
@@ -328,6 +343,15 @@ def test_contract_search_scope_obeys_organization_role_matrix(
                 "confidentiality": "L4",
                 "can_search": True,
                 "can_upload": False,
+                "search_scope": "all",
+            },
+            {
+                "key": "executive_office",
+                "name": "总办合同",
+                "confidentiality": "L5",
+                "can_search": True,
+                "can_upload": True,
+                "search_scope": "own",
             }
         ]
         assert client.get(
@@ -337,7 +361,24 @@ def test_contract_search_scope_obeys_organization_role_matrix(
             "/v1/contracts", params={"category": "administrative"}
         ).status_code == 403
 
-        for actor in (users["l5_business"], users["l5_finance"]):
+        app.dependency_overrides[current_user] = lambda: users["l5_business"]
+        assert client.get("/v1/contracts/categories").status_code == 403
+        for category in CONTRACT_CATEGORIES:
+            assert client.get(
+                "/v1/contracts", params={"category": category}
+            ).status_code == 403
+
+        app.dependency_overrides[current_user] = lambda: users["l5_finance"]
+        finance_categories = client.get("/v1/contracts/categories")
+        assert finance_categories.status_code == 200
+        assert [item["key"] for item in finance_categories.json()] == ["executive_office"]
+        assert finance_categories.json()[0]["search_scope"] == "own"
+        for category in ("administrative", "personnel", "business"):
+            assert client.get(
+                "/v1/contracts", params={"category": category}
+            ).status_code == 403
+
+        for actor in (users["l5_business"],):
             app.dependency_overrides[current_user] = lambda actor=actor: actor
             assert client.get("/v1/contracts/categories").status_code == 403
             for category in CONTRACT_CATEGORIES:
@@ -368,9 +409,7 @@ def test_contract_search_scope_obeys_organization_role_matrix(
                 },
             )
             assert denied_upload.status_code == 403
-            assert denied_upload.json()["detail"] == (
-                "仅行政角色或管理+L5账号可以上传合同档案"
-            )
+            assert denied_upload.json()["detail"] == "无权向该合同分类上传资料"
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -479,6 +518,91 @@ def test_contracts_are_excluded_from_general_search_but_available_locally(
             select(AuditLog).where(AuditLog.action == "contract_search")
         )
         assert audit is not None
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_executive_office_contracts_are_isolated_by_uploader(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    knowledge_root = tmp_path / "knowledge"
+    _configure(monkeypatch, db, users["l4"], knowledge_root)
+    client = TestClient(app)
+    try:
+        own_upload = client.post(
+            "/v1/contracts/uploads",
+            data={"category": "executive_office"},
+            files={
+                "file": (
+                    "行政涉密.docx",
+                    _word_payload("行政专属暗号甲号。"),
+                    "application/octet-stream",
+                )
+            },
+        )
+        assert own_upload.status_code == 200
+
+        app.dependency_overrides[current_user] = lambda: users["l5_finance"]
+        other_upload = client.post(
+            "/v1/contracts/uploads",
+            data={"category": "executive_office"},
+            files={
+                "file": (
+                    "财务涉密.docx",
+                    _word_payload("财务专属暗号乙号。"),
+                    "application/octet-stream",
+                )
+            },
+        )
+        assert other_upload.status_code == 200
+
+        documents = [
+            db.get(Document, own_upload.json()["document_id"]),
+            db.get(Document, other_upload.json()["document_id"]),
+        ]
+        for document in documents:
+            document.knowledge_status = "approved"
+            document.project.knowledge_status = "approved"
+        db.commit()
+
+        app.dependency_overrides[current_user] = lambda: users["l4"]
+        admin_list = client.get(
+            "/v1/contracts", params={"category": "executive_office"}
+        )
+        assert [item["document_id"] for item in admin_list.json()["items"]] == [
+            own_upload.json()["document_id"]
+        ]
+        assert client.get(
+            f"/v1/documents/{other_upload.json()['document_id']}"
+        ).status_code == 404
+        hidden_search = client.post(
+            "/v1/contracts/search",
+            json={"category": "executive_office", "query": "财务专属暗号乙号"},
+        )
+        assert hidden_search.status_code == 200
+        assert other_upload.json()["document_id"] not in {
+            item["document_id"] for item in hidden_search.json()["results"]
+        }
+
+        own_search = client.post(
+            "/v1/contracts/search",
+            json={"category": "executive_office", "query": "行政专属暗号甲号"},
+        )
+        assert [item["document_id"] for item in own_search.json()["results"]] == [
+            own_upload.json()["document_id"]
+        ]
+
+        app.dependency_overrides[current_user] = lambda: users["l5"]
+        management_list = client.get(
+            "/v1/contracts", params={"category": "executive_office"}
+        )
+        assert {item["document_id"] for item in management_list.json()["items"]} == {
+            own_upload.json()["document_id"],
+            other_upload.json()["document_id"],
+        }
     finally:
         app.dependency_overrides.clear()
         db.close()

@@ -62,6 +62,16 @@ test("employee can upload through the knowledge Web app", () => {
   assert.match(page, /multiple/);
 });
 
+test("contract folders preserve structure and executive contracts stay uploader-scoped", () => {
+  assert.match(page, /选择合同文件夹/);
+  assert.match(page, /webkitdirectory/);
+  assert.match(page, /file\.webkitRelativePath \|\| file\.name/);
+  assert.match(page, /只能检索、预览本人上传的总办合同/);
+  assert.match(page, /其他人上传的涉密合同不会暴露标题、数量或搜索结果/);
+  assert.match(agent, /ContractDocumentOwner/);
+  assert.match(agent, /restricted_document_ids=owned_document_ids/);
+});
+
 test("review supports visible L1-L3 batch approval and the approved level names", () => {
   assert.match(page, /batchReviewCandidateIds/);
   assert.match(page, /批量审核 · 共/);

@@ -254,6 +254,7 @@ def search(
     category: str | None = None,
     generate: bool = True,
     include_contracts: bool = False,
+    restricted_document_ids: set[str] | None = None,
     audit_action: str = "search",
 ) -> dict:
     scope, reason = choose_scope(query, requested_scope)
@@ -276,9 +277,12 @@ def search(
             "unavailable_count": 0,
         }
 
-    authorized_levels = _authorized_levels(
-        user,
-        include_contracts=include_contracts,
+    if restricted_document_ids is not None and not include_contracts:
+        raise ValueError("restricted_document_ids requires contract retrieval")
+    authorized_levels = (
+        tuple(CONFIDENTIALITY_RANK)
+        if restricted_document_ids is not None
+        else _authorized_levels(user, include_contracts=include_contracts)
     )
     allowed_statuses = _allowed_statuses(scope)
     chunk_query = (
@@ -297,6 +301,8 @@ def search(
     )
     if category:
         chunk_query = chunk_query.where(Project.domain == category)
+    if restricted_document_ids is not None:
+        chunk_query = chunk_query.where(Document.id.in_(restricted_document_ids))
     if not include_contracts:
         chunk_query = chunk_query.where(Project.domain.not_in(CONTRACT_DOMAINS))
     chunks = db.scalars(chunk_query).all()
@@ -394,6 +400,10 @@ def search(
                 if category:
                     embedding_query = embedding_query.where(
                         Project.domain == category
+                    )
+                if restricted_document_ids is not None:
+                    embedding_query = embedding_query.where(
+                        Document.id.in_(restricted_document_ids)
                     )
                 if not include_contracts:
                     embedding_query = embedding_query.where(

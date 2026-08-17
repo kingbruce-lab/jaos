@@ -783,6 +783,7 @@ type ContractCategory = {
   confidentiality: "L4" | "L5";
   can_search: boolean;
   can_upload: boolean;
+  search_scope: "own" | "all" | null;
 };
 
 type ContractDocument = {
@@ -1580,7 +1581,7 @@ export default function Home() {
     const canGovern = ["founder", "knowledge_admin"].includes(me.role);
     const confidentialityRank = ({ L1: 1, L2: 2, L3: 3, L4: 4, L5: 5 } as Record<string, number>)[me.confidentiality_ceiling] || 1;
     const canUseContracts = confidentialityRank >= 4
-      && ["administrative", "personnel", "management"].includes(me.organization_role);
+      && ["administrative", "personnel", "finance", "management"].includes(me.organization_role);
     const canUseFinance = (
       (me.organization_role === "finance" && confidentialityRank >= 4)
       || (me.organization_role === "management" && confidentialityRank >= 5)
@@ -2909,6 +2910,8 @@ export default function Home() {
     event.preventDefault();
     const form = event.currentTarget;
     if (!token || !contractCategory || contractFiles.length === 0) return;
+    const selectedCategory = contractCategories.find((item) => item.key === contractCategory);
+    if (!selectedCategory?.can_upload) return;
     setContractBusy(true);
     setContractMessage("");
     setError("");
@@ -2919,6 +2922,7 @@ export default function Home() {
         const body = new FormData();
         body.set("file", file, file.name);
         body.set("category", contractCategory);
+        body.set("relative_path", file.webkitRelativePath || file.name);
         const response = await fetch("/api/kb/v1/contracts/uploads", {
           method: "POST",
           headers: { authorization: `Bearer ${token}` },
@@ -4309,11 +4313,10 @@ export default function Home() {
     const ceiling = ranks[user?.confidentiality_ceiling || "L1"] || 1;
     return Object.keys(ranks).filter((level) => ranks[level] <= ceiling);
   }, [user?.confidentiality_ceiling]);
-  const canUploadContracts = user?.organization_role === "administrative"
-    || (
-      user?.organization_role === "management"
-      && user?.confidentiality_ceiling === "L5"
-    );
+  const selectedContractCategory = contractCategories.find(
+    (item) => item.key === contractCategory,
+  ) || null;
+  const canUploadContracts = Boolean(selectedContractCategory?.can_upload);
   const confidentialityRank = ({ L1: 1, L2: 2, L3: 3, L4: 4, L5: 5 } as Record<string, number>)[user?.confidentiality_ceiling || "L1"] || 1;
   const canUseFinance = (
     (user?.organization_role === "finance" && confidentialityRank >= 4)
@@ -4369,7 +4372,7 @@ export default function Home() {
       if (item.name === "合同档案库") {
         return (
           ({ L1: 1, L2: 2, L3: 3, L4: 4, L5: 5 } as Record<string, number>)[user?.confidentiality_ceiling || "L1"] >= 4
-          && ["administrative", "personnel", "management"].includes(user?.organization_role || "")
+          && ["administrative", "personnel", "finance", "management"].includes(user?.organization_role || "")
         );
       }
       if (item.name === "财务分析") return canUseFinance;
@@ -4805,7 +4808,7 @@ export default function Home() {
               <PanelTitle eyebrow="CONTRACT ARCHIVE" title="合同档案库" />
               <div className="contractSecurityNotice">
                 <strong>本地最高级别保护</strong>
-                <span>行政可检索行政及业务合同；人事仅可检索人事合同；业务、财务无合同检索权限；管理按密级查阅全部合同，管理+L5可上传合同。合同全文、OCR和检索词均不发送到云端模型。</span>
+                <span>行政可检索行政及业务合同，人事可检索人事合同；行政、人事、财务均可上传总办涉密合同，并且只能检索、预览本人上传的总办合同。管理+L5可查阅全部合同。合同全文、OCR和检索词均不发送到云端模型。</span>
               </div>
               <div className="contractCategoryTabs">
                 {contractCategories.map((item) => (
@@ -4816,11 +4819,15 @@ export default function Home() {
                     onClick={() => {
                       setContractCategory(item.key);
                       setContractSearchResponse(null);
+                      setContractFiles([]);
                       setContractMessage("");
                     }}
                   >
                     <b>{item.name}</b>
-                    <small>{confidentialityLabel(item.confidentiality)}{!item.can_search && item.can_upload ? " · 仅上传" : ""}</small>
+                    <small>
+                      {confidentialityLabel(item.confidentiality)}
+                      {item.search_scope === "own" ? " · 仅本人上传" : !item.can_search && item.can_upload ? " · 仅上传" : ""}
+                    </small>
                   </button>
                 ))}
               </div>
@@ -4830,25 +4837,50 @@ export default function Home() {
               {canUploadContracts && (
               <section className="panel contractUploadPanel">
                 <PanelTitle eyebrow="SECURE UPLOAD" title="上传合同原件" />
-                <p>支持扫描PDF和Word；上传后必须逐份审核。扫描PDF会在NAS本地逐页OCR并保留页码。</p>
+                <p>支持扫描PDF和Word，也可直接选择一个合同文件夹；系统会保留文件夹层级。上传后仍按每份合同逐份审核，扫描PDF会在NAS本地逐页OCR并保留页码。</p>
                 <form onSubmit={handleContractUpload}>
-                  <label className="contractFilePicker">
-                    <input
-                      type="file"
-                      multiple
-                      accept=".pdf,.doc,.docm,.docx"
-                      onChange={(event) => {
-                        setContractFiles(Array.from(event.target.files || []).slice(0, 10));
-                        setContractMessage("");
-                      }}
-                    />
-                    <b>{contractFiles.length ? `已选择 ${contractFiles.length} 份合同` : "选择扫描PDF或Word合同"}</b>
-                    <small>一次最多10份，原件直接保存到当前合同分类的NAS目录</small>
-                  </label>
+                  <div className="contractPickerGrid">
+                    <label className="contractFilePicker">
+                      <input
+                        type="file"
+                        multiple
+                        accept=".pdf,.doc,.docm,.docx"
+                        onChange={(event) => {
+                          setContractFiles(Array.from(event.target.files || []).slice(0, 20));
+                          setContractMessage("");
+                        }}
+                      />
+                      <b>选择合同文件</b>
+                      <small>适合少量PDF或Word合同，一次最多20份</small>
+                    </label>
+                    <label className="contractFilePicker folderPicker">
+                      <input
+                        type="file"
+                        multiple
+                        accept=".pdf,.doc,.docm,.docx"
+                        {...({ webkitdirectory: "" } as Record<string, string>)}
+                        onChange={(event) => {
+                          const selected = Array.from(event.target.files || []);
+                          const supported = /\.(pdf|doc|docm|docx)$/i;
+                          const files = selected.filter((file) => supported.test(file.name)).slice(0, 200);
+                          setContractFiles(files);
+                          setContractMessage(
+                            selected.length > files.length
+                              ? `已忽略 ${selected.length - files.length} 个不支持或超出上限的文件。`
+                              : "",
+                          );
+                        }}
+                      />
+                      <b>选择合同文件夹</b>
+                      <small>保留系列合同的文件夹层级，最多200份</small>
+                    </label>
+                  </div>
                   {contractFiles.length > 0 && (
                     <div className="contractSelectedFiles">
                       {contractFiles.map((file) => (
-                        <span key={`${file.name}-${file.size}`}>{file.name}</span>
+                        <span key={`${file.webkitRelativePath || file.name}-${file.size}`}>
+                          {file.webkitRelativePath || file.name}
+                        </span>
                       ))}
                     </div>
                   )}
@@ -4863,6 +4895,12 @@ export default function Home() {
               {contractCategories.find((item) => item.key === contractCategory)?.can_search ? (
               <section className="panel contractSearchPanel">
                 <PanelTitle eyebrow="LOCAL SEARCH" title="本地合同检索" />
+                {selectedContractCategory?.search_scope === "own" && (
+                  <div className="noticeBar">
+                    <strong>仅本人上传范围</strong>
+                    <span>这里只会检索和显示你本人上传的总办合同；其他人上传的涉密合同不会暴露标题、数量或搜索结果。</span>
+                  </div>
+                )}
                 <form onSubmit={handleContractSearch}>
                   <input
                     value={contractQuery}

@@ -86,6 +86,7 @@ from .models import (
     AuditLog,
     Chunk,
     ChunkEmbedding,
+    ContractDocumentOwner,
     Document,
     InboxIssue,
     KnowledgeCategory,
@@ -293,19 +294,77 @@ def _upload_department_allowed(user: User, department: str) -> bool:
     return bool(user.active and department)
 
 
-def _can_upload_contracts(user: User) -> bool:
+def _can_upload_contract_category(user: User, category_key: str) -> bool:
+    """Apply the narrow upload exception for highest-secret contracts."""
+    if not user.active:
+        return False
     organization_role = user.organization_role or "business"
     ceiling = CONFIDENTIALITY_RANK.get(user.confidentiality_ceiling, 0)
+    if organization_role == "management":
+        return ceiling >= CONFIDENTIALITY_RANK["L5"]
+    if organization_role == "administrative":
+        return category_key in CONTRACT_CATEGORIES
     return bool(
-        user.active
-        and (
-            organization_role == "administrative"
-            or (
-                organization_role == "management"
-                and ceiling >= CONFIDENTIALITY_RANK["L5"]
-            )
-        )
+        organization_role in {"personnel", "finance"}
+        and category_key == "executive_office"
+        and ceiling >= CONFIDENTIALITY_RANK["L4"]
     )
+
+
+def _contract_scope_for_user(user: User, category_key: str) -> str | None:
+    organization_role = user.organization_role or "business"
+    ceiling = CONFIDENTIALITY_RANK.get(user.confidentiality_ceiling, 0)
+    if not user.active:
+        return None
+    if category_key == "executive_office":
+        if organization_role == "management" and ceiling >= CONFIDENTIALITY_RANK["L5"]:
+            return "all"
+        if (
+            organization_role in {"administrative", "personnel", "finance"}
+            and ceiling >= CONFIDENTIALITY_RANK["L4"]
+        ):
+            return "own"
+        return None
+    allowed_categories = {
+        "administrative": {"administrative", "business"},
+        "personnel": {"personnel"},
+        "business": set(),
+        "finance": set(),
+        "management": set(CONTRACT_CATEGORIES),
+    }
+    category = CONTRACT_CATEGORIES[category_key]
+    if (
+        category_key in allowed_categories.get(organization_role, set())
+        and ceiling >= CONFIDENTIALITY_RANK[category.confidentiality]
+    ):
+        return "all"
+    return None
+
+
+def _owned_contract_document_ids(db: Session, user: User) -> set[str]:
+    """Return explicit ownership plus legacy contract-upload audit records."""
+    owned = set(
+        db.scalars(
+            select(ContractDocumentOwner.document_id).where(
+                ContractDocumentOwner.uploaded_by_user_id == user.id
+            )
+        ).all()
+    )
+    legacy_logs = db.scalars(
+        select(AuditLog).where(
+            AuditLog.user_id == user.id,
+            AuditLog.action == "contract_upload",
+        )
+    ).all()
+    for log in legacy_logs:
+        try:
+            values = json.loads(log.document_ids_json or "[]")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        owned.update(
+            str(value) for value in values if isinstance(value, str) and value
+        )
+    return owned
 
 
 def _contract_category_for_user(
@@ -317,25 +376,10 @@ def _contract_category_for_user(
     category = CONTRACT_CATEGORIES.get(category_key)
     if category is None:
         raise HTTPException(status_code=404, detail="合同分类不存在")
-    ceiling = CONFIDENTIALITY_RANK.get(user.confidentiality_ceiling, 0)
-    required = CONFIDENTIALITY_RANK[category.confidentiality]
-    if not user.active or ceiling < required:
-        raise HTTPException(status_code=403, detail="无权访问该合同档案")
-    organization_role = user.organization_role or "business"
     if operation == "upload":
-        allowed = _can_upload_contracts(user)
+        allowed = _can_upload_contract_category(user, category_key)
     else:
-        allowed_categories = {
-            "administrative": {"administrative", "business"},
-            "personnel": {"personnel"},
-            "business": set(),
-            "finance": set(),
-            "management": set(CONTRACT_CATEGORIES),
-        }
-        allowed = category_key in allowed_categories.get(
-            organization_role,
-            set(),
-        )
+        allowed = _contract_scope_for_user(user, category_key) is not None
     if not allowed:
         raise HTTPException(status_code=403, detail="无权访问该合同档案")
     return category
@@ -562,15 +606,16 @@ def list_contract_categories(
     user: User = Depends(current_user),
 ) -> list[dict]:
     ceiling = CONFIDENTIALITY_RANK.get(user.confidentiality_ceiling, 0)
-    organization_role = user.organization_role or "business"
     searchable = {
-        "administrative": {"administrative", "business"},
-        "personnel": {"personnel"},
-        "business": set(),
-        "finance": set(),
-        "management": set(CONTRACT_CATEGORIES),
-    }.get(organization_role, set())
-    uploadable = set(CONTRACT_CATEGORIES) if _can_upload_contracts(user) else set()
+        key
+        for key in CONTRACT_CATEGORIES
+        if _contract_scope_for_user(user, key) is not None
+    }
+    uploadable = {
+        key
+        for key in CONTRACT_CATEGORIES
+        if _can_upload_contract_category(user, key)
+    }
     if (
         ceiling < CONFIDENTIALITY_RANK["L4"]
         or not (searchable or uploadable)
@@ -583,10 +628,10 @@ def list_contract_categories(
             "confidentiality": item.confidentiality,
             "can_search": item.key in searchable,
             "can_upload": item.key in uploadable,
+            "search_scope": _contract_scope_for_user(user, item.key),
         }
         for item in CONTRACT_CATEGORIES.values()
-        if ceiling >= CONFIDENTIALITY_RANK[item.confidentiality]
-        and item.key in searchable | uploadable
+        if item.key in searchable | uploadable
     ]
 
 
@@ -594,13 +639,14 @@ def list_contract_categories(
 async def upload_contract(
     file: UploadFile = File(...),
     category: str = Form(...),
+    relative_path: str = Form(default=""),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    if not _can_upload_contracts(user):
+    if not _can_upload_contract_category(user, category):
         raise HTTPException(
             status_code=403,
-            detail="仅行政角色或管理+L5账号可以上传合同档案",
+            detail="无权向该合同分类上传资料",
         )
     contract_category = _contract_category_for_user(
         user,
@@ -615,6 +661,11 @@ async def upload_contract(
         )
     try:
         target_dir = ensure_contract_layout(settings.knowledge_root)[category]
+        relative_parent = _safe_upload_relative_parent(relative_path)
+        if relative_parent.parts:
+            target_dir = (target_dir / relative_parent).resolve()
+            target_dir.relative_to(settings.knowledge_root.resolve())
+            target_dir.mkdir(parents=True, exist_ok=True)
     except (OSError, ValueError) as exc:
         raise HTTPException(status_code=503, detail="合同档案目录暂不可写入") from exc
     temporary = target_dir / f".{secrets.token_hex(12)}.part"
@@ -656,6 +707,19 @@ async def upload_contract(
             entry,
             expected_stat=(stat.st_size, stat.st_mtime_ns),
         )
+        existing_owner = db.scalar(
+            select(ContractDocumentOwner).where(
+                ContractDocumentOwner.document_id == result["document_id"],
+                ContractDocumentOwner.uploaded_by_user_id == user.id,
+            )
+        )
+        if existing_owner is None:
+            db.add(
+                ContractDocumentOwner(
+                    document_id=result["document_id"],
+                    uploaded_by_user_id=user.id,
+                )
+            )
         db.add(
             AuditLog(
                 user_id=user.id,
@@ -667,6 +731,7 @@ async def upload_contract(
                         "confidentiality": contract_category.confidentiality,
                         "size_bytes": size,
                         "review_required": True,
+                        "relative_path": relative_path,
                     },
                     ensure_ascii=False,
                 ),
@@ -682,6 +747,7 @@ async def upload_contract(
             "status": result["status"],
             "document_id": result["document_id"],
             "review_required": True,
+            "relative_path": relative_path,
             "notice": "合同原件已保存至NAS，审核通过后可在合同档案库检索。",
             "duplicate_filtered": result.get("duplicate_filtered", False),
         }
@@ -1542,22 +1608,34 @@ def list_contract_documents(
     db: Session = Depends(get_db),
 ) -> dict:
     contract_category = _contract_category_for_user(user, category)
-    documents = db.scalars(
-        select(Document)
-        .join(Document.project)
-        .options(
-            joinedload(Document.project),
-            joinedload(Document.file_blob),
+    access_scope = _contract_scope_for_user(user, category)
+    owned_document_ids = (
+        _owned_contract_document_ids(db, user)
+        if access_scope == "own"
+        else None
+    )
+    if owned_document_ids is not None and not owned_document_ids:
+        documents = []
+    else:
+        statement = (
+            select(Document)
+            .join(Document.project)
+            .options(
+                joinedload(Document.project),
+                joinedload(Document.file_blob),
+            )
+            .where(
+                Project.domain == contract_category.domain,
+                Document.knowledge_status.in_(
+                    ("approved", "current", "superseded", "archived")
+                ),
+            )
+            .order_by(Document.ingested_at.desc())
+            .limit(200)
         )
-        .where(
-            Project.domain == contract_category.domain,
-            Document.knowledge_status.in_(
-                ("approved", "current", "superseded", "archived")
-            ),
-        )
-        .order_by(Document.ingested_at.desc())
-        .limit(200)
-    ).all()
+        if owned_document_ids is not None:
+            statement = statement.where(Document.id.in_(owned_document_ids))
+        documents = db.scalars(statement).all()
     health = {
         item.content_hash: item
         for item in db.scalars(select(SourceHealth)).all()
@@ -1574,7 +1652,10 @@ def list_contract_documents(
             "created_at": document.ingested_at,
         }
         for document in documents
-        if is_authorized(user, document, document.project)
+        if (
+            access_scope == "own"
+            or is_authorized(user, document, document.project)
+        )
         and source_is_available(
             document.file_blob,
             health.get(document.content_hash),
@@ -1599,6 +1680,7 @@ def list_contract_documents(
         "category": contract_category.key,
         "category_name": contract_category.name,
         "confidentiality": contract_category.confidentiality,
+        "search_scope": access_scope,
         "items": items,
     }
 
@@ -1610,6 +1692,12 @@ def search_contract_documents(
     db: Session = Depends(get_db),
 ) -> dict:
     contract_category = _contract_category_for_user(user, payload.category)
+    access_scope = _contract_scope_for_user(user, payload.category)
+    owned_document_ids = (
+        _owned_contract_document_ids(db, user)
+        if access_scope == "own"
+        else None
+    )
     result = search(
         db,
         user=user,
@@ -1620,6 +1708,7 @@ def search_contract_documents(
         category=contract_category.domain,
         generate=False,
         include_contracts=True,
+        restricted_document_ids=owned_document_ids,
         audit_action="contract_search",
     )
     return {
@@ -1628,6 +1717,7 @@ def search_contract_documents(
         "category_name": contract_category.name,
         "confidentiality": contract_category.confidentiality,
         "local_only": True,
+        "search_scope": access_scope,
         "generated_at": datetime.now(timezone.utc),
     }
 
@@ -2310,7 +2400,7 @@ def list_projects(
         visible = [
             document
             for document in project.documents
-            if _document_visible_to_user(user, document, project)
+            if _document_visible_to_user(db, user, document, project)
         ]
         if not visible:
             continue
@@ -2359,7 +2449,7 @@ def get_project(
     documents = [
         document
         for document in project.documents
-        if _document_visible_to_user(user, document, project)
+        if _document_visible_to_user(db, user, document, project)
     ]
     if not documents:
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -2424,21 +2514,31 @@ _preview_ticket_lock = Lock()
 
 
 def _document_visible_to_user(
+    db: Session,
     user: User,
     document: Document,
     project: Project,
 ) -> bool:
-    if not is_authorized(user, document, project):
-        return False
     contract_category = CONTRACT_CATEGORIES_BY_DOMAIN.get(project.domain)
     if contract_category is not None:
+        organization_role = user.organization_role or "business"
+        if contract_category.key == "executive_office":
+            scope = _contract_scope_for_user(user, contract_category.key)
+            if scope == "own":
+                return bool(
+                    document.id in _owned_contract_document_ids(db, user)
+                    and document.knowledge_status in EMPLOYEE_VISIBLE_STATUSES
+                )
+            if scope != "all":
+                return False
+        if not is_authorized(user, document, project):
+            return False
         # Contract retrieval is intentionally narrower than the account's
         # confidentiality ceiling. Administrative users also remain able to
         # preview every ceiling-permitted category because they are an
         # upload/review role; personnel and management receive only their
-        # explicit archive scopes. Business and finance never receive a
-        # contract document through generic document/preview endpoints.
-        organization_role = user.organization_role or "business"
+        # explicit archive scopes. Finance receives only its own uploaded
+        # executive-office documents through the special branch above.
         allowed_categories = {
             "administrative": set(CONTRACT_CATEGORIES),
             "personnel": {"personnel"},
@@ -2451,6 +2551,8 @@ def _document_visible_to_user(
             set(),
         ):
             return False
+    elif not is_authorized(user, document, project):
+        return False
     if user.role in REVIEWER_ROLES:
         return document.knowledge_status not in {"deleted", "quarantined", "rejected"}
     return document.knowledge_status in EMPLOYEE_VISIBLE_STATUSES
@@ -2642,6 +2744,7 @@ def get_document(
         .where(Document.id == document_id)
     ).unique().scalar_one_or_none()
     if not document or not _document_visible_to_user(
+        db,
         user,
         document,
         document.project,
@@ -2702,6 +2805,7 @@ def preview_document(
         .where(Document.id == document_id)
     ).unique().scalar_one_or_none()
     if not document or not _document_visible_to_user(
+        db,
         user,
         document,
         document.project,
@@ -2851,6 +2955,7 @@ def create_preview_ticket(
         .where(Document.id == document_id)
     ).unique().scalar_one_or_none()
     if not document or not _document_visible_to_user(
+        db,
         user,
         document,
         document.project,
@@ -2917,7 +3022,7 @@ def preview_with_ticket(
         if (
             not document
             or not document.file_blob
-            or not _document_visible_to_user(user, document, document.project)
+            or not _document_visible_to_user(db, user, document, document.project)
         ):
             raise HTTPException(status_code=404, detail="预览链接已失效，请重新打开")
         health = verify_and_record(db, document.file_blob, commit=False)
@@ -3568,6 +3673,15 @@ def review_queue(
         .order_by(Document.ingested_at.desc())
     )
     documents = db.scalars(document_query).unique().all()
+    executive_scope = _contract_scope_for_user(user, "executive_office")
+    if executive_scope == "own":
+        owned_contract_ids = _owned_contract_document_ids(db, user)
+        documents = [
+            document
+            for document in documents
+            if document.project.domain != CONTRACT_CATEGORIES["executive_office"].domain
+            or document.id in owned_contract_ids
+        ]
     document_ids = [document.id for document in documents]
     uploaders_by_document = _review_uploader_payloads(db, document_ids)
     proposals = (

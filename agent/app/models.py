@@ -622,6 +622,35 @@ class Document(Base):
     )
 
 
+class ContractDocumentOwner(Base):
+    """Records every employee who uploaded a contract document.
+
+    A document may have more than one uploader when an identical source file
+    is submitted twice.  The association therefore cannot live directly on
+    ``Document`` and must remain independent from the NAS folder layout.
+    """
+
+    __tablename__ = "contract_document_owners"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "uploaded_by_user_id",
+            name="uq_contract_document_uploader",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id"), index=True
+    )
+    uploaded_by_user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
 class ReviewProposal(Base):
     """A staged metadata change that never publishes knowledge by itself."""
 
