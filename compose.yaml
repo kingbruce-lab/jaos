@@ -65,6 +65,7 @@ services:
       JINGAO_DISK_CRITICAL_PERCENT: ${JINGAO_DISK_CRITICAL_PERCENT:-90}
       JINGAO_MEMORY_WARNING_PERCENT: ${JINGAO_MEMORY_WARNING_PERCENT:-80}
       JINGAO_MEMORY_CRITICAL_PERCENT: ${JINGAO_MEMORY_CRITICAL_PERCENT:-90}
+      MALLOC_ARENA_MAX: "2"
     volumes:
       - agent_data:/data
       - ${JINGAO_KNOWLEDGE_PATH:?请设置NAS资料目录}:/knowledge:rw
@@ -86,7 +87,7 @@ services:
       retries: 3
       start_period: 30s
     networks: [internal]
-    mem_limit: 2g
+    mem_limit: 3g
 
   backup:
     image: jingao-agent:local

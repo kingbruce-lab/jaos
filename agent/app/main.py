@@ -52,6 +52,7 @@ from .contracts import (
     ContractCategory,
     ensure_contract_layout,
 )
+from .contract_filing import suggest_contract_folder
 from .database import SessionLocal, get_db, init_database
 from .evaluation import (
     approve_business_gold_cases,
@@ -136,6 +137,8 @@ from .schemas import (
     GovernanceAIClassifyRequest,
     GovernanceConfidentialityUpdateRequest,
     ContractSearchRequest,
+    ContractFolderCreateRequest,
+    ContractFolderMoveRequest,
     LoginRequest,
     MaintainedArtifactBaselineUpdate,
     MaintainedArtifactCreate,
@@ -299,6 +302,65 @@ def _contract_document_folder_path(source_path: str, category_key: str) -> str:
     except (KeyError, OSError, ValueError):
         return ""
     return "" if relative == Path(".") else relative.as_posix()
+
+
+def _safe_contract_folder_path(value: str | None) -> Path:
+    raw = (value or "").replace("\\", "/").strip(" /")
+    if not raw:
+        return Path()
+    parts: list[str] = []
+    for item in raw.split("/"):
+        try:
+            parts.append(validate_category_folder_name(item))
+        except StorageLayoutError as exc:
+            raise HTTPException(status_code=422, detail="合同文件夹名称无效") from exc
+    if len(parts) > 6:
+        raise HTTPException(status_code=422, detail="合同文件夹最多支持 6 层")
+    return Path(*parts)
+
+
+def _move_nas_file_without_overwrite(source: Path, target_dir: Path) -> Path:
+    source = source.resolve()
+    target_dir = target_dir.resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if source.parent == target_dir:
+        return source
+    for attempt in range(100):
+        candidate = (
+            target_dir / source.name
+            if attempt == 0
+            else target_dir / f"{source.stem}_{secrets.token_hex(3)}{source.suffix}"
+        )
+        try:
+            os.link(source, candidate)
+            source.unlink()
+            return candidate
+        except FileExistsError:
+            continue
+    raise HTTPException(status_code=409, detail="目标文件夹中同名合同过多")
+
+
+def _can_manage_contract_folders(user: User) -> bool:
+    role = user.organization_role or "business"
+    ceiling = CONFIDENTIALITY_RANK.get(user.confidentiality_ceiling, 0)
+    return bool(
+        user.active
+        and (
+            (role == "administrative" and ceiling >= CONFIDENTIALITY_RANK["L4"])
+            or (role == "management" and ceiling >= CONFIDENTIALITY_RANK["L5"])
+        )
+    )
+
+
+def _contract_status_label(value: str) -> str:
+    return {
+        "candidate": "待审核",
+        "approved": "已审核",
+        "current": "当前版本",
+        "superseded": "历史版本",
+        "archived": "已归档",
+        "rejected": "已拒绝",
+    }.get(value, value)
 
 
 def _upload_department_allowed(user: User, department: str) -> bool:
@@ -646,6 +708,195 @@ def list_contract_categories(
     ]
 
 
+def _contract_document_item(
+    document: Document,
+    *,
+    category: ContractCategory,
+    can_move: bool,
+) -> dict:
+    source_path = document.file_blob.source_path if document.file_blob else ""
+    return {
+        "document_id": document.id,
+        "title": document.title,
+        "category": category.key,
+        "category_name": category.name,
+        "confidentiality": document.confidentiality,
+        "knowledge_status": document.knowledge_status,
+        "status_label": _contract_status_label(document.knowledge_status),
+        "folder_path": (
+            _contract_document_folder_path(source_path, category.key)
+            if source_path
+            else ""
+        ),
+        "page_count": document.page_count,
+        "created_at": document.ingested_at,
+        "source_available": bool(source_path and Path(source_path).is_file()),
+        "can_move": can_move,
+    }
+
+
+@app.get("/v1/contracts/mine")
+def list_my_contract_documents(
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """List every non-deleted contract explicitly uploaded by this user."""
+    uploadable = {
+        key for key in CONTRACT_CATEGORIES if _can_upload_contract_category(user, key)
+    }
+    if not uploadable:
+        raise HTTPException(status_code=403, detail="当前账号没有合同上传权限")
+    owned_ids = _owned_contract_document_ids(db, user)
+    if not owned_ids:
+        return {"count": 0, "items": []}
+    documents = db.scalars(
+        select(Document)
+        .join(Document.project)
+        .options(joinedload(Document.project), joinedload(Document.file_blob))
+        .where(
+            Document.id.in_(owned_ids),
+            Project.domain.in_(CONTRACT_DOMAINS),
+            Document.knowledge_status.notin_(("deleted", "quarantined")),
+        )
+        .order_by(Document.ingested_at.desc())
+        .limit(500)
+    ).all()
+    items: list[dict] = []
+    for document in documents:
+        category = CONTRACT_CATEGORIES_BY_DOMAIN.get(document.project.domain)
+        if category is None:
+            continue
+        items.append(
+            _contract_document_item(
+                document,
+                category=category,
+                can_move=_can_manage_contract_folders(user),
+            )
+        )
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action="contract_own_archive_list",
+            document_ids_json=json.dumps([item["document_id"] for item in items]),
+            details_json=json.dumps({"result_count": len(items)}),
+        )
+    )
+    db.commit()
+    return {"count": len(items), "items": items}
+
+
+@app.get("/v1/contracts/folders")
+def list_contract_folders(
+    category: str = Query(..., min_length=1, max_length=40),
+    user: User = Depends(current_user),
+) -> dict:
+    if not _can_upload_contract_category(user, category):
+        raise HTTPException(status_code=403, detail="无权查看该合同分类的文件夹")
+    root = ensure_contract_layout(settings.knowledge_root)[category].resolve()
+    folders = sorted(
+        {
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_dir()
+            and not any(part.startswith(".") for part in path.relative_to(root).parts)
+        }
+    )[:500]
+    return {"category": category, "items": folders}
+
+
+@app.post("/v1/contracts/folders")
+def create_contract_folder(
+    payload: ContractFolderCreateRequest,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not _can_manage_contract_folders(user):
+        raise HTTPException(status_code=403, detail="仅行政或最高管理账号可整理合同文件夹")
+    if not _can_upload_contract_category(user, payload.category):
+        raise HTTPException(status_code=403, detail="无权整理该合同分类")
+    relative = _safe_contract_folder_path(payload.folder_path)
+    root = ensure_contract_layout(settings.knowledge_root)[payload.category].resolve()
+    target = (root / relative).resolve()
+    try:
+        target.relative_to(root)
+        target.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="合同文件夹暂时无法创建") from exc
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action="contract_folder_create",
+            details_json=json.dumps(
+                {"category": payload.category, "folder_path": relative.as_posix()},
+                ensure_ascii=False,
+            ),
+        )
+    )
+    db.commit()
+    return {"category": payload.category, "folder_path": relative.as_posix()}
+
+
+@app.patch("/v1/contracts/{document_id}/folder")
+def move_contract_document(
+    document_id: str,
+    payload: ContractFolderMoveRequest,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not _can_manage_contract_folders(user):
+        raise HTTPException(status_code=403, detail="仅行政或最高管理账号可移动合同")
+    document = db.scalar(
+        select(Document)
+        .options(joinedload(Document.project), joinedload(Document.file_blob))
+        .where(Document.id == document_id)
+    )
+    if not document or not document.project or not document.file_blob:
+        raise HTTPException(status_code=404, detail="合同不存在")
+    category = CONTRACT_CATEGORIES_BY_DOMAIN.get(document.project.domain)
+    if category is None:
+        raise HTTPException(status_code=404, detail="合同不存在")
+    if (user.organization_role or "business") != "management" and document.id not in _owned_contract_document_ids(db, user):
+        raise HTTPException(status_code=404, detail="合同不存在")
+    reference_count = db.scalar(
+        select(func.count(Document.id)).where(
+            Document.content_hash == document.content_hash
+        )
+    )
+    if int(reference_count or 0) != 1:
+        raise HTTPException(status_code=409, detail="该原件被多个资料引用，暂不能直接移动")
+    relative = _safe_contract_folder_path(payload.folder_path)
+    root = ensure_contract_layout(settings.knowledge_root)[category.key].resolve()
+    source = Path(document.file_blob.source_path).resolve()
+    try:
+        source.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="合同原件不在规范目录中") from exc
+    previous_folder = _contract_document_folder_path(str(source), category.key)
+    moved = _move_nas_file_without_overwrite(source, root / relative)
+    document.file_blob.source_path = str(moved)
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action="contract_folder_move",
+            document_ids_json=json.dumps([document.id]),
+            details_json=json.dumps(
+                {
+                    "category": category.key,
+                    "from": previous_folder,
+                    "to": relative.as_posix(),
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    db.commit()
+    return {
+        "document_id": document.id,
+        "category": category.key,
+        "folder_path": relative.as_posix(),
+    }
+
+
 @app.post("/v1/contracts/uploads")
 async def upload_contract(
     file: UploadFile = File(...),
@@ -727,6 +978,67 @@ async def upload_contract(
             )
             if canonical_path is not None and final_path.resolve() != canonical_path:
                 final_path.unlink(missing_ok=True)
+        filing = {
+            "mode": "preserved" if relative_parent.parts else "existing",
+            "folder_path": relative_parent.as_posix() if relative_parent.parts else "",
+            "confidence": None,
+            "matched_keywords": [],
+        }
+        if not relative_parent.parts and not result.get("duplicate_filtered"):
+            document = db.get(Document, result["document_id"])
+            reference_count = db.scalar(
+                select(func.count(Document.id)).where(
+                    Document.content_hash == document.content_hash
+                )
+            ) if document else 0
+            if (
+                document is not None
+                and document.file_blob is not None
+                and int(reference_count or 0) == 1
+                and Path(document.file_blob.source_path).resolve() == final_path.resolve()
+            ):
+                chunk_texts = db.scalars(
+                    select(Chunk.text)
+                    .where(Chunk.document_id == document.id)
+                    .order_by(Chunk.chunk_index.asc())
+                    .limit(60)
+                ).all()
+                suggestion = suggest_contract_folder(
+                    category,
+                    title=document.title or final_path.name,
+                    text="\n".join(chunk_texts),
+                )
+                category_root = ensure_contract_layout(settings.knowledge_root)[category]
+                target_folder = _safe_contract_folder_path(suggestion.folder)
+                moved_path = _move_nas_file_without_overwrite(
+                    final_path,
+                    category_root / target_folder,
+                )
+                document.file_blob.source_path = str(moved_path)
+                final_path = moved_path
+                filing = {
+                    "mode": "local_ai",
+                    "folder_path": target_folder.as_posix(),
+                    "confidence": suggestion.confidence,
+                    "matched_keywords": list(suggestion.matched_keywords),
+                }
+                db.add(
+                    AuditLog(
+                        user_id=user.id,
+                        action="contract_auto_filed",
+                        document_ids_json=json.dumps([document.id]),
+                        details_json=json.dumps(
+                            {
+                                "category": category,
+                                "folder_path": target_folder.as_posix(),
+                                "confidence": suggestion.confidence,
+                                "matched_keywords": list(suggestion.matched_keywords),
+                                "classifier": "local_rules_v1",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+                )
         existing_owner = db.scalar(
             select(ContractDocumentOwner).where(
                 ContractDocumentOwner.document_id == result["document_id"],
@@ -752,6 +1064,7 @@ async def upload_contract(
                         "size_bytes": size,
                         "review_required": True,
                         "relative_path": relative_path,
+                        "filing": filing,
                     },
                     ensure_ascii=False,
                 ),
@@ -768,7 +1081,14 @@ async def upload_contract(
             "document_id": result["document_id"],
             "review_required": True,
             "relative_path": relative_path,
-            "notice": "合同原件已保存至NAS，审核通过后可在合同档案库检索。",
+            "filing": filing,
+            "notice": (
+                f"合同原件已保存至NAS，并已在本地自动归档到“{filing['folder_path']}”；审核通过后可检索。"
+                if filing["mode"] == "local_ai"
+                else "合同原件已保存至NAS并保留原文件夹层级；审核通过后可检索。"
+                if filing["mode"] == "preserved"
+                else "合同原件已保存至NAS；审核通过后可检索。"
+            ),
             "duplicate_filtered": result.get("duplicate_filtered", False),
         }
     except Exception:

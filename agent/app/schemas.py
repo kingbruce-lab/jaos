@@ -33,6 +33,20 @@ class ContractSearchRequest(BaseModel):
     limit: int = Field(default=20, ge=1, le=50)
 
 
+class ContractFolderCreateRequest(BaseModel):
+    category: Literal[
+        "administrative",
+        "personnel",
+        "business",
+        "executive_office",
+    ]
+    folder_path: str = Field(min_length=1, max_length=400)
+
+
+class ContractFolderMoveRequest(BaseModel):
+    folder_path: str = Field(default="", max_length=400)
+
+
 class WritingDraftRequest(BaseModel):
     instruction: str = Field(min_length=5, max_length=3000)
     category: str | None = Field(default=None, min_length=1, max_length=40)

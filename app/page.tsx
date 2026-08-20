@@ -806,6 +806,19 @@ type ContractArchiveResponse = {
   items: ContractDocument[];
 };
 
+type OwnedContractDocument = ContractDocument & {
+  category: ContractCategory["key"];
+  category_name: string;
+  status_label: string;
+  source_available: boolean;
+  can_move: boolean;
+};
+
+type OwnedContractResponse = {
+  count: number;
+  items: OwnedContractDocument[];
+};
+
 type InboxIssue = {
   id: string;
   relative_path: string;
@@ -1502,6 +1515,12 @@ export default function Home() {
   const [contractCategories, setContractCategories] = useState<ContractCategory[]>([]);
   const [contractCategory, setContractCategory] = useState("");
   const [contractDocuments, setContractDocuments] = useState<ContractDocument[]>([]);
+  const [ownedContractDocuments, setOwnedContractDocuments] = useState<OwnedContractDocument[]>([]);
+  const [contractFolders, setContractFolders] = useState<Record<string, string[]>>({});
+  const [contractNewFolderCategory, setContractNewFolderCategory] = useState("");
+  const [contractNewFolderPath, setContractNewFolderPath] = useState("");
+  const [contractMoveTargets, setContractMoveTargets] = useState<Record<string, string>>({});
+  const [contractManageBusy, setContractManageBusy] = useState("");
   const [contractPendingCount, setContractPendingCount] = useState(0);
   const [contractQuery, setContractQuery] = useState("");
   const [contractSearchResponse, setContractSearchResponse] = useState<SearchResponse | null>(null);
@@ -1747,6 +1766,33 @@ export default function Home() {
       cancelled = true;
     };
   }, [active, contractCategories, contractCategory, token]);
+
+  useEffect(() => {
+    if (!token || active !== "合同档案库" || contractCategories.length === 0) return;
+    let cancelled = false;
+    const uploadable = contractCategories.filter((item) => item.can_upload);
+    void Promise.all([
+      kbFetch<OwnedContractResponse>("v1/contracts/mine", {}, token),
+      ...uploadable.map(async (item) => {
+        const response = await kbFetch<{ category: string; items: string[] }>(
+          `v1/contracts/folders?category=${encodeURIComponent(item.key)}`,
+          {},
+          token,
+        );
+        return response;
+      }),
+    ]).then(([mine, ...folderResponses]) => {
+      if (cancelled) return;
+      setOwnedContractDocuments(mine.items);
+      setContractFolders(Object.fromEntries(folderResponses.map((item) => [item.category, item.items])));
+      setContractNewFolderCategory((current) => current || uploadable[0]?.key || "");
+    }).catch((cause) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : "本人合同清单加载失败");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, contractCategories, token]);
 
   useEffect(() => {
     if (!token || !user) return;
@@ -2926,6 +2972,7 @@ export default function Home() {
     setError("");
     let completed = 0;
     let duplicatesFiltered = 0;
+    let automaticallyFiled = 0;
     const uploadFolder = contractSelectionMode === "folder" ? contractFolderName : "";
     setContractUploadProgress({ completed: 0, total: contractFiles.length });
     try {
@@ -2943,8 +2990,12 @@ export default function Home() {
           const payload = await response.json().catch(() => null);
           throw new Error(apiErrorMessage(payload, response.status));
         }
-        const payload = await response.json() as { duplicate_filtered?: boolean };
+        const payload = await response.json() as {
+          duplicate_filtered?: boolean;
+          filing?: { mode?: string };
+        };
         if (payload.duplicate_filtered) duplicatesFiltered += 1;
+        if (payload.filing?.mode === "local_ai") automaticallyFiled += 1;
         completed += 1;
         setContractUploadProgress({ completed, total: contractFiles.length });
       }
@@ -2960,15 +3011,88 @@ export default function Home() {
           ? `${completed - duplicatesFiltered} 份已进入入库审核；审核通过后按原文件夹展示`
           : "",
         duplicatesFiltered ? `${duplicatesFiltered} 份完全重复资料已过滤` : "",
+        automaticallyFiled ? `${automaticallyFiled} 份散件已由本地AI自动归档` : "",
       ].filter(Boolean).join("；") + "。");
       if (["founder", "knowledge_admin", "department_owner"].includes(user?.role || "")) {
         setReviewQueue(await kbFetch<ReviewItem[]>("v1/review/queue", {}, token));
       }
+      const mine = await kbFetch<OwnedContractResponse>("v1/contracts/mine", {}, token);
+      setOwnedContractDocuments(mine.items);
     } catch (cause) {
       setError(`${completed} 份已完成；${cause instanceof Error ? cause.message : "合同上传失败"}`);
     } finally {
       setContractBusy(false);
       setContractUploadProgress({ completed: 0, total: 0 });
+    }
+  }
+
+  async function refreshContractFolders(category: string) {
+    if (!token || !category) return;
+    const response = await kbFetch<{ category: string; items: string[] }>(
+      `v1/contracts/folders?category=${encodeURIComponent(category)}`,
+      {},
+      token,
+    );
+    setContractFolders((current) => ({ ...current, [category]: response.items }));
+  }
+
+  async function handleContractFolderCreate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token || !contractNewFolderCategory || !contractNewFolderPath.trim()) return;
+    setContractManageBusy("create");
+    setError("");
+    try {
+      await kbFetch(
+        "v1/contracts/folders",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            category: contractNewFolderCategory,
+            folder_path: contractNewFolderPath.trim(),
+          }),
+        },
+        token,
+      );
+      await refreshContractFolders(contractNewFolderCategory);
+      setContractNewFolderPath("");
+      setContractMessage("合同文件夹已创建，可立即将本人上传的合同移动进去。");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "合同文件夹创建失败");
+    } finally {
+      setContractManageBusy("");
+    }
+  }
+
+  async function handleContractMove(item: OwnedContractDocument) {
+    if (!token) return;
+    const folderPath = contractMoveTargets[item.document_id] ?? item.folder_path ?? "";
+    setContractManageBusy(item.document_id);
+    setError("");
+    try {
+      await kbFetch(
+        `v1/contracts/${encodeURIComponent(item.document_id)}/folder`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ folder_path: folderPath }),
+        },
+        token,
+      );
+      const mine = await kbFetch<OwnedContractResponse>("v1/contracts/mine", {}, token);
+      setOwnedContractDocuments(mine.items);
+      await refreshContractFolders(item.category);
+      if (item.category === contractCategory && selectedContractCategory?.can_search) {
+        const archive = await kbFetch<ContractArchiveResponse>(
+          `v1/contracts?category=${encodeURIComponent(item.category)}`,
+          {},
+          token,
+        );
+        setContractDocuments(archive.items);
+      }
+      setContractMessage(`《${item.title}》已移动到${folderPath ? `“${folderPath}”` : "分类根目录"}。`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "合同移动失败");
+    } finally {
+      setContractManageBusy("");
     }
   }
 
@@ -4334,6 +4458,10 @@ export default function Home() {
     (item) => item.key === contractCategory,
   ) || null;
   const canUploadContracts = Boolean(selectedContractCategory?.can_upload);
+  const canManageContractFolders = Boolean(
+    (user?.organization_role === "administrative" && ["L4", "L5"].includes(user?.confidentiality_ceiling || ""))
+    || (user?.organization_role === "management" && user?.confidentiality_ceiling === "L5"),
+  );
   const contractDocumentGroups = useMemo(() => {
     const grouped = new Map<string, ContractDocument[]>();
     for (const document of contractDocuments) {
@@ -4864,7 +4992,7 @@ export default function Home() {
               {canUploadContracts && (
               <section className="panel contractUploadPanel">
                 <PanelTitle eyebrow="SECURE UPLOAD" title="上传合同原件" />
-                <p>支持扫描PDF和Word，也可直接选择一个合同文件夹；系统会保留文件夹层级。上传后仍按每份合同逐份审核，扫描PDF会在NAS本地逐页OCR并保留页码。</p>
+                <p>支持扫描PDF和Word，也可直接选择一个合同文件夹。散件由本地AI根据标题和正文自动归档，文件夹上传则保留原层级；L4/L5合同内容不发送到云端。</p>
                 <form onSubmit={handleContractUpload}>
                   <div className="contractPickerGrid">
                     <label className="contractFilePicker">
@@ -4981,6 +5109,89 @@ export default function Home() {
                   <PanelTitle eyebrow="UPLOAD ONLY" title="当前分类仅可上传" />
                   <p>行政可代为上传该分类合同，但无权检索或查看其合同内容。</p>
                 </section>
+              )}
+            </section>
+
+            <section className="panel contractOwnLibrary">
+              <div className="contractOwnHeader">
+                <PanelTitle eyebrow="MY CONTRACTS" title={`我上传的合同（${ownedContractDocuments.length}）`} />
+                <p>包含待审核与已审核合同。行政可新建文件夹并移动本人上传的合同，移动只发生在原合同分类内，不会改变L4/L5密级。</p>
+              </div>
+              {canManageContractFolders && (
+                <form className="contractFolderCreate" onSubmit={handleContractFolderCreate}>
+                  <label>
+                    合同分类
+                    <select
+                      value={contractNewFolderCategory}
+                      onChange={(event) => setContractNewFolderCategory(event.target.value)}
+                    >
+                      {contractCategories.filter((item) => item.can_upload).map((item) => (
+                        <option value={item.key} key={item.key}>{item.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    新文件夹名称
+                    <input
+                      value={contractNewFolderPath}
+                      onChange={(event) => setContractNewFolderPath(event.target.value)}
+                      placeholder="例如：2026年/场馆租赁合同"
+                      maxLength={400}
+                    />
+                  </label>
+                  <button className="secondaryButton" disabled={contractManageBusy === "create" || !contractNewFolderPath.trim()}>
+                    {contractManageBusy === "create" ? "正在创建…" : "新建文件夹"}
+                  </button>
+                </form>
+              )}
+              {ownedContractDocuments.length === 0 ? (
+                <div className="emptyState"><b>▣</b><h3>你还没有上传合同</h3><p>上传后会立即出现在这里，等待审核期间也可以整理文件夹。</p></div>
+              ) : (
+                <div className="contractOwnList">
+                  {ownedContractDocuments.map((item) => (
+                    <article key={item.document_id}>
+                      <div className="contractOwnIdentity">
+                        <strong>{item.title}</strong>
+                        <span>
+                          {item.category_name} · {confidentialityLabel(item.confidentiality)} · {item.status_label}
+                        </span>
+                        <small>当前位置：{item.folder_path || "分类根目录"}</small>
+                      </div>
+                      <div className="contractOwnActions">
+                        {item.source_available && !["rejected", "deleted", "quarantined"].includes(item.knowledge_status) && (
+                          <button type="button" className="previewLink" onClick={() => void handlePreview(item.document_id, 1)}>
+                            查看原件
+                          </button>
+                        )}
+                        {item.can_move && (
+                          <>
+                            <select
+                              aria-label={`移动《${item.title}》到文件夹`}
+                              value={contractMoveTargets[item.document_id] ?? item.folder_path ?? ""}
+                              onChange={(event) => setContractMoveTargets((current) => ({
+                                ...current,
+                                [item.document_id]: event.target.value,
+                              }))}
+                            >
+                              <option value="">分类根目录</option>
+                              {(contractFolders[item.category] || []).map((folder) => (
+                                <option value={folder} key={folder}>{folder}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              className="secondaryButton"
+                              disabled={contractManageBusy === item.document_id}
+                              onClick={() => void handleContractMove(item)}
+                            >
+                              {contractManageBusy === item.document_id ? "移动中…" : "移动"}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
               )}
             </section>
 

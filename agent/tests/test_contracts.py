@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 from docx import Document as WordDocument
@@ -231,9 +232,71 @@ def test_contract_upload_is_forced_to_review_and_exact_nas_folder(
             / "合同档案库"
             / "业务合同"
             / "L4"
+            / "赛事与活动"
             / "赛事执行合同.docx"
         ).is_file()
+        assert response.json()["filing"]["mode"] == "local_ai"
+        assert response.json()["filing"]["folder_path"] == "赛事与活动"
         assert audit is not None
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_administrative_can_list_create_folders_and_move_own_contract(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    knowledge_root = tmp_path / "knowledge"
+    _configure(monkeypatch, db, users["l4"], knowledge_root)
+    client = TestClient(app)
+    try:
+        upload = client.post(
+            "/v1/contracts/uploads",
+            data={
+                "category": "administrative",
+                "relative_path": "待整理/租赁原件.docx",
+            },
+            files={
+                "file": (
+                    "租赁原件.docx",
+                    _word_payload("办公场地租赁、物业服务和租金约定。"),
+                    "application/octet-stream",
+                )
+            },
+        )
+        assert upload.status_code == 200
+        document_id = upload.json()["document_id"]
+
+        mine = client.get("/v1/contracts/mine")
+        assert mine.status_code == 200
+        assert mine.json()["count"] == 1
+        assert mine.json()["items"][0]["knowledge_status"] == "candidate"
+        assert mine.json()["items"][0]["folder_path"] == "待整理"
+        assert mine.json()["items"][0]["can_move"] is True
+
+        created = client.post(
+            "/v1/contracts/folders",
+            json={"category": "administrative", "folder_path": "2026年/租赁合同"},
+        )
+        assert created.status_code == 200
+        folders = client.get(
+            "/v1/contracts/folders", params={"category": "administrative"}
+        )
+        assert "2026年/租赁合同" in folders.json()["items"]
+
+        moved = client.patch(
+            f"/v1/contracts/{document_id}/folder",
+            json={"folder_path": "2026年/租赁合同"},
+        )
+        assert moved.status_code == 200
+        assert moved.json()["folder_path"] == "2026年/租赁合同"
+        document = db.get(Document, document_id)
+        assert document is not None
+        assert Path(document.file_blob.source_path).is_file()
+        assert "2026年/租赁合同" in Path(document.file_blob.source_path).as_posix()
+        assert not list(knowledge_root.rglob("待整理/租赁原件.docx"))
     finally:
         app.dependency_overrides.clear()
         db.close()
