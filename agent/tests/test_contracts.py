@@ -302,6 +302,32 @@ def test_administrative_can_list_create_folders_and_move_own_contract(
         db.close()
 
 
+def test_executive_office_internal_folder_is_always_available(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    knowledge_root = tmp_path / "knowledge"
+    _configure(monkeypatch, db, users["l4"], knowledge_root)
+    client = TestClient(app)
+    try:
+        folders = client.get(
+            "/v1/contracts/folders", params={"category": "executive_office"}
+        )
+        assert folders.status_code == 200
+        assert "内部资料（密）" in folders.json()["items"]
+        assert (
+            knowledge_root
+            / "合同档案库"
+            / "总办合同"
+            / "L5"
+            / "内部资料（密）"
+        ).is_dir()
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
 def test_l4_administrative_can_upload_and_read_own_executive_office_contracts(
     tmp_path,
     monkeypatch,

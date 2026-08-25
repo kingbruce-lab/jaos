@@ -47,6 +47,7 @@ from .confidentiality import suggest_document_confidentiality
 from .contracts import (
     CONTRACT_CATEGORIES,
     CONTRACT_CATEGORIES_BY_DOMAIN,
+    CONTRACT_DEFAULT_FOLDERS,
     CONTRACT_DOMAINS,
     CONTRACT_UPLOAD_SUFFIXES,
     ContractCategory,
@@ -794,7 +795,8 @@ def list_contract_folders(
         raise HTTPException(status_code=403, detail="无权查看该合同分类的文件夹")
     root = ensure_contract_layout(settings.knowledge_root)[category].resolve()
     folders = sorted(
-        {
+        set(CONTRACT_DEFAULT_FOLDERS.get(category, ()))
+        | {
             path.relative_to(root).as_posix()
             for path in root.rglob("*")
             if path.is_dir()

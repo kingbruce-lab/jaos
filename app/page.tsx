@@ -5168,6 +5168,7 @@ export default function Home() {
                             <select
                               aria-label={`移动《${item.title}》到文件夹`}
                               value={contractMoveTargets[item.document_id] ?? item.folder_path ?? ""}
+                              onFocus={() => void refreshContractFolders(item.category)}
                               onChange={(event) => setContractMoveTargets((current) => ({
                                 ...current,
                                 [item.document_id]: event.target.value,

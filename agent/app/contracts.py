@@ -35,6 +35,14 @@ CONTRACT_CATEGORIES_BY_DOMAIN = {
     item.domain: item for item in CONTRACT_CATEGORIES.values()
 }
 
+# Stable folders that must remain available even before a first document is filed.
+# In particular, L5 contracts must never be moved outside the executive-office
+# security root just because an administrator wants to treat them as internal
+# materials.
+CONTRACT_DEFAULT_FOLDERS: dict[str, tuple[str, ...]] = {
+    "executive_office": ("内部资料（密）",),
+}
+
 
 def ensure_contract_layout(knowledge_root: Path) -> dict[str, Path]:
     root = knowledge_root.resolve()
@@ -45,6 +53,10 @@ def ensure_contract_layout(knowledge_root: Path) -> dict[str, Path]:
         target = (archive / category.name / category.confidentiality).resolve()
         target.relative_to(archive)
         target.mkdir(parents=True, exist_ok=True)
+        for folder in CONTRACT_DEFAULT_FOLDERS.get(key, ()):
+            default_folder = (target / folder).resolve()
+            default_folder.relative_to(target)
+            default_folder.mkdir(parents=True, exist_ok=True)
         result[key] = target
     return result
 
