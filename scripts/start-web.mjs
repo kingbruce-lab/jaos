@@ -260,9 +260,9 @@ const server = http.createServer((request, response) => {
     request.resume();
     return;
   }
-  if (!["GET", "HEAD", "POST", "PATCH"].includes(request.method ?? "")) {
+  if (!["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].includes(request.method ?? "")) {
     sendPlain(request, response, 405, "不支持的请求方法。", {
-      Allow: "GET, HEAD, POST, PATCH",
+      Allow: "GET, HEAD, POST, PUT, PATCH, DELETE",
     });
     request.resume();
     return;

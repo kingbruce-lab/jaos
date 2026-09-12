@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from openpyxl import load_workbook
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,7 @@ from .business_entities import (
     LEGACY_HEADQUARTERS_ENTITY_NAMES,
 )
 from .config import settings
+from .cost_centers import extract_cost_center_code, normalize_cost_center_code
 from .database import get_db
 from .models import (
     AuditLog,
@@ -37,8 +38,13 @@ from .models import (
     BankTransactionPurposeCorrection,
     BusinessEntity,
     CashEntry,
+    EducationCohort,
+    EducationInstallment,
+    EducationStudent,
+    FinanceReceivablePayable,
     FinancialAccount,
     ManagedProject,
+    ProjectCashflowPlan,
     User,
 )
 from .retrieval import CONFIDENTIALITY_RANK
@@ -110,6 +116,29 @@ class CashEntryCreate(BaseModel):
     category: str = Field(default="其他", min_length=1, max_length=80)
     note: str = Field(min_length=1, max_length=1000)
     pm_project_id: str | None = Field(default=None, max_length=36)
+
+
+class FinanceReceivablePayableCreate(BaseModel):
+    entity_id: str = Field(min_length=1, max_length=36)
+    direction: Literal["receivable", "payable"]
+    due_date: date
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
+    actual_amount: Decimal = Field(
+        default=Decimal("0"), ge=0, max_digits=18, decimal_places=2
+    )
+    counterparty: str | None = Field(default=None, max_length=240)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class FinanceReceivablePayableUpdate(BaseModel):
+    direction: Literal["receivable", "payable"]
+    due_date: date
+    amount: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
+    actual_amount: Decimal = Field(
+        default=Decimal("0"), ge=0, max_digits=18, decimal_places=2
+    )
+    counterparty: str | None = Field(default=None, max_length=240)
+    note: str | None = Field(default=None, max_length=1000)
 
 
 def _finance_view_allowed(user: User) -> bool:
@@ -369,7 +398,7 @@ def _normalise_counterparty(value: str | None) -> str:
 def _internal_entity_aliases() -> set[str]:
     # Do not infer an internal transfer from its bank summary: Beijing Bank
     # uses “本系统转账” as a transfer method even for genuine outside parties.
-    # Only an exact normalised match to one of the three configured entities
+    # Only an exact normalised match to one of the configured entities
     # (legal name or display name) is safe to exclude.
     aliases: set[str] = set()
     for definition in FINANCE_ENTITY_DEFINITIONS:
@@ -1230,8 +1259,87 @@ def _meaningful_business_note(*values: object) -> str | None:
 
 def _project_reference_from_text(value: str | None) -> str | None:
     text = unicodedata.normalize("NFKC", value or "")
+    cost_center = extract_cost_center_code(text)
+    if cost_center:
+        return cost_center
+    # Retain recognition of historical Feishu segments so existing imported
+    # ledgers remain searchable while new rows use the unified cost-centre code.
     match = re.search(r"(?<![A-Za-z0-9])cc[\s_-]?(\d{4,6})(?!\d)", text, re.IGNORECASE)
     return f"Cc{match.group(1)}" if match else None
+
+
+def _project_ids_by_reference(
+    db: Session,
+    references: list[str | None],
+) -> dict[str, str]:
+    wanted = {
+        item.strip().casefold()
+        for item in references
+        if item and item.strip()
+    }
+    if not wanted:
+        return {}
+    projects = db.scalars(
+        select(ManagedProject).where(ManagedProject.status != "deleted")
+    ).all()
+    return {
+        project.project_no.casefold(): project.id
+        for project in projects
+        if project.project_no.casefold() in wanted
+    }
+
+
+def _refresh_cost_center_project_links(
+    db: Session,
+    entity_id: str | None = None,
+) -> dict[str, int]:
+    """Backfill cost-centre references for statements imported by older builds."""
+
+    transaction_query = select(BankTransaction).where(
+        BankTransaction.pm_project_id.is_(None)
+    )
+    if entity_id:
+        transaction_query = transaction_query.where(
+            BankTransaction.entity_id == entity_id
+        )
+    transactions = db.scalars(transaction_query).all()
+    references: list[str | None] = []
+    detected_by_id: dict[str, str] = {}
+    reference_updates = 0
+    for item in transactions:
+        reference = (
+            normalize_cost_center_code(item.project_reference)
+            or extract_cost_center_code(
+                _combined_summary(
+                    item.project_reference,
+                    item.note,
+                    item.summary,
+                    item.counterparty,
+                )
+            )
+        )
+        if not reference:
+            continue
+        detected_by_id[item.id] = reference
+        references.append(reference)
+        if item.project_reference != reference:
+            item.project_reference = reference
+            reference_updates += 1
+
+    project_ids = _project_ids_by_reference(db, references)
+    project_link_updates = 0
+    for item in transactions:
+        reference = detected_by_id.get(item.id)
+        if not reference:
+            continue
+        project_id = project_ids.get(reference.casefold())
+        if project_id:
+            item.pm_project_id = project_id
+            project_link_updates += 1
+    return {
+        "reference_updates": reference_updates,
+        "project_link_updates": project_link_updates,
+    }
 
 
 def _parse_statement_rows(
@@ -1282,6 +1390,9 @@ def _parse_statement_rows(
         if income == 0 and expense == 0:
             errors += 1
             continue
+        combined_summary = _combined_summary(
+            value("purpose"), value("remark"), value("summary")
+        )
         business_note = _meaningful_business_note(
             value("purpose"), value("remark"), value("summary")
         )
@@ -1296,11 +1407,9 @@ def _parse_statement_rows(
             "counterparty_account": str(
                 value("counterparty_account") or value("counterparty_account_fallback") or ""
             ).strip() or None,
-            "summary": _combined_summary(
-                value("purpose"), value("remark"), value("summary")
-            ),
+            "summary": combined_summary,
             "business_note": business_note,
-            "project_reference": _project_reference_from_text(business_note),
+            "project_reference": _project_reference_from_text(combined_summary),
             "serial": str(value("serial") or "").strip() or None,
         })
     return parsed, errors
@@ -1451,6 +1560,10 @@ def _merge_statement_annotations(
     }
     note_updates = 0
     project_reference_updates = 0
+    project_link_updates = 0
+    project_ids = _project_ids_by_reference(
+        db, [row.get("project_reference") for row in rows]
+    )
     for row in rows:
         fingerprint = _transaction_fingerprint(batch.account_id, row)
         item = transactions.get(fingerprint)
@@ -1464,9 +1577,15 @@ def _merge_statement_annotations(
         if not (item.project_reference or "").strip() and project_reference:
             item.project_reference = project_reference
             project_reference_updates += 1
+        effective_reference = (item.project_reference or project_reference).strip()
+        project_id = project_ids.get(effective_reference.casefold())
+        if not item.pm_project_id and project_id:
+            item.pm_project_id = project_id
+            project_link_updates += 1
     return {
         "note_updates": note_updates,
         "project_reference_updates": project_reference_updates,
+        "project_link_updates": project_link_updates,
     }
 
 
@@ -1699,10 +1818,10 @@ def normalize_business_entity_registry(
     *,
     created_by_user_id: str | None = None,
 ) -> list[dict]:
-    """Create the three canonical entities and retire every legacy alias.
+    """Create the configured canonical entities and retire every legacy alias.
 
     Historic entity rows remain in the database for auditability, but only
-    the three configured legal entities stay active.  Project and finance
+    the configured entities stay active.  Project and finance
     foreign keys use immutable IDs, so migrating the old Jingao alias does
     not break reviews, cashflow plans or audit references.
     """
@@ -1766,7 +1885,7 @@ def normalize_business_entity_registry(
                     {
                         "canonical_entity_ids": [item["id"] for item in rows],
                         "retired_entity_ids": retired_ids,
-                        "active_entity_count": 3,
+                        "active_entity_count": len(rows),
                     },
                     ensure_ascii=False,
                 ),
@@ -1919,6 +2038,9 @@ async def upload_statement(
     duplicates = 0
     inserted = 0
     seen: set[str] = set()
+    project_ids = _project_ids_by_reference(
+        db, [row.get("project_reference") for row in rows]
+    )
     for row in rows:
         fingerprint = _transaction_fingerprint(account.id, row)
         if fingerprint in seen or db.scalar(
@@ -1930,6 +2052,7 @@ async def upload_statement(
             duplicates += 1
             continue
         seen.add(fingerprint)
+        project_reference = row.get("project_reference")
         db.add(BankTransaction(
             batch_id=batch.id,
             entity_id=entity.id,
@@ -1949,7 +2072,12 @@ async def upload_statement(
             summary=row["summary"],
             bank_serial=row["serial"],
             note=row.get("business_note"),
-            project_reference=row.get("project_reference"),
+            project_reference=project_reference,
+            pm_project_id=(
+                project_ids.get(project_reference.casefold())
+                if project_reference
+                else None
+            ),
             fingerprint=fingerprint,
         ))
         inserted += 1
@@ -2419,11 +2547,25 @@ def update_transaction(
     if "pm_project_id" in updated_fields:
         item.pm_project_id = payload.pm_project_id
     if "project_reference" in updated_fields:
-        item.project_reference = (
+        raw_reference = (
             unicodedata.normalize("NFKC", payload.project_reference).strip()
             if payload.project_reference
-            else None
+            else ""
         )
+        item.project_reference = (
+            normalize_cost_center_code(raw_reference)
+            or _project_reference_from_text(raw_reference)
+            or raw_reference
+            or None
+        )
+        if item.project_reference:
+            matched_project = _project_ids_by_reference(
+                db, [item.project_reference]
+            ).get(item.project_reference.casefold())
+            if matched_project and not (
+                "pm_project_id" in updated_fields and payload.pm_project_id
+            ):
+                item.pm_project_id = matched_project
     db.add(AuditLog(
         user_id=user.id,
         action="finance_transaction_update",
@@ -2592,6 +2734,148 @@ def _annual_category_breakdown(
             reverse=True,
         )
     ]
+
+
+def _transaction_search_values(
+    item: BankTransaction,
+    batch: BankStatementBatch | None,
+) -> dict[str, list[str]]:
+    """Return deterministic, local-only search values for one bank row.
+
+    The annual ledger search intentionally avoids embeddings and external
+    models.  Values cover both bank-originated fields and the reviewed
+    business annotations maintained by finance.
+    """
+
+    business_day = _business_date(item.transacted_at)
+    amount_values: list[str] = []
+    for amount in (item.income, item.expense, item.balance):
+        if amount is None:
+            continue
+        decimal_amount = Decimal(amount)
+        amount_values.extend([
+            f"{decimal_amount:f}",
+            f"{decimal_amount:,.2f}",
+            f"{decimal_amount.quantize(Decimal('0.01')):f}",
+        ])
+    return {
+        "日期": [
+            business_day.isoformat(),
+            business_day.strftime("%Y/%m/%d"),
+            f"{business_day.year}年{business_day.month}月{business_day.day}日",
+        ],
+        "往来单位": [item.counterparty or ""],
+        "银行原始附言": [item.summary or ""],
+        "实际业务用途": [item.note or ""],
+        "财务分类": [item.category or ""],
+        "项目": [item.project_reference or ""],
+        "流水号": [item.bank_serial or ""],
+        "金额或余额": amount_values,
+        "来源文件": [batch.original_filename if batch else ""],
+    }
+
+
+def _normalise_transaction_search_text(value: str) -> str:
+    return unicodedata.normalize("NFKC", value).casefold().replace(",", "").strip()
+
+
+@router.get("/annual-transactions/search")
+def search_annual_transactions(
+    entity_id: str,
+    year: int = Query(ge=2000, le=2100),
+    q: str = Query(min_length=1, max_length=120),
+    include_internal_transfers: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=100),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Search one company's confirmed ledger rows within a natural year."""
+
+    _require_finance_view(user)
+    entity = _entity_by_id(db, entity_id)
+    keyword = _normalise_transaction_search_text(q)
+    if not keyword:
+        raise HTTPException(status_code=422, detail="请输入流水检索关键字")
+
+    transactions = db.scalars(
+        select(BankTransaction).where(
+            BankTransaction.entity_id == entity_id,
+            BankTransaction.status == "confirmed",
+        )
+    ).all()
+    year_rows = [
+        item
+        for item in transactions
+        if _business_date(item.transacted_at).year == year
+        and (include_internal_transfers or not _is_internal_transfer(item))
+    ]
+    batch_ids = {item.batch_id for item in year_rows}
+    batches = {
+        item.id: item
+        for item in db.scalars(
+            select(BankStatementBatch).where(BankStatementBatch.id.in_(batch_ids))
+        ).all()
+    } if batch_ids else {}
+
+    matched: list[tuple[BankTransaction, BankStatementBatch | None, list[str]]] = []
+    for item in year_rows:
+        batch = batches.get(item.batch_id)
+        values = _transaction_search_values(item, batch)
+        matched_fields = [
+            label
+            for label, candidates in values.items()
+            if any(keyword in _normalise_transaction_search_text(candidate) for candidate in candidates)
+        ]
+        if matched_fields:
+            matched.append((item, batch, matched_fields))
+
+    matched.sort(key=lambda row: _transaction_order_key(row[0]), reverse=True)
+    results = []
+    for item, batch, matched_fields in matched[:limit]:
+        account = db.get(FinancialAccount, item.account_id)
+        results.append({
+            "id": item.id,
+            "batch_id": item.batch_id,
+            "batch_filename": batch.original_filename if batch else "",
+            "transacted_at": item.transacted_at,
+            "income": item.income,
+            "expense": item.expense,
+            "balance": item.balance,
+            "counterparty": item.counterparty,
+            "summary": item.summary,
+            "note": item.note,
+            "category": item.category,
+            "project_reference": item.project_reference,
+            "bank_serial": item.bank_serial,
+            "bank_name": account.bank_name if account else "",
+            "account": account.account_number_masked if account else "",
+            "matched_fields": matched_fields,
+        })
+
+    db.add(AuditLog(
+        user_id=user.id,
+        action="finance_annual_transaction_search",
+        details_json=json.dumps({
+            "entity_id": entity.id,
+            "year": year,
+            "query": q.strip(),
+            "result_count": len(matched),
+            "include_internal_transfers": include_internal_transfers,
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+    return {
+        "confidentiality": "L4",
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "year": year,
+        "query": q.strip(),
+        "confirmed_only": True,
+        "include_internal_transfers": include_internal_transfers,
+        "total": len(matched),
+        "limit": limit,
+        "items": results,
+    }
 
 
 @router.get("/annual-years")
@@ -2859,6 +3143,237 @@ def finance_annual_dashboard(
     }
 
 
+def _receivables_payables_payload(
+    db: Session,
+    entity_id: str | None,
+) -> dict:
+    """Combine PM plans and finance-only items into one outstanding ledger."""
+
+    project_query = (
+        select(ProjectCashflowPlan, ManagedProject)
+        .join(ManagedProject, ProjectCashflowPlan.project_id == ManagedProject.id)
+        .where(ManagedProject.status != "deleted")
+    )
+    manual_query = select(FinanceReceivablePayable).where(
+        FinanceReceivablePayable.active.is_(True)
+    )
+    if entity_id:
+        project_query = project_query.where(ManagedProject.entity_id == entity_id)
+        manual_query = manual_query.where(
+            FinanceReceivablePayable.entity_id == entity_id
+        )
+
+    education_due = (
+        select(
+            EducationInstallment.student_id.label("student_id"),
+            func.min(EducationInstallment.due_on).label("due_on"),
+        )
+        .where(EducationInstallment.active.is_(True))
+        .group_by(EducationInstallment.student_id)
+        .subquery()
+    )
+    education_query = (
+        select(EducationStudent, EducationCohort, education_due.c.due_on)
+        .join(EducationCohort, EducationCohort.id == EducationStudent.cohort_id)
+        .outerjoin(education_due, education_due.c.student_id == EducationStudent.id)
+        .where(
+            EducationCohort.deleted_at.is_(None),
+            EducationStudent.receivable > EducationStudent.received,
+        )
+    )
+    if entity_id:
+        education_query = education_query.where(EducationCohort.entity_id == entity_id)
+
+    items: dict[str, list[dict]] = {"receivable": [], "payable": []}
+    for plan, project in db.execute(project_query).all():
+        outstanding = max(plan.amount - plan.actual_amount, Decimal("0"))
+        if outstanding <= 0:
+            continue
+        items[plan.direction].append({
+            "id": plan.id,
+            "source": "project",
+            "entity_id": project.entity_id,
+            "project_id": project.id,
+            "project_no": project.project_no,
+            "project_name": project.name,
+            "direction": plan.direction,
+            "due_date": plan.due_date,
+            "amount": plan.amount,
+            "actual_amount": plan.actual_amount,
+            "outstanding_amount": outstanding,
+            "counterparty": plan.counterparty,
+            "note": plan.note,
+            "overdue": plan.due_date < date.today(),
+        })
+
+    for item in db.scalars(manual_query).all():
+        outstanding = max(item.amount - item.actual_amount, Decimal("0"))
+        if outstanding <= 0:
+            continue
+        items[item.direction].append({
+            "id": item.id,
+            "source": "finance",
+            "entity_id": item.entity_id,
+            "project_id": None,
+            "project_no": None,
+            "project_name": None,
+            "direction": item.direction,
+            "due_date": item.due_date,
+            "amount": item.amount,
+            "actual_amount": item.actual_amount,
+            "outstanding_amount": outstanding,
+            "counterparty": item.counterparty,
+            "note": item.note,
+            "overdue": item.due_date < date.today(),
+        })
+
+    for student, cohort, first_due in db.execute(education_query).all():
+        due_date = first_due or student.study_end
+        outstanding = max(student.receivable - student.received, Decimal("0"))
+        items["receivable"].append({
+            "id": student.id,
+            "source": "education",
+            "entity_id": cohort.entity_id,
+            "project_id": cohort.id,
+            "project_no": student.student_no,
+            "project_name": cohort.name,
+            "direction": "receivable",
+            "due_date": due_date,
+            "amount": student.receivable,
+            "actual_amount": student.received,
+            "outstanding_amount": outstanding,
+            "counterparty": student.name,
+            "note": f"星曜教培学费 · {student.game}",
+            "overdue": due_date < date.today(),
+        })
+
+    result: dict[str, dict] = {}
+    for direction in ("receivable", "payable"):
+        direction_items = sorted(
+            items[direction],
+            key=lambda row: (
+                row["due_date"],
+                str(row.get("project_no") or ""),
+                row["id"],
+            ),
+        )
+        result[direction] = {
+            "total": sum(
+                (row["outstanding_amount"] for row in direction_items),
+                Decimal("0"),
+            ),
+            "count": len(direction_items),
+            "items": direction_items,
+        }
+    return result
+
+
+def _receivable_payable_item_payload(item: FinanceReceivablePayable) -> dict:
+    return {
+        "id": item.id,
+        "source": "finance",
+        "entity_id": item.entity_id,
+        "project_id": None,
+        "project_no": None,
+        "project_name": None,
+        "direction": item.direction,
+        "due_date": item.due_date,
+        "amount": item.amount,
+        "actual_amount": item.actual_amount,
+        "outstanding_amount": max(
+            item.amount - item.actual_amount, Decimal("0")
+        ),
+        "counterparty": item.counterparty,
+        "note": item.note,
+        "overdue": item.due_date < date.today()
+        and item.actual_amount < item.amount,
+    }
+
+
+@router.post("/receivables-payables")
+def create_finance_receivable_payable(
+    payload: FinanceReceivablePayableCreate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_finance_edit(user)
+    _entity_by_id(db, payload.entity_id)
+    if payload.actual_amount > payload.amount:
+        raise HTTPException(status_code=422, detail="已收/已付金额不能大于应收/应付金额")
+    item = FinanceReceivablePayable(
+        entity_id=payload.entity_id,
+        direction=payload.direction,
+        due_date=payload.due_date,
+        amount=payload.amount,
+        actual_amount=payload.actual_amount,
+        counterparty=(payload.counterparty or "").strip() or None,
+        note=(payload.note or "").strip() or None,
+        created_by_user_id=user.id,
+        updated_by_user_id=user.id,
+    )
+    db.add(item)
+    db.flush()
+    db.add(AuditLog(
+        user_id=user.id,
+        action="finance_receivable_payable_create",
+        details_json=json.dumps({
+            "item_id": item.id,
+            "entity_id": item.entity_id,
+            "direction": item.direction,
+            "amount": str(item.amount),
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+    return _receivable_payable_item_payload(item)
+
+
+@router.patch("/receivables-payables/{item_id}")
+def update_finance_receivable_payable(
+    item_id: str,
+    payload: FinanceReceivablePayableUpdate,
+    entity_id: str | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_finance_edit(user)
+    item = db.get(FinanceReceivablePayable, item_id)
+    if item is None or not item.active or (
+        entity_id and item.entity_id != entity_id
+    ):
+        raise HTTPException(status_code=404, detail="应收应付记录不存在")
+    if payload.actual_amount > payload.amount:
+        raise HTTPException(status_code=422, detail="已收/已付金额不能大于应收/应付金额")
+    before = _receivable_payable_item_payload(item)
+    item.direction = payload.direction
+    item.due_date = payload.due_date
+    item.amount = payload.amount
+    item.actual_amount = payload.actual_amount
+    item.counterparty = (payload.counterparty or "").strip() or None
+    item.note = (payload.note or "").strip() or None
+    item.updated_by_user_id = user.id
+    db.add(AuditLog(
+        user_id=user.id,
+        action="finance_receivable_payable_update",
+        details_json=json.dumps({
+            "item_id": item.id,
+            "before": {
+                "direction": before["direction"],
+                "due_date": str(before["due_date"]),
+                "amount": str(before["amount"]),
+                "actual_amount": str(before["actual_amount"]),
+            },
+            "after": {
+                "direction": item.direction,
+                "due_date": str(item.due_date),
+                "amount": str(item.amount),
+                "actual_amount": str(item.actual_amount),
+            },
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+    return _receivable_payable_item_payload(item)
+
+
 @router.get("/dashboard")
 def finance_dashboard(
     from_date: date | None = None,
@@ -2877,6 +3392,19 @@ def finance_dashboard(
     if period_start > period_end:
         raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
     selected_entity = _entity_by_id(db, entity_id) if entity_id else None
+    link_updates = _refresh_cost_center_project_links(
+        db, selected_entity.id if selected_entity else None
+    )
+    if any(link_updates.values()):
+        db.add(AuditLog(
+            user_id=user.id,
+            action="finance_cost_center_project_reconcile",
+            details_json=json.dumps({
+                "entity_id": selected_entity.id if selected_entity else None,
+                **link_updates,
+            }, ensure_ascii=False),
+        ))
+        db.commit()
     all_transactions = db.scalars(select(BankTransaction)).all()
     transactions = [
         item for item in all_transactions if item.status == "confirmed"
@@ -3066,6 +3594,9 @@ def finance_dashboard(
         "accounts": account_rows,
         "weekly": weekly_rows,
         "include_internal_transfers": include_internal_transfers,
+        "receivables_payables": _receivables_payables_payload(
+            db, selected_entity.id if selected_entity else None
+        ),
         "health": _finance_health(
             transactions=transactions,
             operating_transactions=operating_transactions,

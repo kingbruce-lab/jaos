@@ -20,6 +20,7 @@ from .models import AuditLog, SessionToken, User
 
 PBKDF2_ITERATIONS = 600_000
 ORGANIZATION_ROLES = {
+    "education",
     "administrative",
     "personnel",
     "business",

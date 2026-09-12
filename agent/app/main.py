@@ -27,8 +27,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
-from sqlalchemy import delete, func, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import OperationalError, TimeoutError as DatabasePoolTimeout
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .auth import (
     authenticate,
@@ -92,6 +93,7 @@ from .models import (
     Document,
     InboxIssue,
     KnowledgeCategory,
+    ManagedProject,
     Project,
     ReviewProposal,
     SourceHealth,
@@ -163,6 +165,11 @@ from .finance_system import (
     router as finance_router,
 )
 from .project_system import router as project_management_router
+from .education_system import router as education_router
+from .education_enrollment import router as education_enrollment_router
+from .education_assessments import router as education_assessment_router
+from .education_ledger import router as education_ledger_router
+from .education_operations import router as education_operations_router
 from .writing_drafts import (
     MAX_SAVED_WRITING_DRAFTS,
     list_writing_drafts,
@@ -208,6 +215,23 @@ app.add_middleware(
 )
 app.include_router(finance_router)
 app.include_router(project_management_router)
+app.include_router(education_router)
+app.include_router(education_enrollment_router)
+app.include_router(education_assessment_router)
+app.include_router(education_ledger_router)
+app.include_router(education_operations_router)
+
+
+@app.exception_handler(DatabasePoolTimeout)
+@app.exception_handler(OperationalError)
+async def database_unavailable_handler(_request: Request, _exc: Exception) -> JSONResponse:
+    # Connection/lock failures are temporary service errors, not bad passwords.
+    # Never include SQL, connection strings or bound parameters in the reply.
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "数据库暂时繁忙，请稍后重试；无需更改密码。"},
+        headers={"Retry-After": "5"},
+    )
 
 
 @app.exception_handler(EvolutionWorkflowError)
@@ -460,6 +484,7 @@ def _contract_category_for_user(
 
 
 ORGANIZATION_ACCESS_ROLE = {
+    "education": "employee",
     "administrative": "knowledge_admin",
     "personnel": "employee",
     "business": "employee",
@@ -1422,7 +1447,7 @@ def create_local_user(
         password_hash=hash_password(payload.password),
         role=ORGANIZATION_ACCESS_ROLE[payload.role],
         organization_role=payload.role,
-        confidentiality_ceiling=payload.confidentiality_ceiling,
+        confidentiality_ceiling="L1" if payload.role == "education" else payload.confidentiality_ceiling,
         departments_json='["*"]',
         active=True,
     )
@@ -1496,6 +1521,8 @@ def update_local_user(
         target.role = ORGANIZATION_ACCESS_ROLE[changes["role"]]
     if "confidentiality_ceiling" in changes:
         target.confidentiality_ceiling = changes["confidentiality_ceiling"]
+    if target.organization_role == "education":
+        target.confidentiality_ceiling = "L1"
     if "departments" in changes:
         changes["departments"] = ["*"]
         target.departments_json = '["*"]'
@@ -1933,6 +1960,7 @@ def knowledge_search(
         requested_scope=payload.scope,
         requested_retrieval=payload.retrieval,
         limit=payload.limit,
+        offset=payload.offset,
         category=payload.category,
     )
     return {
@@ -3661,14 +3689,17 @@ def _remove_disallowed_embeddings(
 
 
 def _governance_documents(user: User, db: Session) -> list[Document]:
+    # Joining project siblings, chunks and artifacts in one query multiplies
+    # each document into thousands of rows for large photo/video projects.
+    # Fetch collections separately so memory grows with actual records.
     documents = db.scalars(
         select(Document)
         .join(Document.project)
         .options(
-            joinedload(Document.project).joinedload(Project.documents),
-            joinedload(Document.chunks),
+            joinedload(Document.project).selectinload(Project.documents),
+            selectinload(Document.chunks),
             joinedload(Document.file_blob),
-            joinedload(Document.artifacts),
+            selectinload(Document.artifacts),
         )
         .where(
             Document.knowledge_status.in_(sorted(GOVERNANCE_STATUSES)),
@@ -3786,8 +3817,8 @@ def update_governance_confidentiality(
     documents = db.scalars(
         select(Document)
         .options(
-            joinedload(Document.project).joinedload(Project.documents),
-            joinedload(Document.chunks),
+            joinedload(Document.project).selectinload(Project.documents),
+            selectinload(Document.chunks),
         )
         .where(
             Document.id.in_(document_ids),
@@ -3950,12 +3981,14 @@ def _publication_document_payload(document: Document) -> dict:
 
 def _review_uploader_payloads(
     db: Session,
-    document_ids: list[str],
+    documents: list[Document],
 ) -> dict[str, dict[str, str | None]]:
     """Resolve original Web uploaders without adding an N+1 query to review."""
-    if not document_ids:
+    if not documents:
         return {}
 
+    document_ids = [document.id for document in documents]
+    documents_by_id = {document.id: document for document in documents}
     target_ids = set(document_ids)
     uploader_ids: dict[str, str] = {}
     upload_logs = db.scalars(
@@ -3976,6 +4009,43 @@ def _review_uploader_payloads(
         for document_id in logged_document_ids:
             if document_id in target_ids and document_id not in uploader_ids:
                 uploader_ids[document_id] = audit.user_id
+
+    # Project proposal/closing files are first written by JAOS and discovered by
+    # the NAS scanner afterwards, so they do not have a web_upload audit row.
+    # Preserve the project creator as the human uploader instead of displaying
+    # the container-owned NAS file as "root".
+    source_paths = {
+        document.file_blob.source_path
+        for document in documents
+        if document.file_blob and document.file_blob.source_path
+    }
+    if source_paths:
+        managed_projects = db.scalars(
+            select(ManagedProject).where(
+                or_(
+                    ManagedProject.proposal_path.in_(source_paths),
+                    ManagedProject.closing_report_path.in_(source_paths),
+                )
+            )
+        ).all()
+        project_uploaders_by_path: dict[str, str] = {}
+        for project in managed_projects:
+            if project.proposal_path:
+                project_uploaders_by_path[project.proposal_path] = (
+                    project.created_by_user_id
+                )
+            if project.closing_report_path:
+                project_uploaders_by_path[project.closing_report_path] = (
+                    project.manager_user_id
+                )
+        for document in documents:
+            if document.id in uploader_ids or not document.file_blob:
+                continue
+            project_uploader_id = project_uploaders_by_path.get(
+                document.file_blob.source_path
+            )
+            if project_uploader_id:
+                uploader_ids[document.id] = project_uploader_id
 
     user_ids = set(uploader_ids.values())
     users_by_id = {
@@ -4000,9 +4070,14 @@ def _review_uploader_payloads(
                 "upload_source": "web",
             }
         else:
+            source_owner = (
+                documents_by_id[document_id].file_blob.source_owner_name
+                if documents_by_id[document_id].file_blob
+                else None
+            )
             payloads[document_id] = {
-                "uploader_name": "NAS直接上传",
-                "uploader_username": None,
+                "uploader_name": source_owner or "NAS用户未识别",
+                "uploader_username": source_owner,
                 "upload_source": "nas",
             }
     return payloads
@@ -4051,7 +4126,7 @@ def review_queue(
             or document.id in owned_contract_ids
         ]
     document_ids = [document.id for document in documents]
-    uploaders_by_document = _review_uploader_payloads(db, document_ids)
+    uploaders_by_document = _review_uploader_payloads(db, documents)
     proposals = (
         db.scalars(
             select(ReviewProposal)
@@ -4219,10 +4294,10 @@ def confirm_review_document(
     document = db.execute(
         select(Document)
         .options(
-            joinedload(Document.project).joinedload(Project.documents),
+            joinedload(Document.project).selectinload(Project.documents),
             joinedload(Document.file_blob),
-            joinedload(Document.artifacts),
-            joinedload(Document.chunks),
+            selectinload(Document.artifacts),
+            selectinload(Document.chunks),
         )
         .where(Document.id == document_id)
     ).unique().scalar_one_or_none()
@@ -4574,6 +4649,44 @@ def inbox_issues(
         }
         for issue in issues
     ]
+
+
+@app.post("/v1/review/inbox/issues/{issue_id}/ignore")
+def ignore_inbox_issue(
+    issue_id: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Acknowledge a non-searchable NAS file without deleting its source."""
+    require_founder(user)
+    issue = db.get(InboxIssue, issue_id)
+    if issue is None or issue.resolved_at is not None:
+        raise HTTPException(status_code=404, detail="待处理目录问题不存在")
+    now = datetime.now(timezone.utc)
+    issue.status = "ignored"
+    issue.resolved_at = now
+    issue.last_seen_at = now
+    db.add(
+        AuditLog(
+            user_id=user.id,
+            action="inbox_issue_ignored",
+            details_json=json.dumps(
+                {
+                    "issue_id": issue.id,
+                    "relative_path": issue.relative_path,
+                    "error_code": issue.error_code,
+                    "source_deleted": False,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    db.commit()
+    return {
+        "status": "ignored",
+        "issue_id": issue.id,
+        "notice": "已忽略该文件；NAS 原文件保留，文件内容变化后会重新检查。",
+    }
 
 
 @app.post("/v1/review/inbox/scan")

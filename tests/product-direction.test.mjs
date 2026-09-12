@@ -70,6 +70,10 @@ test("contract folders preserve structure and executive contracts stay uploader-
   assert.match(page, /其他人上传的涉密合同不会暴露标题、数量或搜索结果/);
   assert.match(agent, /ContractDocumentOwner/);
   assert.match(agent, /restricted_document_ids=owned_document_ids/);
+  assert.match(page, /正在读取合同权限/);
+  assert.match(page, /重新加载合同权限/);
+  assert.match(page, /不会再把加载失败误显示为“仅可上传”/);
+  assert.match(page, /selectedContractCategory && \(/);
 });
 
 test("review supports visible L1-L3 batch approval and the approved level names", () => {

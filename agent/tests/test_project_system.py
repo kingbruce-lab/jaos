@@ -103,6 +103,97 @@ def _review(client: TestClient, project_id: str, stage: str, decision: str = "ap
     )
 
 
+def test_project_manager_can_delegate_and_revoke_collaborator_edit_access(
+    tmp_path, monkeypatch
+) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["business"])
+    try:
+        created = client.post(
+            "/v1/pm/projects",
+            data={
+                "project_no": "CC26C01",
+                "name": "账号协作权限测试",
+                "company_name": "京奥电竞（北京）科技有限公司",
+                "client": "测试甲方",
+                "business_category": "电竞赛事",
+                "planned_start": "2026-08-20",
+                "planned_end": "2026-09-20",
+                "objective": "验证项目经理可以按员工账号授权协作编辑。",
+                "members_json": '["执行同事"]',
+            },
+        )
+        assert created.status_code == 200
+        project_id = created.json()["id"]
+
+        candidates = client.get("/v1/pm/collaborator-candidates")
+        assert candidates.status_code == 200
+        assert "pm-business-2" in {
+            item["username"] for item in candidates.json()["items"]
+        }
+
+        delegated = client.put(
+            f"/v1/pm/projects/{project_id}/collaborators",
+            json={"usernames": [" pm-business-2 ", "PM-BUSINESS-2"]},
+        )
+        assert delegated.status_code == 200
+        assert delegated.json()["collaborators"][0]["username"] == "pm-business-2"
+
+        app.dependency_overrides[current_user] = lambda: users["second_business"]
+        visible = client.get("/v1/pm/projects")
+        assert visible.status_code == 200
+        assert [item["id"] for item in visible.json()["items"]] == [project_id]
+
+        edited = client.patch(
+            f"/v1/pm/projects/{project_id}",
+            json={
+                "name": "协作成员已更新项目",
+                "company_name": "京奥电竞（北京）科技有限公司",
+                "client": "测试甲方",
+                "business_category": "电竞赛事",
+                "members": ["执行同事", "其他执行同事"],
+                "planned_start": "2026-08-20",
+                "planned_end": "2026-09-20",
+                "objective": "协作成员可以维护项目内容，但不能扩大自己的权限。",
+                "contract_amount": 0,
+                "budget_revenue": 0,
+                "budget_cost": 0,
+                "budget_tax": 0,
+            },
+        )
+        assert edited.status_code == 200
+        assert edited.json()["name"] == "协作成员已更新项目"
+        assert client.patch(
+            f"/v1/pm/projects/{project_id}/contract-status",
+            json={"contract_status": "signed_received"},
+        ).status_code == 200
+        assert client.put(
+            f"/v1/pm/projects/{project_id}/collaborators",
+            json={"usernames": []},
+        ).status_code == 403
+        assert client.post(
+            f"/v1/pm/projects/{project_id}/deletion-request",
+            json={"reason": "协作成员不能申请删除"},
+        ).status_code == 403
+
+        app.dependency_overrides[current_user] = lambda: users["business"]
+        revoked = client.put(
+            f"/v1/pm/projects/{project_id}/collaborators",
+            json={"usernames": []},
+        )
+        assert revoked.status_code == 200
+        assert revoked.json()["collaborators"] == []
+
+        app.dependency_overrides[current_user] = lambda: users["second_business"]
+        assert client.get(f"/v1/pm/projects/{project_id}").status_code == 404
+
+        audit_actions = db.scalars(select(AuditLog.action)).all()
+        assert audit_actions.count("pm_project_collaborators_update") == 2
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
 def test_project_founder_approval_and_closing(tmp_path, monkeypatch) -> None:
     db, users = _database()
     client = _configure(monkeypatch, tmp_path, db, users["business"])
@@ -110,7 +201,7 @@ def test_project_founder_approval_and_closing(tmp_path, monkeypatch) -> None:
         created = client.post(
             "/v1/pm/projects",
             data={
-                "project_no": "JADJ-Cc26A1",
+                "project_no": "CC26A01",
                 "name": "KPL青训营",
                 "company_name": "京奥电竞（北京）科技有限公司",
                 "client": "测试客户",
@@ -127,7 +218,7 @@ def test_project_founder_approval_and_closing(tmp_path, monkeypatch) -> None:
         )
         assert created.status_code == 200
         project_id = created.json()["id"]
-        assert created.json()["project_no"] == "JADJ-Cc26A1"
+        assert created.json()["project_no"] == "CC26A01"
         assert created.json()["status"] == "draft"
         assert created.json()["members"] == ["执行负责人"]
         assert db.get(ManagedProject, project_id).members_json == '["执行负责人"]'
@@ -254,7 +345,7 @@ def test_pm_updates_process_finance_only_while_project_is_running(
         created = client.post(
             "/v1/pm/projects",
             data={
-                "project_no": "FEISHU-FIN-01",
+                "project_no": "CC26B03",
                 "name": "项目过程资金测试",
                 "company_name": "京奥电竞（北京）科技有限公司",
                 "client": "测试甲方",
@@ -349,7 +440,7 @@ def test_project_rejection_returns_to_business(tmp_path, monkeypatch) -> None:
         created = client.post(
             "/v1/pm/projects",
             data={
-                "project_no": "JADJ-Cc26A2",
+                "project_no": "CC26A02",
                 "name": "测试项目",
                 "company_name": "京奥电竞",
                 "client": "测试客户",
@@ -383,7 +474,7 @@ def test_project_owner_can_edit_and_founder_controls_deletion(tmp_path, monkeypa
         created = client.post(
             "/v1/pm/projects",
             data={
-                "project_no": "JADJ-Cc26A3",
+                "project_no": "CC26A03",
                 "name": "待修改项目",
                 "company_name": "京奥电竞",
                 "client": "测试客户",
@@ -400,6 +491,7 @@ def test_project_owner_can_edit_and_founder_controls_deletion(tmp_path, monkeypa
         updated = client.patch(
             f"/v1/pm/projects/{project_id}",
             json={
+                "project_no": "cc26-b04",
                 "name": "已修改项目",
                 "company_name": "京奥电竞（北京）科技有限公司",
                 "client": "新客户",
@@ -414,6 +506,7 @@ def test_project_owner_can_edit_and_founder_controls_deletion(tmp_path, monkeypa
             },
         )
         assert updated.status_code == 200
+        assert updated.json()["project_no"] == "CC26B04"
         assert updated.json()["name"] == "已修改项目"
         assert updated.json()["members"] == ["执行负责人"]
 
@@ -508,7 +601,7 @@ def test_founder_configures_separate_password_and_directly_soft_deletes(
         created = client.post(
             "/v1/pm/projects",
             data={
-                "project_no": "JADJ-Cc26DEL",
+                "project_no": "CC26C02",
                 "name": "创始人删除验证项目",
                 "company_name": "京奥电竞",
                 "client": "测试甲方",
@@ -609,7 +702,7 @@ def test_project_visibility_is_limited_to_management_finance_and_own_business(tm
         first = client.post(
             "/v1/pm/projects",
             data={
-                "project_no": "JADJ-Cc26A4",
+                "project_no": "CC26A04",
                 "name": "第一项目经理项目",
                 "company_name": "京奥电竞",
                 "client": "客户一",
@@ -626,7 +719,7 @@ def test_project_visibility_is_limited_to_management_finance_and_own_business(tm
         second = client.post(
             "/v1/pm/projects",
             data={
-                "project_no": "JADJ-Cc26A5",
+                "project_no": "CC26A05",
                 "name": "第二项目经理项目",
                 "company_name": "京奥电竞",
                 "client": "客户二",
@@ -663,7 +756,7 @@ def test_execution_team_is_required_on_write_and_legacy_empty_project_is_readabl
     db, users = _database()
     client = _configure(monkeypatch, tmp_path, db, users["business"])
     base_form = {
-        "project_no": "JADJ-Cc26A6",
+        "project_no": "CC26A06",
         "name": "执行团队测试项目",
         "company_name": "京奥电竞（北京）科技有限公司",
         "client": "测试客户",
@@ -774,7 +867,7 @@ def test_project_budget_tax_create_update_margin_and_legacy_default(
     db, users = _database()
     client = _configure(monkeypatch, tmp_path, db, users["business"])
     base_form = {
-        "project_no": "JADJ-Cc26A7",
+        "project_no": "CC26A07",
         "name": "项目税费测试",
         "company_name": "京奥电竞（北京）科技有限公司",
         "client": "测试客户",
@@ -841,7 +934,7 @@ def test_project_budget_tax_create_update_margin_and_legacy_default(
             "/v1/pm/projects",
             data={
                 **base_form,
-                "project_no": "JADJ-Cc26A8",
+                "project_no": "CC26A08",
                 "name": "负税费输入测试",
                 "budget_tax": "-100",
             },
@@ -859,7 +952,7 @@ def test_project_client_contact_create_update_and_legacy_compatibility(
     db, users = _database()
     client = _configure(monkeypatch, tmp_path, db, users["business"])
     base_form = {
-        "project_no": "JADJ-Cc26A9",
+        "project_no": "CC26A09",
         "name": "Client contact test",
         "company_name": "京奥电竞（北京）科技有限公司",
         "client": "TJ Sports",
@@ -927,7 +1020,7 @@ def test_project_contract_status_and_post_start_warning(
     db, users = _database()
     client = _configure(monkeypatch, tmp_path, db, users["business"])
     base_form = {
-        "project_no": "JADJ-Cc26B1",
+        "project_no": "CC26B01",
         "name": "合同状态预警项目",
         "company_name": "京奥电竞（北京）科技有限公司",
         "client": "测试甲方",
@@ -1077,7 +1170,7 @@ def test_project_contract_status_and_post_start_warning(
             "/v1/pm/projects",
             data={
                 **base_form,
-                "project_no": "JADJ-Cc26B2",
+                "project_no": "CC26B02",
                 "name": "已收件立项",
                 "contract_status": "signed_received",
             },
@@ -1089,20 +1182,20 @@ def test_project_contract_status_and_post_start_warning(
         db.close()
 
 
-def test_manual_project_number_validation_duplicate_and_attachment_cleanup(
+def test_cost_center_project_code_validation_duplicate_and_attachment_cleanup(
     tmp_path, monkeypatch
 ) -> None:
     db, users = _database()
     client = _configure(monkeypatch, tmp_path, db, users["business"])
     base_form = {
-        "project_no": "  FEISHU_2026-A  ",
-        "name": "飞书项目段测试",
+        "project_no": "  cc26-b06  ",
+        "name": "成本中心代码测试",
         "company_name": "京奥电竞（北京）科技有限公司",
         "client": "测试甲方",
         "business_category": "电竞培训",
         "planned_start": "2026-08-01",
         "planned_end": "2026-09-30",
-        "objective": "验证项目经理填写的飞书项目段可安全落到附件目录。",
+        "objective": "验证项目经理填写的成本中心代码可安全落到附件目录。",
         "members_json": '["执行成员"]',
     }
     try:
@@ -1116,20 +1209,20 @@ def test_manual_project_number_validation_duplicate_and_attachment_cleanup(
             },
         )
         assert created.status_code == 200
-        assert created.json()["project_no"] == "FEISHU_2026-A"
+        assert created.json()["project_no"] == "CC26B06"
         project_id = created.json()["id"]
         stored = db.get(ManagedProject, project_id)
-        assert stored.project_no == "FEISHU_2026-A"
-        assert "FEISHU_2026-A" in stored.proposal_path
+        assert stored.project_no == "CC26B06"
+        assert "CC26B06" in stored.proposal_path
 
-        # A repeated Feishu segment is rejected before another attachment is
+        # A repeated cost-centre code is rejected before another attachment is
         # written, while the original project and file remain untouched.
         files_before = sorted(
             path for path in (tmp_path / "knowledge").rglob("*") if path.is_file()
         )
         duplicate = client.post(
             "/v1/pm/projects",
-            data={**base_form, "project_no": "FEISHU_2026-A", "name": "重复项目"},
+            data={**base_form, "project_no": "CC26B06", "name": "重复项目"},
             files={
                 "proposal_file": (
                     "重复方案.pdf", b"duplicate-file", "application/pdf"
@@ -1137,7 +1230,7 @@ def test_manual_project_number_validation_duplicate_and_attachment_cleanup(
             },
         )
         assert duplicate.status_code == 409
-        assert duplicate.json()["detail"] == "项目编号已存在，请核对飞书项目段"
+        assert duplicate.json()["detail"] == "项目代码已存在，请核对成本中心代码"
         assert sorted(
             path for path in (tmp_path / "knowledge").rglob("*") if path.is_file()
         ) == files_before
@@ -1148,6 +1241,8 @@ def test_manual_project_number_validation_duplicate_and_attachment_cleanup(
             "../secret",
             "项目一号",
             "AA BB",
+            "CC26D01",
+            "CC26B1",
         ):
             invalid = client.post(
                 "/v1/pm/projects",
@@ -1175,7 +1270,7 @@ def test_manual_project_number_validation_duplicate_and_attachment_cleanup(
         monkeypatch.setattr(db, "flush", duplicate_flush)
         raced = client.post(
             "/v1/pm/projects",
-            data={**base_form, "project_no": "FEISHU_2026-RACE"},
+            data={**base_form, "project_no": "CC26C01"},
             files={
                 "proposal_file": (
                     "并发方案.pdf", b"race-file", "application/pdf"

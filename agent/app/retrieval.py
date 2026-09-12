@@ -250,6 +250,7 @@ def search(
     requested_scope: str = "auto",
     requested_retrieval: str = "auto",
     limit: int = 8,
+    offset: int = 0,
     audit: bool = True,
     category: str | None = None,
     generate: bool = True,
@@ -268,6 +269,9 @@ def search(
             "scope_reason": reason,
             "answer": "资料中未找到",
             "results": [],
+            "total": 0,
+            "offset": max(0, offset),
+            "limit": max(1, min(limit, 20)),
             "citations": [],
             "generation_mode": "deterministic",
             "generation_model": None,
@@ -494,27 +498,41 @@ def search(
             hit.score = rrf_scores[chunk_id] * 1000
             hits.append(hit)
         hits.sort(key=lambda item: item.score, reverse=True)
+        if retrieval_mode == "hybrid":
+            # Keep RRF's strongest candidates first, while retaining every
+            # lexical match so large media collections remain pageable.
+            fused_chunk_ids = {hit.chunk.id for hit in hits}
+            hits.extend(
+                hit for hit in lexical_hits if hit.chunk.id not in fused_chunk_ids
+            )
 
-    selected: list[SearchHit] = []
-    seen_pages: set[tuple[str, int]] = set()
-    for hit in hits:
-        key = (hit.document.id, hit.chunk.page)
-        if key in seen_pages:
-            continue
-        seen_pages.add(key)
-        selected.append(hit)
-        if len(selected) >= max(1, min(limit, 20)):
-            break
-
-    selected_documents: list[SearchHit] = []
+    ranked_documents: list[SearchHit] = []
     seen_documents: set[str] = set()
     result_limit = max(1, min(limit, 20))
     for hit in hits:
         if hit.document.id in seen_documents:
             continue
         seen_documents.add(hit.document.id)
-        selected_documents.append(hit)
-        if len(selected_documents) >= result_limit:
+        ranked_documents.append(hit)
+    total_results = len(ranked_documents)
+    result_offset = max(0, offset)
+    selected_documents = ranked_documents[
+        result_offset:result_offset + result_limit
+    ]
+    selected_document_ids = {
+        hit.document.id for hit in selected_documents
+    }
+    selected: list[SearchHit] = []
+    seen_pages: set[tuple[str, int]] = set()
+    for hit in hits:
+        if hit.document.id not in selected_document_ids:
+            continue
+        key = (hit.document.id, hit.chunk.page)
+        if key in seen_pages:
+            continue
+        seen_pages.add(key)
+        selected.append(hit)
+        if len(selected) >= result_limit:
             break
 
     matched_pages_by_document: dict[str, list[int]] = {}
@@ -578,9 +596,14 @@ def search(
     ]
     if not results:
         answer = "资料中未找到"
+    elif result_offset > 0:
+        answer = (
+            f"继续显示第 {result_offset + 1} 至 "
+            f"{result_offset + len(results)} 条相关资料。"
+        )
     elif all(item["knowledge_status"] != "current" for item in results):
         answer = (
-            f"找到 {len(results)} 条已确认的历史资料。"
+            f"找到 {total_results} 条已确认的历史资料。"
             "这些资料可用于案例学习，但不代表公司当前口径。"
         )
     else:
@@ -613,6 +636,7 @@ def search(
     ]
     if (
         generate
+        and result_offset == 0
         and results
         and getattr(settings, "llm_enabled", False)
         and settings.gateway_api_key
@@ -684,6 +708,8 @@ def search(
                     "retrieval_mode": retrieval_mode,
                     "retrieval_degraded": retrieval_degraded,
                     "result_count": len(results),
+                    "result_total": total_results,
+                    "result_offset": result_offset,
                     "unavailable_count": len(unavailable_document_ids),
                     "generation_mode": generation_mode,
                     "generation_degraded": generation_degraded,
@@ -745,6 +771,9 @@ def search(
         "scope_reason": reason,
         "answer": answer,
         "results": results,
+        "total": total_results,
+        "offset": result_offset,
+        "limit": result_limit,
         "citations": citations,
         "generation_mode": generation_mode,
         "generation_model": generation_model,

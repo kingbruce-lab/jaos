@@ -21,12 +21,15 @@ from .business_entities import (
     canonical_business_entity_name,
 )
 from .config import settings
+from .cost_centers import extract_cost_center_code, normalize_cost_center_code
 from .database import get_db
 from .models import (
     AuditLog,
+    BankTransaction,
     BusinessEntity,
     ManagedProject,
     ProjectCashflowPlan,
+    ProjectCollaborator,
     ProjectDeletionRequest,
     ProjectProgressUpdate,
     ProjectReview,
@@ -48,7 +51,6 @@ PROJECT_ATTACHMENT_SUFFIXES = {
     ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
     ".png", ".jpg", ".jpeg", ".zip",
 }
-PROJECT_NO_RE = re.compile(r"^[A-Za-z0-9_-]{2,40}$")
 CONTRACT_STATUS_LABELS = {
     "unsigned": "未签署",
     "signed_received": "已签署收件",
@@ -62,6 +64,9 @@ POST_START_PROJECT_STATUSES = {
 
 
 class ProjectUpdateRequest(BaseModel):
+    # Omission keeps the existing value for older clients.  A changed value
+    # must use the current company cost-centre format.
+    project_no: str | None = Field(default=None, max_length=40)
     name: str = Field(min_length=1, max_length=300)
     company_name: str = Field(min_length=1, max_length=240)
     client: str = Field(min_length=1, max_length=240)
@@ -146,6 +151,10 @@ class ProjectArchiveRequest(BaseModel):
     action: str = Field(pattern="^(archive|restore)$")
 
 
+class ProjectCollaboratorUpdate(BaseModel):
+    usernames: list[str] = Field(default_factory=list, max_length=30)
+
+
 def _is_finance(user: User) -> bool:
     return bool(
         user.active
@@ -221,21 +230,42 @@ def _audit_password_failure(
     db.commit()
 
 
-def _project_visible(user: User, project: ManagedProject) -> bool:
+def _is_project_manager(user: User, project: ManagedProject) -> bool:
+    return bool(
+        user.active
+        and user.organization_role == "business"
+        and project.manager_user_id == user.id
+    )
+
+
+def _is_project_collaborator(db: Session, user: User, project: ManagedProject) -> bool:
+    if not user.active or user.organization_role != "business":
+        return False
+    return db.scalar(
+        select(ProjectCollaborator.id).where(
+            ProjectCollaborator.project_id == project.id,
+            ProjectCollaborator.user_id == user.id,
+        )
+    ) is not None
+
+
+def _project_visible(db: Session, user: User, project: ManagedProject) -> bool:
     if _is_finance(user) or _is_management(user):
         return True
     return bool(
         user.active
         and user.organization_role == "business"
-        and (project.created_by_user_id == user.id or project.manager_user_id == user.id)
+        and (
+            project.created_by_user_id == user.id
+            or project.manager_user_id == user.id
+            or _is_project_collaborator(db, user, project)
+        )
     )
 
 
-def _project_editable(user: User, project: ManagedProject) -> bool:
-    return bool(
-        user.active
-        and user.organization_role == "business"
-        and project.manager_user_id == user.id
+def _project_content_editable(db: Session, user: User, project: ManagedProject) -> bool:
+    return _is_project_manager(user, project) or _is_project_collaborator(
+        db, user, project
     )
 
 
@@ -245,18 +275,13 @@ def _safe_part(value: str, fallback: str) -> str:
 
 
 def _normalize_project_no(value: str) -> str:
-    """Normalize a Feishu project segment before it becomes a folder name.
+    """Normalize the company cost-centre code used as a project number."""
 
-    Project numbers are immutable after creation because the number is also
-    the stable NAS attachment directory. Restricting the character set here
-    prevents path traversal and keeps the value portable across fnOS/SMB.
-    """
-
-    normalized = unicodedata.normalize("NFKC", value).strip()
-    if not PROJECT_NO_RE.fullmatch(normalized):
+    normalized = normalize_cost_center_code(value)
+    if normalized is None:
         raise HTTPException(
             status_code=422,
-            detail="项目编号须为 2–40 位，只能包含英文字母、数字、短横线和下划线",
+            detail="项目代码须使用 CC+两位年份+A/B/C+两位序号格式，例如 CC26B01",
         )
     return normalized
 
@@ -321,12 +346,48 @@ def _project_members(project: ManagedProject, manager_name: str | None = None) -
         return []
 
 
+def _project_collaborators(db: Session, project: ManagedProject) -> list[dict]:
+    rows = db.execute(
+        select(ProjectCollaborator, User)
+        .join(User, User.id == ProjectCollaborator.user_id)
+        .where(ProjectCollaborator.project_id == project.id)
+        .order_by(User.display_name, User.username)
+    ).all()
+    return [
+        {
+            "user_id": account.id,
+            "username": account.username,
+            "display_name": account.display_name,
+            "active": account.active,
+            "added_at": membership.created_at,
+        }
+        for membership, account in rows
+    ]
+
+
+def _normalize_collaborator_usernames(values: list[str]) -> list[str]:
+    usernames: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        username = unicodedata.normalize("NFKC", value).strip()
+        if not username:
+            continue
+        if len(username) > 150:
+            raise HTTPException(status_code=422, detail="员工账号不能超过150个字符")
+        key = username.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        usernames.append(username)
+    return usernames
+
+
 def _entity(db: Session, name: str, user: User) -> BusinessEntity:
     normalized = canonical_business_entity_name(name)
     if normalized is None:
         raise HTTPException(
             status_code=422,
-            detail="项目签约主体必须选择系统登记的三家公司之一",
+            detail="项目签约主体必须选择系统登记的公司之一",
         )
     entity = db.scalar(select(BusinessEntity).where(BusinessEntity.name == normalized))
     if entity is None:
@@ -446,6 +507,29 @@ def _receivable_summary(
     }
 
 
+def _confirmed_project_bank_cash(
+    db: Session,
+    project: ManagedProject,
+) -> dict[str, Decimal | int]:
+    """Return confirmed bank cash already linked to this project code."""
+
+    transactions = db.scalars(
+        select(BankTransaction).where(
+            BankTransaction.pm_project_id == project.id,
+            BankTransaction.status == "confirmed",
+        )
+    ).all()
+    return {
+        "bank_received": sum(
+            (item.income for item in transactions), Decimal("0")
+        ),
+        "bank_spent": sum(
+            (item.expense for item in transactions), Decimal("0")
+        ),
+        "bank_transaction_count": len(transactions),
+    }
+
+
 def _project_payload(db: Session, project: ManagedProject, detail: bool = False) -> dict:
     manager = db.get(User, project.manager_user_id)
     plans = db.scalars(
@@ -470,6 +554,7 @@ def _project_payload(db: Session, project: ManagedProject, detail: bool = False)
         "members": _project_members(
             project, manager.display_name if manager else None
         ),
+        "collaborators": _project_collaborators(db, project),
         "planned_start": project.planned_start,
         "planned_end": project.planned_end,
         "objective": project.objective,
@@ -491,6 +576,7 @@ def _project_payload(db: Session, project: ManagedProject, detail: bool = False)
         "process_spent": project.process_spent,
         "process_advanced": project.process_advanced,
         "process_finance_updated_at": project.process_finance_updated_at,
+        **_confirmed_project_bank_cash(db, project),
         "status": project.status,
         "progress_percent": project.progress_percent,
         "current_stage": project.current_stage,
@@ -552,7 +638,7 @@ def _project_payload(db: Session, project: ManagedProject, detail: bool = False)
 
 def _project_or_404(db: Session, user: User, project_id: str) -> ManagedProject:
     project = db.get(ManagedProject, project_id)
-    if project is None or project.status == "deleted" or not _project_visible(user, project):
+    if project is None or project.status == "deleted" or not _project_visible(db, user, project):
         raise HTTPException(status_code=404, detail="项目不存在")
     return project
 
@@ -569,7 +655,7 @@ def list_managed_projects(
     ).all()
     visible = [
         item for item in projects
-        if item.status != "deleted" and _project_visible(user, item)
+        if item.status != "deleted" and _project_visible(db, user, item)
     ]
     counts = {status: sum(item.status == status for item in visible) for status in (
         "draft", "initiation_review", "active", "closing_review", "closed",
@@ -592,6 +678,30 @@ def list_managed_projects(
         for group in priority
     }
     return {"counts": counts, "portfolio_counts": portfolio_counts, "items": items}
+
+
+@router.get("/collaborator-candidates")
+def list_project_collaborator_candidates(
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not user.active or user.organization_role != "business":
+        raise HTTPException(status_code=403, detail="仅业务账号可以查看项目协作成员")
+    accounts = db.scalars(
+        select(User)
+        .where(User.active.is_(True), User.organization_role == "business")
+        .order_by(User.display_name, User.username)
+    ).all()
+    return {
+        "items": [
+            {
+                "user_id": account.id,
+                "username": account.username,
+                "display_name": account.display_name,
+            }
+            for account in accounts
+        ]
+    }
 
 
 @router.post("/projects")
@@ -631,7 +741,7 @@ async def create_managed_project(
     if db.scalar(
         select(ManagedProject.id).where(ManagedProject.project_no == project_no)
     ):
-        raise HTTPException(status_code=409, detail="项目编号已存在，请核对飞书项目段")
+        raise HTTPException(status_code=409, detail="项目代码已存在，请核对成本中心代码")
     proposal_path = await _save_attachment(proposal_file, project_no, "立项资料")
     entity = _entity(db, company_name, user)
     project = ManagedProject(
@@ -666,7 +776,7 @@ async def create_managed_project(
         _remove_attachment_after_failed_create(proposal_path)
         raise HTTPException(
             status_code=409,
-            detail="项目编号已存在，请核对飞书项目段",
+            detail="项目代码已存在，请核对成本中心代码",
         ) from exc
     db.add(AuditLog(
         user_id=user.id,
@@ -686,6 +796,78 @@ def get_managed_project(
     return _project_payload(db, _project_or_404(db, user, project_id), detail=True)
 
 
+@router.put("/projects/{project_id}/collaborators")
+def replace_project_collaborators(
+    project_id: str,
+    payload: ProjectCollaboratorUpdate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    project = _project_or_404(db, user, project_id)
+    if not _is_project_manager(user, project):
+        raise HTTPException(status_code=403, detail="仅项目经理可以分配协作编辑权限")
+
+    requested = _normalize_collaborator_usernames(payload.usernames)
+    active_business_accounts = db.scalars(
+        select(User).where(
+            User.active.is_(True),
+            User.organization_role == "business",
+        )
+    ).all()
+    accounts_by_username = {
+        account.username.casefold(): account for account in active_business_accounts
+    }
+    unknown = [
+        username for username in requested
+        if username.casefold() not in accounts_by_username
+    ]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"未找到可用的业务员工账号：{'、'.join(unknown)}",
+        )
+
+    target_accounts = [accounts_by_username[item.casefold()] for item in requested]
+    if any(account.id == project.manager_user_id for account in target_accounts):
+        raise HTTPException(status_code=422, detail="项目经理无需重复添加为协作成员")
+
+    existing = db.scalars(
+        select(ProjectCollaborator).where(
+            ProjectCollaborator.project_id == project.id
+        )
+    ).all()
+    existing_by_user_id = {item.user_id: item for item in existing}
+    target_by_user_id = {account.id: account for account in target_accounts}
+    removed = [
+        membership for user_id, membership in existing_by_user_id.items()
+        if user_id not in target_by_user_id
+    ]
+    added = [
+        account for user_id, account in target_by_user_id.items()
+        if user_id not in existing_by_user_id
+    ]
+    for membership in removed:
+        db.delete(membership)
+    for account in added:
+        db.add(ProjectCollaborator(
+            project_id=project.id,
+            user_id=account.id,
+            added_by_user_id=user.id,
+        ))
+    db.add(AuditLog(
+        user_id=user.id,
+        action="pm_project_collaborators_update",
+        details_json=json.dumps({
+            "project_id": project.id,
+            "added_user_ids": [item.id for item in added],
+            "removed_user_ids": [item.user_id for item in removed],
+            "current_user_ids": list(target_by_user_id),
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+    return _project_payload(db, project, detail=True)
+
+
 @router.patch("/projects/{project_id}")
 def update_managed_project(
     project_id: str,
@@ -694,12 +876,52 @@ def update_managed_project(
     db: Session = Depends(get_db),
 ) -> dict:
     project = _project_or_404(db, user, project_id)
-    if not _project_editable(user, project) or project.status not in {
+    if not _project_content_editable(db, user, project):
+        raise HTTPException(status_code=409, detail="复核中或已结案的项目不能修改")
+    if project.status not in {
         "draft", "initiation_rejected", "active", "closing_rejected",
     }:
         raise HTTPException(status_code=409, detail="复核中或已结案的项目不能修改")
     if payload.planned_end < payload.planned_start:
         raise HTTPException(status_code=422, detail="计划结束日期不能早于开始日期")
+    previous_project_no = project.project_no
+    linked_transaction_count = 0
+    if payload.project_no is not None:
+        requested_project_no = unicodedata.normalize(
+            "NFKC", payload.project_no
+        ).strip()
+        if requested_project_no.casefold() != project.project_no.casefold():
+            if not _is_project_manager(user, project):
+                raise HTTPException(status_code=403, detail="仅项目经理可以修改项目代码")
+            normalized_project_no = _normalize_project_no(requested_project_no)
+            if db.scalar(
+                select(ManagedProject.id).where(
+                    ManagedProject.project_no == normalized_project_no,
+                    ManagedProject.id != project.id,
+                )
+            ):
+                raise HTTPException(status_code=409, detail="项目代码已存在")
+            project.project_no = normalized_project_no
+            unlinked_transactions = db.scalars(
+                select(BankTransaction).where(
+                    BankTransaction.pm_project_id.is_(None),
+                    BankTransaction.project_reference.is_not(None),
+                )
+            ).all()
+            for transaction in unlinked_transactions:
+                detected_reference = (
+                    normalize_cost_center_code(transaction.project_reference)
+                    or extract_cost_center_code(" · ".join(filter(None, (
+                        transaction.project_reference,
+                        transaction.note,
+                        transaction.summary,
+                        transaction.counterparty,
+                    ))))
+                )
+                if detected_reference == normalized_project_no:
+                    transaction.project_reference = normalized_project_no
+                    transaction.pm_project_id = project.id
+                    linked_transaction_count += 1
     entity = _entity(db, payload.company_name, user)
     project.name = payload.name.strip()
     project.entity_id = entity.id
@@ -708,9 +930,12 @@ def update_managed_project(
     if payload.client_contact is not None:
         project.client_contact = payload.client_contact.strip()
     project.business_category = payload.business_category.strip()
+    manager = db.get(User, project.manager_user_id)
     project.members_json = json.dumps(
         _normalize_project_members(
-            payload.members, required=True, manager_name=user.display_name
+            payload.members,
+            required=True,
+            manager_name=manager.display_name if manager else None,
         ),
         ensure_ascii=False,
     )
@@ -727,9 +952,18 @@ def update_managed_project(
     db.add(AuditLog(
         user_id=user.id,
         action="pm_project_update",
-        details_json=json.dumps({"project_id": project.id}, ensure_ascii=False),
+        details_json=json.dumps({
+            "project_id": project.id,
+            "previous_project_no": previous_project_no,
+            "project_no": project.project_no,
+            "linked_transaction_count": linked_transaction_count,
+        }, ensure_ascii=False),
     ))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="项目代码已存在") from exc
     return _project_payload(db, project, detail=True)
 
 
@@ -748,8 +982,8 @@ def update_project_contract_status(
     """
 
     project = _project_or_404(db, user, project_id)
-    if not _project_editable(user, project):
-        raise HTTPException(status_code=403, detail="仅项目经理可以更新合同状态")
+    if not _project_content_editable(db, user, project):
+        raise HTTPException(status_code=403, detail="仅项目经理或协作成员可以更新合同状态")
     previous_status = project.contract_status
     project.contract_status = payload.contract_status
     db.add(AuditLog(
@@ -775,8 +1009,8 @@ def update_project_process_finance(
     """Record PM-reported cumulative project cash figures during execution."""
 
     project = _project_or_404(db, user, project_id)
-    if not _project_editable(user, project):
-        raise HTTPException(status_code=403, detail="仅项目经理可以填报项目过程资金")
+    if not _project_content_editable(db, user, project):
+        raise HTTPException(status_code=403, detail="仅项目经理或协作成员可以填报项目过程资金")
     if project.status not in {"active", "closing_rejected"}:
         raise HTTPException(status_code=409, detail="仅执行中的项目可以填报过程资金")
     previous = {
@@ -813,7 +1047,7 @@ def add_project_cashflow(
     db: Session = Depends(get_db),
 ) -> dict:
     project = _project_or_404(db, user, project_id)
-    if not _project_editable(user, project) or project.status not in {
+    if not _project_content_editable(db, user, project) or project.status not in {
         "draft", "initiation_rejected", "active", "closing_rejected",
     }:
         raise HTTPException(status_code=409, detail="当前状态不能新增收付款计划")
@@ -866,7 +1100,7 @@ def submit_project_initiation(
     db: Session = Depends(get_db),
 ) -> dict:
     project = _project_or_404(db, user, project_id)
-    if not _project_editable(user, project) or project.status not in {"draft", "initiation_rejected"}:
+    if not _is_project_manager(user, project) or project.status not in {"draft", "initiation_rejected"}:
         raise HTTPException(status_code=409, detail="当前状态不能提交立项")
     project.initiation_round += 1
     project.status = "initiation_review"
@@ -888,7 +1122,7 @@ def create_progress_update(
     db: Session = Depends(get_db),
 ) -> dict:
     project = _project_or_404(db, user, project_id)
-    if not _project_editable(user, project) or project.status != "active":
+    if not _project_content_editable(db, user, project) or project.status != "active":
         raise HTTPException(status_code=409, detail="仅执行中的项目可以更新进度")
     update = ProjectProgressUpdate(
         project_id=project.id,
@@ -925,7 +1159,7 @@ async def submit_project_closing(
     db: Session = Depends(get_db),
 ) -> dict:
     project = _project_or_404(db, user, project_id)
-    if not _project_editable(user, project) or project.status not in {"active", "closing_rejected"}:
+    if not _is_project_manager(user, project) or project.status not in {"active", "closing_rejected"}:
         raise HTTPException(status_code=409, detail="当前状态不能提交结案")
     project.closing_report_path = (
         await _save_attachment(closing_file, project.project_no, "结案资料")
@@ -1134,7 +1368,7 @@ def request_project_deletion(
     db: Session = Depends(get_db),
 ) -> dict:
     project = _project_or_404(db, user, project_id)
-    if not _project_editable(user, project):
+    if not _is_project_manager(user, project):
         raise HTTPException(status_code=403, detail="只有项目经理可以申请删除自己的项目")
     existing = db.scalar(
         select(ProjectDeletionRequest).where(

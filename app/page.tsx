@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AccountRoleFields, EducationWorkspace } from "./education-workspace";
 
 type User = {
   id: string;
@@ -380,6 +381,33 @@ type FinanceDashboard = {
   health?: FinanceHealthSnapshot;
   include_internal_transfers?: boolean;
   internal_transfer_summary?: Omit<FinanceInternalTransferRegistry, "items">;
+  receivables_payables?: {
+    receivable: FinanceReceivablePayableSummary;
+    payable: FinanceReceivablePayableSummary;
+  };
+};
+
+type FinanceReceivablePayableItem = {
+  id: string;
+  source: "project" | "finance" | "education";
+  entity_id: string;
+  project_id: string | null;
+  project_no: string | null;
+  project_name: string | null;
+  direction: "receivable" | "payable";
+  due_date: string;
+  amount: MoneyValue;
+  actual_amount: MoneyValue;
+  outstanding_amount: MoneyValue;
+  counterparty: string | null;
+  note: string | null;
+  overdue: boolean;
+};
+
+type FinanceReceivablePayableSummary = {
+  total: MoneyValue;
+  count: number;
+  items: FinanceReceivablePayableItem[];
 };
 
 type FinanceAnnualYears = {
@@ -436,7 +464,7 @@ type FinanceAnnualDashboard = {
 
 type FinanceEntity = {
   id: string;
-  key: "jingao" | "ace-leopard" | "power-leopard";
+  key: "jingao" | "ace-leopard" | "power-leopard" | "xingyao";
   name: string;
   display_name: string;
   business_name: string;
@@ -479,6 +507,38 @@ type FinanceTransaction = {
   project_reference: string | null;
   status: string;
   purpose_correction: FinancePurposeCorrection | null;
+};
+
+type FinanceAnnualTransactionSearch = {
+  confidentiality: "L4";
+  entity_id: string;
+  entity_name: string;
+  year: number;
+  query: string;
+  confirmed_only: boolean;
+  include_internal_transfers: boolean;
+  total: number;
+  limit: number;
+  items: FinanceAnnualTransactionSearchItem[];
+};
+
+type FinanceAnnualTransactionSearchItem = {
+  id: string;
+  batch_id: string;
+  batch_filename: string;
+  transacted_at: string;
+  income: MoneyValue;
+  expense: MoneyValue;
+  balance: MoneyValue | null;
+  counterparty: string | null;
+  summary: string | null;
+  note: string | null;
+  category: string;
+  project_reference: string | null;
+  bank_serial: string | null;
+  bank_name: string;
+  account: string;
+  matched_fields: string[];
 };
 
 type FinancePurposeCorrection = {
@@ -545,6 +605,14 @@ type ProjectCashflow = {
   running_cash: MoneyValue;
 };
 
+type ProjectCollaboratorAccount = {
+  user_id: string;
+  username: string;
+  display_name: string;
+  active?: boolean;
+  added_at?: string;
+};
+
 type ManagedProject = {
   id: string;
   project_no: string;
@@ -556,6 +624,7 @@ type ManagedProject = {
   manager: string;
   manager_user_id: string;
   members: string[];
+  collaborators: ProjectCollaboratorAccount[];
   planned_start: string;
   planned_end: string;
   objective: string;
@@ -573,6 +642,9 @@ type ManagedProject = {
   process_spent: MoneyValue;
   process_advanced: MoneyValue;
   process_finance_updated_at: string | null;
+  bank_received: MoneyValue;
+  bank_spent: MoneyValue;
+  bank_transaction_count: number;
   status: string;
   progress_percent: number;
   current_stage: string;
@@ -623,6 +695,10 @@ type ManagedProjectRegistry = {
   items: ManagedProject[];
 };
 
+type ProjectCollaboratorRegistry = {
+  items: ProjectCollaboratorAccount[];
+};
+
 type FounderDeletePasswordStatus = {
   configured: boolean;
   minimum_length: number;
@@ -657,6 +733,9 @@ type SearchResponse = {
   generation_fallback_used: boolean;
   generation_degraded: boolean;
   results: SearchResult[];
+  total: number;
+  offset: number;
+  limit: number;
   denied_count: number;
   unavailable_count: number;
 };
@@ -775,6 +854,10 @@ type UploadResult = {
   review_required: boolean;
   duplicate_filtered: boolean;
   notice: string;
+};
+
+type UploadRequestError = Error & {
+  status?: number;
 };
 
 type ContractCategory = {
@@ -1072,6 +1155,7 @@ const userRoleNames: Record<string, string> = {
   administrative: "行政",
   personnel: "人事",
   business: "业务",
+  education: "教培",
   finance: "财务",
   management: "管理",
 };
@@ -1083,6 +1167,32 @@ const confidentialityNames: Record<string, string> = {
   L4: "核心敏感资料",
   L5: "公司最高机密",
 };
+
+const COST_CENTER_OPTIONS = [
+  ["CC26A01", "薪资社保"],
+  ["CC26A02", "税费及财务费用"],
+  ["CC26A03", "差旅"],
+  ["CC26A04", "现金科目"],
+  ["CC26A05", "总部招待"],
+  ["CC26A06", "总部酒水"],
+  ["CC26A07", "总部办公费用"],
+  ["CC26A08", "总部车辆费用"],
+  ["CC26A09", "总部装修费用"],
+  ["CC26B01", "KPL青训"],
+  ["CC26B02", "KPL上海大培训"],
+  ["CC26B03", "王者国家队集训"],
+  ["CC26B04", "LPL青训"],
+  ["CC26B05", "三角洲国际战队培训"],
+  ["CC26B06", "后勤保障项目"],
+  ["CC26C01", "智子费用"],
+  ["CC26C02", "商演项目"],
+] as const;
+
+const COST_CENTER_CODE_PATTERN = "CC[0-9]{2}[A-C][0-9]{2}";
+
+function isCostCenterCode(value: string): boolean {
+  return /^CC\d{2}[A-C]\d{2}$/.test(value.trim().toUpperCase());
+}
 
 function confidentialityLabel(level: string): string {
   return `${level} · ${confidentialityNames[level] || level}`;
@@ -1461,7 +1571,9 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [question, setQuestion] = useState("");
+  const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const [searchingMore, setSearchingMore] = useState(false);
   const [searchResponse, setSearchResponse] = useState<SearchResponse | null>(null);
   const [writingBusy, setWritingBusy] = useState(false);
   const [writingError, setWritingError] = useState("");
@@ -1514,6 +1626,9 @@ export default function Home() {
   const [uploadMessage, setUploadMessage] = useState("");
   const [contractCategories, setContractCategories] = useState<ContractCategory[]>([]);
   const [contractCategory, setContractCategory] = useState("");
+  const [contractCategoriesLoading, setContractCategoriesLoading] = useState(false);
+  const [contractCategoriesError, setContractCategoriesError] = useState("");
+  const [contractCategoriesReloadKey, setContractCategoriesReloadKey] = useState(0);
   const [contractDocuments, setContractDocuments] = useState<ContractDocument[]>([]);
   const [ownedContractDocuments, setOwnedContractDocuments] = useState<OwnedContractDocument[]>([]);
   const [contractFolders, setContractFolders] = useState<Record<string, string[]>>({});
@@ -1559,10 +1674,13 @@ export default function Home() {
   const [financeUploadError, setFinanceUploadError] = useState("");
   const [managedProjects, setManagedProjects] = useState<ManagedProjectRegistry>({ counts: {}, portfolio_counts: {}, items: [] });
   const [selectedManagedProject, setSelectedManagedProject] = useState<ManagedProject | null>(null);
+  const [projectCollaboratorCandidates, setProjectCollaboratorCandidates] = useState<ProjectCollaboratorAccount[]>([]);
   const [projectBusy, setProjectBusy] = useState("");
+  const [projectModule, setProjectModule] = useState<"standard" | "education" | "education-ledger">("standard");
   const [projectMessage, setProjectMessage] = useState("");
   const [projectDeletePasswordConfigured, setProjectDeletePasswordConfigured] = useState<boolean | null>(null);
   const [inboxScanBusy, setInboxScanBusy] = useState(false);
+  const [inboxIssueBusy, setInboxIssueBusy] = useState("");
   const [accountBusy, setAccountBusy] = useState("");
   const [evaluationBusy, setEvaluationBusy] = useState(false);
   const [concurrencyBusy, setConcurrencyBusy] = useState(false);
@@ -1613,6 +1731,7 @@ export default function Home() {
     );
     const canUseProjects = (
       me.organization_role === "business"
+      || me.organization_role === "education"
       || (me.organization_role === "finance" && confidentialityRank >= 4)
       || (me.organization_role === "management" && confidentialityRank >= 5)
     );
@@ -1688,6 +1807,7 @@ export default function Home() {
     setEvolutionBaselines(baselineRows);
     setGovernance(governanceRows);
     setContractCategories(contractCategoryRows);
+    setContractCategoriesError("");
     setContractCategory((current) => (
       contractCategoryRows.some((item) => item.key === current)
         ? current
@@ -1740,6 +1860,32 @@ export default function Home() {
       cancelled = true;
     };
   }, [loadWorkspace]);
+
+  useEffect(() => {
+    if (!token || active !== "合同档案库") return;
+    let cancelled = false;
+    setContractCategoriesLoading(true);
+    setContractCategoriesError("");
+    void kbFetch<ContractCategory[]>("v1/contracts/categories", {}, token).then((rows) => {
+      if (cancelled) return;
+      if (rows.length === 0) throw new Error("当前账号没有返回可用的合同分类");
+      setContractCategories(rows);
+      setContractCategory((current) => (
+        rows.some((item) => item.key === current)
+          ? current
+          : rows.find((item) => item.can_search)?.key || rows[0]?.key || ""
+      ));
+      setContractCategoriesError("");
+    }).catch((cause) => {
+      if (cancelled) return;
+      setContractCategoriesError(cause instanceof Error ? cause.message : "合同权限加载失败");
+    }).finally(() => {
+      if (!cancelled) setContractCategoriesLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, contractCategoriesReloadKey, token]);
 
   useEffect(() => {
     if (!token || active !== "合同档案库" || !contractCategory) return;
@@ -1885,11 +2031,18 @@ export default function Home() {
   }, [active, financeIncludeInternalTransfers, financePeriodView, selectedFinanceEntityId, token]);
 
   useEffect(() => {
-    if (!token || active !== "项目管理") return;
+    if (!token || active !== "项目管理" || user?.organization_role === "education"
+      || (["education", "education-ledger"].includes(projectModule) && ["finance", "management"].includes(user?.organization_role || ""))) return;
     let cancelled = false;
-    kbFetch<ManagedProjectRegistry>("v1/pm/projects", {}, token).then((registry) => {
+    Promise.all([
+      kbFetch<ManagedProjectRegistry>("v1/pm/projects", {}, token),
+      user?.organization_role === "business"
+        ? kbFetch<ProjectCollaboratorRegistry>("v1/pm/collaborator-candidates", {}, token)
+        : Promise.resolve({ items: [] }),
+    ]).then(([registry, collaboratorRegistry]) => {
       if (cancelled) return;
       setManagedProjects(registry);
+      setProjectCollaboratorCandidates(collaboratorRegistry.items);
       setSelectedManagedProject((current) => (
         current && registry.items.some((item) => item.id === current.id) ? current : null
       ));
@@ -1901,7 +2054,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [active, token]);
+  }, [active, token, user?.organization_role, projectModule]);
 
   useEffect(() => {
     const isProjectFounder = Boolean(
@@ -1988,6 +2141,7 @@ export default function Home() {
         user: User;
       }>("v1/auth/login", {
         method: "POST",
+        signal: AbortSignal.timeout(20_000),
         body: JSON.stringify({
           username: data.get("username"),
           password: data.get("password"),
@@ -1998,7 +2152,9 @@ export default function Home() {
       setUser(response.user);
       await loadWorkspace(response.access_token);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "登录失败");
+      setError(cause instanceof DOMException && cause.name === "TimeoutError"
+        ? "登录服务响应超时，请稍后重试；无需更改密码。"
+        : cause instanceof Error ? cause.message : "登录失败");
     } finally {
       setLoginBusy(false);
     }
@@ -2031,6 +2187,7 @@ export default function Home() {
     setSelectedFinanceBatch("");
     setManagedProjects({ counts: {}, portfolio_counts: {}, items: [] });
     setSelectedManagedProject(null);
+    setProjectCollaboratorCandidates([]);
     setInboxIssues([]);
     setAccounts([]);
     setCategories([]);
@@ -2292,13 +2449,14 @@ export default function Home() {
     event?.preventDefault();
     if (!question.trim() || !token) return;
     setSearching(true);
+    setSubmittedSearchQuery(question.trim());
     setError("");
     try {
       const response = await kbFetch<SearchResponse>(
         "v1/search",
         {
           method: "POST",
-          body: JSON.stringify({ query: question.trim(), scope: "auto", limit: 8 }),
+          body: JSON.stringify({ query: question.trim(), scope: "auto", limit: 20, offset: 0 }),
         },
         token,
       );
@@ -2308,6 +2466,44 @@ export default function Home() {
       setError(cause instanceof Error ? cause.message : "检索失败");
     } finally {
       setSearching(false);
+    }
+  }
+
+  async function handleLoadMoreSearch() {
+    if (!token || !searchResponse || !submittedSearchQuery || searchingMore) return;
+    setSearchingMore(true);
+    setError("");
+    try {
+      const response = await kbFetch<SearchResponse>(
+        "v1/search",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            query: submittedSearchQuery,
+            scope: "auto",
+            limit: 20,
+            offset: searchResponse.results.length,
+          }),
+        },
+        token,
+      );
+      setSearchResponse((current) => {
+        if (!current) return response;
+        const known = new Set(current.results.map((item) => item.document_id));
+        return {
+          ...current,
+          total: response.total,
+          limit: response.limit,
+          results: [
+            ...current.results,
+            ...response.results.filter((item) => !known.has(item.document_id)),
+          ],
+        };
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "继续加载失败");
+    } finally {
+      setSearchingMore(false);
     }
   }
 
@@ -2866,11 +3062,23 @@ export default function Home() {
         if (request.status >= 200 && request.status < 300) {
           resolve(payload as UploadResult);
         } else {
-          reject(new Error((payload as { detail?: string } | null)?.detail || `上传失败（${request.status}）`));
+          const failure = new Error(
+            (payload as { detail?: string } | null)?.detail || `上传失败（${request.status}）`,
+          ) as UploadRequestError;
+          failure.status = request.status;
+          reject(failure);
         }
       };
-      request.onerror = () => reject(new Error("网络中断，上传未完成"));
-      request.ontimeout = () => reject(new Error("上传超时，请检查网络后重试"));
+      request.onerror = () => {
+        const failure = new Error("网络中断，上传未完成") as UploadRequestError;
+        failure.status = 0;
+        reject(failure);
+      };
+      request.ontimeout = () => {
+        const failure = new Error("上传超时，请检查网络后重试") as UploadRequestError;
+        failure.status = 408;
+        reject(failure);
+      };
       const body = new FormData();
       body.set("file", file, file.name);
       body.set("department", uploadDepartment);
@@ -2882,6 +3090,27 @@ export default function Home() {
       }
       request.send(body);
     });
+  }
+
+  async function uploadOneFileWithRetry(
+    file: File,
+    index: number,
+    total: number,
+  ): Promise<UploadResult> {
+    const retryableStatuses = new Set([0, 404, 408, 425, 429, 500, 502, 503, 504]);
+    const delays = [3_000, 6_000, 12_000];
+    let lastFailure: unknown;
+    for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+      try {
+        return await uploadOneFile(file, index, total);
+      } catch (cause) {
+        lastFailure = cause;
+        const status = (cause as UploadRequestError | null)?.status;
+        if (attempt >= delays.length || !retryableStatuses.has(status ?? -1)) throw cause;
+        await new Promise((resolve) => window.setTimeout(resolve, delays[attempt]));
+      }
+    }
+    throw lastFailure;
   }
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
@@ -2897,26 +3126,42 @@ export default function Home() {
     let pendingReview = 0;
     let automaticallyApproved = 0;
     let processing = 0;
-    try {
-      for (let index = 0; index < uploadFiles.length; index += 1) {
-        const result = await uploadOneFile(uploadFiles[index], index, uploadFiles.length);
+    const failed: { file: File; message: string }[] = [];
+    for (let index = 0; index < uploadFiles.length; index += 1) {
+      try {
+        const result = await uploadOneFileWithRetry(uploadFiles[index], index, uploadFiles.length);
         completed += 1;
         if (result.duplicate_filtered) duplicatesFiltered += 1;
         else if (!result.document_id) processing += 1;
         else if (result.review_required) pendingReview += 1;
         else automaticallyApproved += 1;
+      } catch (cause) {
+        failed.push({
+          file: uploadFiles[index],
+          message: cause instanceof Error ? cause.message : "上传失败",
+        });
       }
-      setUploadProgress(100);
+    }
+    setUploadProgress(100);
+    if (failed.length === 0) {
       setUploadFiles([]);
       setUploadFolderName("");
       form.reset();
-      setUploadMessage([
-        `已上传 ${completed} 份资料`,
-        pendingReview ? `${pendingReview} 份进入审核` : "",
-        automaticallyApproved ? `${automaticallyApproved} 份素材已自动入库` : "",
-        duplicatesFiltered ? `${duplicatesFiltered} 份完全重复资料已过滤` : "",
-        processing ? `${processing} 份由后台继续解析` : "",
-      ].filter(Boolean).join("；") + "。");
+    } else {
+      setUploadFiles(failed.map((item) => item.file));
+      setError(
+        `${completed} 份已完成；${failed.length} 份在自动重试后仍未完成，已保留在待上传列表。请稍后再次点击上传。` +
+        ` 首个失败文件：${failed[0].file.name}（${failed[0].message}）`,
+      );
+    }
+    setUploadMessage([
+      `已上传 ${completed} 份资料`,
+      pendingReview ? `${pendingReview} 份进入审核` : "",
+      automaticallyApproved ? `${automaticallyApproved} 份素材已自动入库` : "",
+      duplicatesFiltered ? `${duplicatesFiltered} 份完全重复资料已过滤` : "",
+      processing ? `${processing} 份由后台继续解析` : "",
+    ].filter(Boolean).join("；") + "。");
+    try {
       const canReview = ["founder", "knowledge_admin", "department_owner"].includes(user.role);
       const [service, queue] = await Promise.all([
         kbFetch<Status>("v1/status", {}, token),
@@ -2927,7 +3172,9 @@ export default function Home() {
       setStatus(service);
       if (canReview) setReviewQueue(queue);
     } catch (cause) {
-      setError(`${completed} 份已完成；${cause instanceof Error ? cause.message : "上传失败"}`);
+      if (failed.length === 0) {
+        setError(`资料已上传，但刷新系统状态失败：${cause instanceof Error ? cause.message : "请稍后刷新页面"}`);
+      }
     } finally {
       setUploadBusy(false);
     }
@@ -3178,6 +3425,72 @@ export default function Home() {
       await refreshFinance();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "内部划转状态更新失败");
+    } finally {
+      setFinanceBusy("");
+    }
+  }
+
+  async function handleFinanceReceivablePayableCreate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token || !selectedFinanceEntityId) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setFinanceBusy("receivable-payable-create");
+    setFinanceMessage("");
+    setError("");
+    try {
+      await kbFetch("v1/finance/receivables-payables", {
+        method: "POST",
+        body: JSON.stringify({
+          entity_id: selectedFinanceEntityId,
+          direction: data.get("direction"),
+          due_date: data.get("due_date"),
+          amount: data.get("amount"),
+          actual_amount: data.get("actual_amount") || 0,
+          counterparty: String(data.get("counterparty") || "").trim() || null,
+          note: String(data.get("note") || "").trim() || null,
+        }),
+      }, token);
+      form.reset();
+      setFinanceMessage("非项目应收应付已添加到财务总览。");
+      await refreshFinance();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "应收应付添加失败");
+    } finally {
+      setFinanceBusy("");
+    }
+  }
+
+  async function handleFinanceReceivablePayableUpdate(
+    event: FormEvent<HTMLFormElement>,
+    itemId: string,
+  ) {
+    event.preventDefault();
+    if (!token || !selectedFinanceEntityId) return;
+    const data = new FormData(event.currentTarget);
+    setFinanceBusy(`receivable-payable-${itemId}`);
+    setFinanceMessage("");
+    setError("");
+    try {
+      await kbFetch(
+        `v1/finance/receivables-payables/${encodeURIComponent(itemId)}?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            direction: data.get("direction"),
+            due_date: data.get("due_date"),
+            amount: data.get("amount"),
+            actual_amount: data.get("actual_amount") || 0,
+            counterparty: String(data.get("counterparty") || "").trim() || null,
+            note: String(data.get("note") || "").trim() || null,
+          }),
+        },
+        token,
+      );
+      setFinanceMessage("非项目应收应付记录已更新。");
+      await refreshFinance();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "应收应付修改失败");
     } finally {
       setFinanceBusy("");
     }
@@ -3460,6 +3773,7 @@ export default function Home() {
       await kbFetch(`v1/pm/projects/${selectedManagedProject.id}`, {
         method: "PATCH",
         body: JSON.stringify({
+          project_no: data.get("project_no"),
           name: data.get("name"),
           company_name: data.get("company_name"),
           client: data.get("client"),
@@ -3481,6 +3795,24 @@ export default function Home() {
       await refreshManagedProjects(selectedManagedProject.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "项目修改失败");
+    } finally {
+      setProjectBusy("");
+    }
+  }
+
+  async function handleProjectCollaborators(usernames: string[]) {
+    if (!token || !selectedManagedProject) return;
+    setProjectBusy("collaborators");
+    setError("");
+    try {
+      await kbFetch(`v1/pm/projects/${selectedManagedProject.id}/collaborators`, {
+        method: "PUT",
+        body: JSON.stringify({ usernames }),
+      }, token);
+      setProjectMessage("项目协作编辑权限已更新，并写入审计日志。");
+      await refreshManagedProjects(selectedManagedProject.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "协作成员权限更新失败");
     } finally {
       setProjectBusy("");
     }
@@ -3622,7 +3954,7 @@ export default function Home() {
     const project = selectedManagedProject;
     const form = event.currentTarget;
     const data = new FormData(form);
-    if (!window.confirm(`确认删除项目“${project.name}”？\n\n项目会从项目组合隐藏，但项目编号、附件、财务关联和审计记录都会保留。`)) return;
+    if (!window.confirm(`确认删除项目“${project.name}”？\n\n项目会从项目组合隐藏，但项目代码、附件、财务关联和审计记录都会保留。`)) return;
     setProjectBusy("founder-delete");
     setError("");
     try {
@@ -3997,6 +4329,31 @@ export default function Home() {
       setError(cause instanceof Error ? cause.message : "待审核目录扫描失败");
     } finally {
       setInboxScanBusy(false);
+    }
+  }
+
+  async function handleIgnoreInboxIssue(issue: InboxIssue) {
+    if (!token || inboxIssueBusy) return;
+    setInboxIssueBusy(issue.id);
+    setError("");
+    setReviewMessage("");
+    try {
+      const response = await kbFetch<{ notice: string }>(
+        `v1/review/inbox/issues/${issue.id}/ignore`,
+        { method: "POST" },
+        token,
+      );
+      const rows = await kbFetch<InboxIssue[]>(
+        "v1/review/inbox/issues",
+        {},
+        token,
+      );
+      setInboxIssues(rows);
+      setReviewMessage(response.notice);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "目录问题处理失败");
+    } finally {
+      setInboxIssueBusy("");
     }
   }
 
@@ -4482,6 +4839,7 @@ export default function Home() {
   const canEditCash = canEditBankStatements || isNamedExecutive;
   const canUseManagedProjects = (
     user?.organization_role === "business"
+    || user?.organization_role === "education"
     || canEditBankStatements
     || (user?.organization_role === "management" && confidentialityRank >= 5)
   );
@@ -4500,6 +4858,7 @@ export default function Home() {
           jingao: ["京奥电竞（北京）科技有限公司", "京奥电竞", "京奥"],
           "ace-leopard": ["王牌猎豹", "JAG三角洲", "三角洲"],
           "power-leopard": ["劲腾豹跃", "JAG王者", "王者"],
+          "xingyao": ["星曜电竞"],
         };
         const companyName = project.company_name.trim();
         return [
@@ -4756,6 +5115,7 @@ export default function Home() {
         {active === "财务分析" && selectedFinanceEntity && (
           <FinanceWorkspace
             key={selectedFinanceEntity.id}
+            token={token}
             user={user}
             entity={selectedFinanceEntity}
             entities={financeEntities}
@@ -4781,6 +5141,8 @@ export default function Home() {
             onPeriodViewChange={setFinancePeriodView}
             onTransferScopeChange={setFinanceIncludeInternalTransfers}
             onTransferDecision={handleFinanceTransferDecision}
+            onReceivablePayableCreate={handleFinanceReceivablePayableCreate}
+            onReceivablePayableUpdate={handleFinanceReceivablePayableUpdate}
             onUpload={handleStatementUpload}
             onCashEntry={handleCashEntry}
             onSelectBatch={handleFinanceBatchSelect}
@@ -4799,10 +5161,18 @@ export default function Home() {
         )}
 
         {active === "项目管理" && (
+          <>
+          {(user.organization_role === "education" || canUseFinance) && <div className="educationModuleTabs" aria-label="项目管理模块">
+            {user.organization_role !== "education" && <button type="button" className={projectModule === "standard" ? "active" : ""} onClick={() => setProjectModule("standard")}>业务项目</button>}
+            <button type="button" className={projectModule === "education" ? "active" : ""} onClick={() => setProjectModule("education")}>星曜教培 · 班期管理</button>
+            <button type="button" className={projectModule === "education-ledger" || (user.organization_role === "education" && projectModule === "standard") ? "active" : ""} onClick={() => setProjectModule("education-ledger")}>教培综合台账</button>
+          </div>}
+          {(user.organization_role === "education" || (canUseFinance && ["education", "education-ledger"].includes(projectModule))) ? <EducationWorkspace key={projectModule} api={kbFetch} token={token || ""} initialModule={projectModule === "education" ? "cohorts" : "ledger"} /> :
           <ProjectManagementWorkspace
             user={user}
             registry={managedProjects}
             selected={selectedManagedProject}
+            collaboratorCandidates={projectCollaboratorCandidates}
             busy={projectBusy}
             message={projectMessage}
             canCreate={canCreateManagedProject}
@@ -4812,6 +5182,7 @@ export default function Home() {
             deletePasswordConfigured={projectDeletePasswordConfigured}
             onCreate={handleCreateManagedProject}
             onUpdate={handleUpdateManagedProject}
+            onCollaborators={handleProjectCollaborators}
             onContractStatus={handleUpdateProjectContractStatus}
             onProcessFinance={handleProjectProcessFinance}
             onRequestDeletion={handleRequestProjectDeletion}
@@ -4827,6 +5198,8 @@ export default function Home() {
             onSubmitClosing={handleSubmitClosing}
             onReview={handleProjectReview}
           />
+          }
+          </>
         )}
 
         {active === "资料上传" && (
@@ -4874,7 +5247,7 @@ export default function Home() {
                     />
                     <span className="uploadDropIcon">▣</span>
                     <strong>上传一个素材文件夹</strong>
-                    <small>文件夹名作为整批素材名称；内部照片和视频无需逐个改名，最多 500 份</small>
+                    <small>文件夹名作为整批素材名称；最多 500 份。网络中断会自动重试，已成功文件不会重复上传</small>
                   </label>
                 </div>
 
@@ -4986,6 +5359,21 @@ export default function Home() {
                   </button>
                 ))}
               </div>
+              {contractCategoriesLoading && contractCategories.length === 0 && (
+                <div className="noticeBar">
+                  <strong>正在读取合同权限</strong>
+                  <span>系统正在核验账号角色、L5权限和可访问合同分类。</span>
+                </div>
+              )}
+              {contractCategoriesError && (
+                <div className="noticeBar errorNotice" role="alert">
+                  <strong>合同权限暂时加载失败</strong>
+                  <span>{contractCategoriesError}。这不是账号降权，请重新加载。</span>
+                  <button type="button" className="secondaryButton" onClick={() => setContractCategoriesReloadKey((value) => value + 1)}>
+                    重新加载合同权限
+                  </button>
+                </div>
+              )}
             </section>
 
             <section className={`contractGrid ${!canUploadContracts ? "searchOnly" : ""}`}>
@@ -5081,7 +5469,15 @@ export default function Home() {
               </section>
               )}
 
-              {contractCategories.find((item) => item.key === contractCategory)?.can_search ? (
+              {!selectedContractCategory ? (
+                <section className="panel contractSearchPanel">
+                  <PanelTitle
+                    eyebrow="ACCESS CHECK"
+                    title={contractCategoriesLoading ? "正在核验合同权限" : "合同权限尚未加载"}
+                  />
+                  <p>合同分类返回后才会显示上传、检索和全部合同，不会再把加载失败误显示为“仅可上传”。</p>
+                </section>
+              ) : selectedContractCategory.can_search ? (
               <section className="panel contractSearchPanel">
                 <PanelTitle eyebrow="LOCAL SEARCH" title="本地合同检索" />
                 {selectedContractCategory?.search_scope === "own" && (
@@ -5112,6 +5508,7 @@ export default function Home() {
               )}
             </section>
 
+            {selectedContractCategory && (
             <section className="panel contractOwnLibrary">
               <div className="contractOwnHeader">
                 <PanelTitle eyebrow="MY CONTRACTS" title={`我上传的合同（${ownedContractDocuments.length}）`} />
@@ -5195,6 +5592,7 @@ export default function Home() {
                 </div>
               )}
             </section>
+            )}
 
             {contractSearchResponse && (
               <section className="panel contractResults">
@@ -5279,6 +5677,8 @@ export default function Home() {
                     response={searchResponse}
                     previewBusy={previewBusy}
                     onPreview={handlePreview}
+                    loadingMore={searchingMore}
+                    onLoadMore={() => void handleLoadMoreSearch()}
                   />
                 </div>
               )}
@@ -5786,7 +6186,17 @@ export default function Home() {
                     <strong>待审核目录问题</strong>
                     <small>只显示相对路径；不会在日志或页面暴露 NAS 根路径。</small>
                   </div>
-                  <b>{inboxIssues.length}</b>
+                  <div className="inboxIssuesHeaderActions">
+                    <button
+                      type="button"
+                      className="secondaryButton"
+                      disabled={inboxScanBusy}
+                      onClick={() => void handleScanInbox()}
+                    >
+                      {inboxScanBusy ? "扫描中…" : "重新扫描"}
+                    </button>
+                    <b>{inboxIssues.length}</b>
+                  </div>
                 </div>
                 {inboxIssues.map((issue) => (
                   <article key={issue.id}>
@@ -5794,7 +6204,17 @@ export default function Home() {
                       <strong>{issue.relative_path}</strong>
                       <small>{issue.message}</small>
                     </div>
-                    <span>{issue.status === "deferred" ? "等待稳定" : "需处理"}</span>
+                    <div className="inboxIssueActions">
+                      <span>{issue.status === "deferred" ? "等待稳定" : "需处理"}</span>
+                      <button
+                        type="button"
+                        className="secondaryButton"
+                        disabled={Boolean(inboxIssueBusy)}
+                        onClick={() => void handleIgnoreInboxIssue(issue)}
+                      >
+                        {inboxIssueBusy === issue.id ? "处理中…" : "忽略此文件"}
+                      </button>
+                    </div>
                   </article>
                 ))}
               </section>
@@ -5884,9 +6304,15 @@ export default function Home() {
                   <div className="reviewFacts">
                     <span><small>年份</small><b>{item.year || "待确认"}</b></span>
                     <span><small>文档角色</small><b>{roleNames[item.role] || item.role}</b></span>
-                    <span title={item.uploader_username ? `登录账号：${item.uploader_username}` : undefined}>
-                      <small>上传者</small>
-                      <b>{item.uploader_name}</b>
+                    <span title={item.uploader_username ? `系统账号：${item.uploader_username}` : undefined}>
+                      <small>上传人</small>
+                      <b>
+                        {item.upload_source === "web" ? "JAOS" : "NAS"}
+                        {` · ${item.uploader_name}`}
+                        {item.upload_source === "web" && item.uploader_username
+                          ? `（${item.uploader_username}）`
+                          : ""}
+                      </b>
                     </span>
                     <span>
                       <small>解析</small>
@@ -6449,29 +6875,12 @@ export default function Home() {
             </section>
             <section className="panel accountCreate">
               <PanelTitle eyebrow="LOCAL ACCOUNT" title="创建试点账号" />
-              <p>初始密码至少 8 位。组织角色用于智库及后续财务、项目、人事系统；资料可见范围继续由密级控制。只有行政角色可以上传合同。</p>
+              <p>初始密码至少 8 位。教培角色固定为 L1，可使用星曜教培项目模块；其他资料仍按密级和角色授权。</p>
               <form className="accountCreateForm" onSubmit={handleCreateAccount}>
                 <label>登录账号<input name="username" required minLength={3} placeholder="例如 employee01" /></label>
                 <label>员工姓名<input name="display_name" required placeholder="姓名或内部称呼" /></label>
                 <label>初始密码<input name="password" type="password" required minLength={8} autoComplete="new-password" /></label>
-                <label>角色
-                  <select name="role" defaultValue="business">
-                    <option value="administrative">行政</option>
-                    <option value="personnel">人事</option>
-                    <option value="business">业务</option>
-                    <option value="finance">财务</option>
-                    <option value="management">管理</option>
-                  </select>
-                </label>
-                <label>可见密级
-                  <select name="confidentiality_ceiling" defaultValue="L1">
-                    <option value="L1">{confidentialityLabel("L1")}</option>
-                    <option value="L2">{confidentialityLabel("L2")}</option>
-                    <option value="L3">{confidentialityLabel("L3")}</option>
-                    <option value="L4">{confidentialityLabel("L4")}</option>
-                    <option value="L5">{confidentialityLabel("L5")}</option>
-                  </select>
-                </label>
+                <AccountRoleFields />
                 <button className="primaryButton" disabled={accountBusy === "create"}>
                   {accountBusy === "create" ? "创建中…" : "创建账号"}
                 </button>
@@ -6493,20 +6902,7 @@ export default function Home() {
                     </div>
                     <>
                         <form className="accountPolicyForm" onSubmit={(event) => handleAccountPolicy(event, account.id)}>
-                          <select name="role" defaultValue={account.organization_role}>
-                            <option value="administrative">行政</option>
-                            <option value="personnel">人事</option>
-                            <option value="business">业务</option>
-                            <option value="finance">财务</option>
-                            <option value="management">管理</option>
-                          </select>
-                          <select name="confidentiality_ceiling" defaultValue={account.confidentiality_ceiling}>
-                            <option value="L1">{confidentialityLabel("L1")}</option>
-                            <option value="L2">{confidentialityLabel("L2")}</option>
-                            <option value="L3">{confidentialityLabel("L3")}</option>
-                            <option value="L4">{confidentialityLabel("L4")}</option>
-                            <option value="L5">{confidentialityLabel("L5")}</option>
-                          </select>
+                          <AccountRoleFields key={`${account.id}-${account.organization_role}-${account.confidentiality_ceiling}`} initialRole={account.organization_role} initialCeiling={account.confidentiality_ceiling} />
                           <button disabled={accountBusy === account.id}>保存权限</button>
                           <button
                             type="button"
@@ -7032,6 +7428,106 @@ function financeTransferReason(value: string | null | undefined): string {
   return labels[value] || value;
 }
 
+function FinanceReceivablesPayablesPanel({
+  dashboard,
+  canEdit,
+  busy,
+  onCreate,
+  onUpdate,
+}: {
+  dashboard: FinanceDashboard | null;
+  canEdit: boolean;
+  busy: string;
+  onCreate: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onUpdate: (event: FormEvent<HTMLFormElement>, itemId: string) => Promise<void>;
+}) {
+  const empty: FinanceReceivablePayableSummary = { total: 0, count: 0, items: [] };
+  const receivable = dashboard?.receivables_payables?.receivable || empty;
+  const payable = dashboard?.receivables_payables?.payable || empty;
+
+  const renderItem = (item: FinanceReceivablePayableItem) => (
+    <article className={`financeObligationItem${item.overdue ? " overdue" : ""}`} key={`${item.source}-${item.id}`}>
+      <header>
+        <div>
+          <span>{item.source === "project" ? "项目经理填报" : item.source === "education" ? "星曜教培同步" : "财务补充"}</span>
+          <strong>{item.project_no ? `${item.project_no} · ${item.project_name || "未命名项目"}` : item.counterparty || "非项目事项"}</strong>
+        </div>
+        <b>{formatMoney(item.outstanding_amount)}</b>
+      </header>
+      <dl>
+        <div><dt>计划日期</dt><dd>{item.due_date}{item.overdue ? " · 已逾期" : ""}</dd></div>
+        <div><dt>应收/应付</dt><dd>{formatMoney(item.amount)}</dd></div>
+        <div><dt>已收/已付</dt><dd>{formatMoney(item.actual_amount)}</dd></div>
+      </dl>
+      {item.counterparty && item.project_no && <p>对方：{item.counterparty}</p>}
+      {item.note && <p>{item.note}</p>}
+      {canEdit && item.source === "finance" && (
+        <details className="financeObligationEdit">
+          <summary>编辑非项目记录</summary>
+          <form onSubmit={(event) => void onUpdate(event, item.id)}>
+            <select name="direction" defaultValue={item.direction}><option value="receivable">应收款</option><option value="payable">应付款</option></select>
+            <input name="due_date" type="date" defaultValue={item.due_date} required />
+            <input name="amount" type="number" min="0.01" step="0.01" defaultValue={Number(item.amount)} required />
+            <input name="actual_amount" type="number" min="0" step="0.01" defaultValue={Number(item.actual_amount)} required />
+            <input name="counterparty" defaultValue={item.counterparty || ""} placeholder="对方单位" />
+            <input name="note" defaultValue={item.note || ""} placeholder="说明" />
+            <button disabled={busy === `receivable-payable-${item.id}`}>{busy === `receivable-payable-${item.id}` ? "保存中…" : "保存修改"}</button>
+          </form>
+        </details>
+      )}
+    </article>
+  );
+
+  const renderColumn = (
+    direction: "receivable" | "payable",
+    summary: FinanceReceivablePayableSummary,
+  ) => (
+    <section className={`financeObligationColumn ${direction}`}>
+      <header>
+        <div><span>{direction === "receivable" ? "RECEIVABLES" : "PAYABLES"}</span><h3>{direction === "receivable" ? "应收款" : "应付款"}</h3></div>
+        <div><strong>{formatMoney(summary.total)}</strong><small>{summary.count} 条未结清明细</small></div>
+      </header>
+      <div className="financeObligationList">
+        {summary.items.slice(0, 10).map(renderItem)}
+        {!summary.items.length && <p className="mutedText">当前没有未结清记录。</p>}
+      </div>
+      {summary.items.length > 10 && (
+        <details className="financeObligationMore">
+          <summary>展开查看全部（另有 {summary.items.length - 10} 条）</summary>
+          <div className="financeObligationList">{summary.items.slice(10).map(renderItem)}</div>
+        </details>
+      )}
+    </section>
+  );
+
+  return (
+    <section className="panel financeObligationsPanel" aria-labelledby="finance-obligations-title">
+      <header className="financeObligationsHeader">
+        <div><p>RECEIVABLES &amp; PAYABLES</p><h2 id="finance-obligations-title">应收款与应付款</h2><span>项目记录由项目经理填报后自动汇总；财务可在此补充和维护非项目事项。金额按未结清余额统计。</span></div>
+        <div className="financeObligationsTotals"><article><span>应收总额</span><strong>{formatMoney(receivable.total)}</strong></article><article><span>应付总额</span><strong>{formatMoney(payable.total)}</strong></article></div>
+      </header>
+      <div className="financeObligationColumns">
+        {renderColumn("receivable", receivable)}
+        {renderColumn("payable", payable)}
+      </div>
+      {canEdit && (
+        <details className="financeObligationCreate">
+          <summary>＋ 添加非项目应收/应付</summary>
+          <form onSubmit={onCreate}>
+            <select name="direction" defaultValue="receivable"><option value="receivable">应收款</option><option value="payable">应付款</option></select>
+            <input name="due_date" type="date" required />
+            <input name="amount" type="number" min="0.01" step="0.01" placeholder="应收/应付金额" required />
+            <input name="actual_amount" type="number" min="0" step="0.01" defaultValue="0" placeholder="已收/已付金额" required />
+            <input name="counterparty" placeholder="对方单位" />
+            <input name="note" placeholder="说明" />
+            <button disabled={busy === "receivable-payable-create"}>{busy === "receivable-payable-create" ? "添加中…" : "添加到财务总览"}</button>
+          </form>
+        </details>
+      )}
+    </section>
+  );
+}
+
 function FinanceHealthPanel({
   dashboard,
   transfers,
@@ -7232,6 +7728,7 @@ function FinanceInternalTransfersPanel({
 }
 
 function FinanceWorkspace({
+  token,
   user,
   entity,
   entities,
@@ -7257,6 +7754,8 @@ function FinanceWorkspace({
   onPeriodViewChange,
   onTransferScopeChange,
   onTransferDecision,
+  onReceivablePayableCreate,
+  onReceivablePayableUpdate,
   onUpload,
   onCashEntry,
   onSelectBatch,
@@ -7265,6 +7764,7 @@ function FinanceWorkspace({
   onPurposeCorrectionRequest,
   onPurposeCorrectionReview,
 }: {
+  token: string;
   user: User;
   entity: FinanceEntity;
   entities: FinanceEntity[];
@@ -7290,6 +7790,8 @@ function FinanceWorkspace({
   onPeriodViewChange: (view: "realtime" | number) => void;
   onTransferScopeChange: (include: boolean) => void;
   onTransferDecision: (transferId: string, action: "confirm" | "reject" | "reset") => Promise<void>;
+  onReceivablePayableCreate: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onReceivablePayableUpdate: (event: FormEvent<HTMLFormElement>, itemId: string) => Promise<void>;
   onUpload: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onCashEntry: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onSelectBatch: (batchId: string) => Promise<void>;
@@ -7312,6 +7814,45 @@ function FinanceWorkspace({
   const financeHeroEntityName = entity.is_headquarters ? entity.display_name : entity.name;
   const [editingTransactionId, setEditingTransactionId] = useState("");
   const [financeView, setFinanceView] = useState<"bank" | "cash">("bank");
+  const [annualSearchQuery, setAnnualSearchQuery] = useState("");
+  const [annualSearchResult, setAnnualSearchResult] = useState<FinanceAnnualTransactionSearch | null>(null);
+  const [annualSearchBusy, setAnnualSearchBusy] = useState(false);
+  const [annualSearchError, setAnnualSearchError] = useState("");
+  useEffect(() => {
+    setAnnualSearchQuery("");
+    setAnnualSearchResult(null);
+    setAnnualSearchError("");
+  }, [entity.id, periodView, includeInternalTransfers]);
+  const handleAnnualTransactionSearch = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (periodView === "realtime") return;
+    const query = annualSearchQuery.trim();
+    if (!query) {
+      setAnnualSearchError("请输入往来单位、用途、摘要、金额、日期或流水号关键字");
+      return;
+    }
+    setAnnualSearchBusy(true);
+    setAnnualSearchError("");
+    try {
+      const params = new URLSearchParams({
+        entity_id: entity.id,
+        year: String(periodView),
+        q: query,
+        include_internal_transfers: includeInternalTransfers ? "true" : "false",
+        limit: "100",
+      });
+      setAnnualSearchResult(await kbFetch<FinanceAnnualTransactionSearch>(
+        `v1/finance/annual-transactions/search?${params.toString()}`,
+        {},
+        token,
+      ));
+    } catch (cause) {
+      setAnnualSearchResult(null);
+      setAnnualSearchError(cause instanceof Error ? cause.message : "年度流水检索失败");
+    } finally {
+      setAnnualSearchBusy(false);
+    }
+  };
   const transactionProjectLabel = (item: FinanceTransaction) => {
     const linked = projects.find((project) => project.id === item.pm_project_id);
     if (linked) return `${linked.project_no} · ${linked.name}`;
@@ -7511,6 +8052,93 @@ function FinanceWorkspace({
               <button type="button" className={includeInternalTransfers ? "active" : ""} onClick={() => onTransferScopeChange(!includeInternalTransfers)}>{includeInternalTransfers ? "当前：包含内部划转" : "当前：剔除内部划转"}</button>
             </section>
 
+            <section className="panel financeAnnualSearchPanel" aria-labelledby="annual-transaction-search-title">
+              <header>
+                <div>
+                  <span>ANNUAL LEDGER SEARCH</span>
+                  <h2 id="annual-transaction-search-title">检索 {periodView} 年流水</h2>
+                  <p>在当前公司和年度的已确认流水中，查找往来单位、用途、银行摘要、金额、日期、分类、成本中心/项目代码或流水号。</p>
+                </div>
+                <b>L4 · 本地确定性检索</b>
+              </header>
+              <form onSubmit={handleAnnualTransactionSearch}>
+                <label>
+                  <span className="srOnly">流水检索关键字</span>
+                  <input
+                    value={annualSearchQuery}
+                    onChange={(event) => setAnnualSearchQuery(event.target.value)}
+                    maxLength={120}
+                    placeholder="例如：腾竞、场地费、Cc2508、100000、2025-06-18"
+                    aria-describedby="annual-search-scope"
+                  />
+                </label>
+                <button type="submit" disabled={annualSearchBusy}>{annualSearchBusy ? "检索中…" : "检索年度流水"}</button>
+                {(annualSearchQuery || annualSearchResult) && (
+                  <button
+                    type="button"
+                    className="clearAnnualSearch"
+                    onClick={() => {
+                      setAnnualSearchQuery("");
+                      setAnnualSearchResult(null);
+                      setAnnualSearchError("");
+                    }}
+                  >清空</button>
+                )}
+              </form>
+              <small id="annual-search-scope">当前范围：{entity.display_name} · {periodView} 年 · {includeInternalTransfers ? "包含集团内部划转" : "剔除集团内部划转"} · 仅已确认流水</small>
+              {annualSearchError && <div className="financeAnnualSearchError" role="alert">{annualSearchError}</div>}
+              {annualSearchResult && (
+                <div className="financeAnnualSearchResults">
+                  <div className="financeAnnualSearchSummary">
+                    <strong>找到 {annualSearchResult.total} 条流水</strong>
+                    <span>关键字“{annualSearchResult.query}”{annualSearchResult.total > annualSearchResult.limit ? ` · 当前显示前 ${annualSearchResult.limit} 条` : ""}</span>
+                  </div>
+                  <div className="financeAnnualSearchList">
+                    {annualSearchResult.items.map((item) => {
+                      const isIncome = Number(item.income) > 0;
+                      return (
+                        <article key={item.id}>
+                          <header>
+                            <div>
+                              <time>{formatShanghaiDateTime(item.transacted_at)}</time>
+                              <strong>{item.counterparty || "未识别往来单位"}</strong>
+                            </div>
+                            <b className={isIncome ? "financeIncomeAmount" : "financeExpenseAmount"}>
+                              {isIncome ? "收入 " : "支出 "}{formatMoney(isIncome ? item.income : item.expense)}
+                            </b>
+                          </header>
+                          <div className="financeAnnualSearchMatchFields">
+                            {item.matched_fields.map((field) => <span key={field}>命中：{field}</span>)}
+                          </div>
+                          <p>{item.note ? `实际用途：${item.note}` : item.summary ? `银行摘要：${item.summary}` : "暂无用途或银行摘要"}</p>
+                          {item.note && item.summary && <small className="financeAnnualRawSummary">银行原始附言：{item.summary}</small>}
+                          <dl>
+                            <div><dt>余额</dt><dd>{item.balance === null ? "—" : formatMoney(item.balance)}</dd></div>
+                            <div><dt>分类</dt><dd>{item.category || "未分类"}</dd></div>
+                            <div><dt>项目代码</dt><dd>{item.project_reference || "未关联"}</dd></div>
+                            <div><dt>账户</dt><dd>{item.bank_name} · {item.account}</dd></div>
+                          </dl>
+                          <footer>
+                            <span>{item.batch_filename}{item.bank_serial ? ` · 流水号 ${item.bank_serial}` : ""}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onPeriodViewChange("realtime");
+                                void onSelectBatch(item.batch_id);
+                              }}
+                            >查看所在批次</button>
+                          </footer>
+                        </article>
+                      );
+                    })}
+                    {!annualSearchResult.items.length && (
+                      <div className="financeAnnualSearchEmpty"><b>未找到匹配流水</b><span>可尝试单位简称、金额（不含逗号）、日期或银行摘要中的词。</span></div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
+
             <section className="financeAnnualMetricGrid">
               <article><span>全年收入</span><strong className="financeIncomeAmount">{formatMoney(annual.income)}</strong><small>{annual.income_transaction_count} 笔 · 单笔均值 {formatMoney(annual.average_income)}</small></article>
               <article><span>全年支出</span><strong className="financeExpenseAmount">{formatMoney(annual.expense)}</strong><small>{annual.expense_transaction_count} 笔 · 单笔均值 {formatMoney(annual.average_expense)}</small></article>
@@ -7591,6 +8219,14 @@ function FinanceWorkspace({
         <article><span>账内上周支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.expense ?? 0)}</strong><small>{weekRange} · 不含账外现金</small></article>
         <article><span>账内上周净流入</span><strong>{formatMoney(dashboard?.net ?? 0)}</strong><small>{weekRange} · 已确认口径</small></article>
       </section>
+
+      <FinanceReceivablesPayablesPanel
+        dashboard={dashboard}
+        canEdit={canEditBank}
+        busy={busy}
+        onCreate={onReceivablePayableCreate}
+        onUpdate={onReceivablePayableUpdate}
+      />
 
       <FinanceHealthPanel
         dashboard={dashboard}
@@ -7917,7 +8553,7 @@ function FinanceWorkspace({
                               {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
                               {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认；金额、日期、收付款人及银行原始附言不会被改动。实际用途修正须走下方创始人复核。</p>}
                               <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
-                              <label><span>飞书项目段</span><input name="project_reference" defaultValue={item.project_reference || ""} placeholder="例如：Cc2609" /></label>
+                              <label><span>成本中心 / 项目代码</span><input name="project_reference" list={`finance-cost-centers-${item.id}`} defaultValue={item.project_reference || ""} placeholder="例如：CC26B01" /><datalist id={`finance-cost-centers-${item.id}`}>{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist></label>
                               <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
                               {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
                               <div className="transactionEditActions">
@@ -7988,7 +8624,7 @@ function FinanceWorkspace({
                       {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
                       {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认；银行原始数据不会被改动。实际用途修正须经创始人复核。</p>}
                       <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
-                      <label><span>飞书项目段</span><input name="project_reference" defaultValue={item.project_reference || ""} placeholder="例如：Cc2609" /></label>
+                      <label><span>成本中心 / 项目代码</span><input name="project_reference" list={`mobile-finance-cost-centers-${item.id}`} defaultValue={item.project_reference || ""} placeholder="例如：CC26B01" /><datalist id={`mobile-finance-cost-centers-${item.id}`}>{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist></label>
                       <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
                       {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
                       <div className="transactionEditActions">
@@ -8014,6 +8650,7 @@ function ProjectManagementWorkspace({
   user,
   registry,
   selected,
+  collaboratorCandidates,
   busy,
   message,
   canCreate,
@@ -8023,6 +8660,7 @@ function ProjectManagementWorkspace({
   deletePasswordConfigured,
   onCreate,
   onUpdate,
+  onCollaborators,
   onContractStatus,
   onProcessFinance,
   onRequestDeletion,
@@ -8041,6 +8679,7 @@ function ProjectManagementWorkspace({
   user: User;
   registry: ManagedProjectRegistry;
   selected: ManagedProject | null;
+  collaboratorCandidates: ProjectCollaboratorAccount[];
   busy: string;
   message: string;
   canCreate: boolean;
@@ -8050,6 +8689,7 @@ function ProjectManagementWorkspace({
   deletePasswordConfigured: boolean | null;
   onCreate: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onUpdate: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onCollaborators: (usernames: string[]) => Promise<void>;
   onContractStatus: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onProcessFinance: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onRequestDeletion: (event: FormEvent<HTMLFormElement>) => Promise<void>;
@@ -8067,6 +8707,8 @@ function ProjectManagementWorkspace({
 }) {
   const projectDetailRef = useRef<HTMLElement | null>(null);
   const isOwner = Boolean(selected && selected.manager_user_id === user.id && user.organization_role === "business");
+  const isCollaborator = Boolean(selected?.collaborators?.some((item) => item.user_id === user.id));
+  const canEditContent = isOwner || isCollaborator;
   const reviewStage = selected?.status === "initiation_review" ? "initiation" : selected?.status === "closing_review" ? "closing" : null;
   const reviewRows = reviewStage === "initiation" ? selected?.initiation_reviews : selected?.closing_reviews;
   const slot = ["found", "founder"].includes(user.username.toLowerCase()) ? "founder" : "";
@@ -8093,6 +8735,27 @@ function ProjectManagementWorkspace({
     });
   }
 
+  function addCollaborator(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const username = String(data.get("collaborator_username") || "").trim();
+    if (!username) return;
+    const current = (selected.collaborators || []).map((item) => item.username);
+    if (current.some((item) => item.toLowerCase() === username.toLowerCase())) return;
+    void onCollaborators([...current, username]).then(() => form.reset());
+  }
+
+  function removeCollaborator(username: string) {
+    if (!selected || !window.confirm(`确认取消账号 ${username} 对本项目的协作编辑权限？`)) return;
+    void onCollaborators(
+      (selected.collaborators || [])
+        .filter((item) => item.username !== username)
+        .map((item) => item.username),
+    );
+  }
+
   return (
     <section className="projectManagementWorkspace">
       <section className="pmPortfolioHeader">
@@ -8109,12 +8772,13 @@ function ProjectManagementWorkspace({
 
       {canCreate && (
         <details className="panel pmCreatePanel" open={!registry.items.length}>
-          <summary><span><b>＋ 新建项目立项</b><small>项目经理填写飞书项目段，当前不要求编号连续</small></span></summary>
+          <summary><span><b>＋ 新建项目立项</b><small>项目代码统一使用公司成本中心格式</small></span></summary>
           <form className="businessForm" onSubmit={onCreate}>
             <label className="pmProjectNoField">
-              <span>项目编号（飞书项目段）</span>
-              <input name="project_no" required maxLength={40} autoComplete="off" placeholder="例如：JADJ-Cc2607，以飞书中的项目段为准" />
-              <small>由项目经理按飞书现有项目段填写，不要求连续；飞书与系统接通后将改为自动同步。</small>
+              <span>项目代码（成本中心）</span>
+              <input name="project_no" required maxLength={7} pattern={COST_CENTER_CODE_PATTERN} list="cost-center-options-create" autoComplete="off" placeholder="例如：CC26B01" />
+              <datalist id="cost-center-options-create">{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist>
+              <small>统一格式为 CC＋两位年份＋A/B/C＋两位序号；银行流水出现同一代码后会自动归集到本项目。</small>
             </label>
             <div className="formGrid threeColumns">
               <label>项目名称<input name="name" required /></label>
@@ -8206,6 +8870,33 @@ function ProjectManagementWorkspace({
                         : <span>待补充执行团队名单</span>}
                     </div>
                   </div>
+                  <div className={`pmCollaboratorAccess${selected.collaborators?.length ? "" : " empty"}`}>
+                    <strong>协作编辑账号</strong>
+                    <div className="pmCollaboratorChips">
+                      {selected.collaborators?.length
+                        ? selected.collaborators.map((account) => (
+                            <span key={account.user_id}>
+                              <b>{account.display_name}</b>
+                              <small>@{account.username}</small>
+                              {isOwner && (
+                                <button type="button" aria-label={`移除 ${account.display_name} 的协作权限`} onClick={() => removeCollaborator(account.username)}>×</button>
+                              )}
+                            </span>
+                          ))
+                        : <span className="pmNoCollaborator">尚未分配协作编辑账号</span>}
+                    </div>
+                    {isOwner && (
+                      <form className="pmCollaboratorForm" onSubmit={addCollaborator}>
+                        <input name="collaborator_username" list={`project-collaborators-${selected.id}`} placeholder="输入同事登录账号" required autoComplete="off" />
+                        <datalist id={`project-collaborators-${selected.id}`}>
+                          {collaboratorCandidates
+                            .filter((account) => account.user_id !== selected.manager_user_id && !selected.collaborators?.some((item) => item.user_id === account.user_id))
+                            .map((account) => <option key={account.user_id} value={account.username}>{account.display_name}</option>)}
+                        </datalist>
+                        <button type="submit" disabled={busy === "collaborators"}>{busy === "collaborators" ? "保存中…" : "添加协作成员"}</button>
+                      </form>
+                    )}
+                  </div>
                 </div>
               </header>
               <section className={`pmContractStatusPanel ${selectedContractAlert ? "alert" : selectedContractStatus}`} role={selectedContractAlert ? "alert" : undefined}>
@@ -8218,7 +8909,7 @@ function ProjectManagementWorkspace({
                       ? "合同状态正常；已记录签署并收到合同原件。"
                       : "项目尚未启动，建议在进入执行前完成合同签署收件。"}</p>
                 </div>
-                {isOwner && (
+                {canEditContent && (
                   <form className="pmContractStatusForm" onSubmit={onContractStatus}>
                     <label htmlFor={`contract-status-${selected.id}`}>更新合同状态</label>
                     <div>
@@ -8242,24 +8933,24 @@ function ProjectManagementWorkspace({
               </section>
               <section className="pmProcessFinanceSection">
                 <header>
-                  <div><span>PM REPORTED CASH</span><strong>项目过程资金</strong></div>
-                  <small>{selected.process_finance_updated_at ? `最近填报：${new Date(selected.process_finance_updated_at).toLocaleString("zh-CN")}` : "尚未填报，当前显示为 0"}</small>
+                  <div><span>FINANCE LINKED CASH</span><strong>项目过程资金</strong></div>
+                  <small>已自动归集 {selected.bank_transaction_count || 0} 笔已确认银行流水</small>
                 </header>
                 <div className="pmProcessFinanceSummary">
-                  <article className="received"><span>已收入</span><strong>{formatMoney(selected.process_received ?? 0)}</strong><small>PM累计填报</small></article>
-                  <article className="spent"><span>已支出</span><strong>{formatMoney(selected.process_spent ?? 0)}</strong><small>PM累计填报</small></article>
+                  <article className="received"><span>已收入</span><strong>{formatMoney(selected.bank_received ?? selected.process_received ?? 0)}</strong><small>已确认流水自动同步</small></article>
+                  <article className="spent"><span>已支出</span><strong>{formatMoney(selected.bank_spent ?? selected.process_spent ?? 0)}</strong><small>已确认流水自动同步</small></article>
                   <article className="advanced"><span>已垫资</span><strong>{formatMoney(selected.process_advanced ?? 0)}</strong><small>PM累计填报</small></article>
                 </div>
-                {isOwner && ["active", "closing_rejected"].includes(selected.status) && (
+                {canEditContent && ["active", "closing_rejected"].includes(selected.status) && (
                   <details className="pmProcessFinanceEditor">
-                    <summary>更新项目过程资金</summary>
+                    <summary>维护 PM 备查口径与垫资</summary>
                     <form key={`${selected.id}-${selected.process_finance_updated_at || "new"}`} onSubmit={onProcessFinance}>
-                      <label>累计已收入<input name="process_received" type="number" min="0" step="0.01" defaultValue={Number(selected.process_received || 0)} required /></label>
-                      <label>累计已支出<input name="process_spent" type="number" min="0" step="0.01" defaultValue={Number(selected.process_spent || 0)} required /></label>
+                      <label>PM备查累计收入<input name="process_received" type="number" min="0" step="0.01" defaultValue={Number(selected.process_received || 0)} required /></label>
+                      <label>PM备查累计支出<input name="process_spent" type="number" min="0" step="0.01" defaultValue={Number(selected.process_spent || 0)} required /></label>
                       <label>累计已垫资<input name="process_advanced" type="number" min="0" step="0.01" defaultValue={Number(selected.process_advanced || 0)} required /></label>
                       <button type="submit" disabled={busy === "process-finance"}>{busy === "process-finance" ? "保存中…" : "保存过程资金"}</button>
                     </form>
-                    <p>填写截至当前的累计金额；该数据由项目经理维护，不替代财务确认的银行流水。</p>
+                    <p>“已收入/已支出”卡片以财务确认的银行流水为准；这里保留项目团队备查口径，并维护尚未经过公司账户的垫资。</p>
                   </details>
                 )}
               </section>
@@ -8282,10 +8973,16 @@ function ProjectManagementWorkspace({
                 </section>
               )}
 
-              {isOwner && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status) && (
+              {canEditContent && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status) && (
                 <details className="pmProjectControlPanel">
                   <summary>修改项目基础信息、执行团队与预算</summary>
                   <form className="businessForm" onSubmit={onUpdate}>
+                    <label className="pmProjectNoField">
+                      <span>项目代码（成本中心）</span>
+                      <input name="project_no" required maxLength={40} pattern={isOwner ? COST_CENTER_CODE_PATTERN : undefined} readOnly={!isOwner} list={isOwner ? `cost-center-options-${selected.id}` : undefined} defaultValue={selected.project_no} autoComplete="off" />
+                      {isOwner && <datalist id={`cost-center-options-${selected.id}`}>{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist>}
+                      <small>{isOwner ? (isCostCenterCode(selected.project_no) ? "项目经理可修改；改码后相同代码的未关联流水会自动补充关联。" : "当前为历史代码，保存其他修改前请改为最新 CC 成本中心格式。") : "只有项目经理可以修改项目代码。"}</small>
+                    </label>
                     <div className="formGrid threeColumns">
                       <label>项目名称<input name="name" defaultValue={selected.name} required /></label>
                       <label>签约公司主体<input name="company_name" defaultValue={selected.company_name} required /></label>
@@ -8367,7 +9064,7 @@ function ProjectManagementWorkspace({
                           <div>
                             <span>FOUNDER SECURITY</span>
                             <strong>创始人直接删除</strong>
-                            <small>仅执行软删除；项目编号、附件、财务关联和审计记录仍保留。</small>
+                            <small>仅执行软删除；项目代码、附件、财务关联和审计记录仍保留。</small>
                           </div>
                           <b className={deletePasswordConfigured ? "configured" : "unconfigured"}>
                             {deletePasswordConfigured === null ? "读取中" : deletePasswordConfigured ? "删除密码已设置" : "尚未设置删除密码"}
@@ -8447,7 +9144,7 @@ function ProjectManagementWorkspace({
                     </dl>
                   </section>
                 )}
-                {isOwner && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status) && (
+                {canEditContent && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status) && (
                   <form className="compactBusinessForm" onSubmit={onCashflow}>
                     <select name="direction" defaultValue="receivable"><option value="receivable">应收</option><option value="payable">应付</option></select>
                     <input name="due_date" type="date" required />
@@ -8461,7 +9158,7 @@ function ProjectManagementWorkspace({
 
               {isOwner && ["draft", "initiation_rejected"].includes(selected.status) && <button className="primaryButton pmPrimaryAction" onClick={() => void onSubmitInitiation()} disabled={busy === "submit-initiation"}>提交立项复核</button>}
 
-              {isOwner && selected.status === "active" && (
+              {canEditContent && selected.status === "active" && (
                 <section className="pmActionGrid">
                   <form className="businessForm" onSubmit={onProgress}>
                     <h3>更新项目进度</h3>
@@ -8469,13 +9166,15 @@ function ProjectManagementWorkspace({
                     <label>本期完成<textarea name="completed" rows={3} required /></label><label>下一步<textarea name="next_step" rows={3} required /></label><label>风险<textarea name="risks" rows={2} /></label><label className="checkboxLine"><input name="needs_coordination" type="checkbox" />需要管理层协调</label>
                     <button className="secondaryButton" disabled={busy === "progress"}>保存进度</button>
                   </form>
-                  <form className="businessForm" onSubmit={onSubmitClosing}>
-                    <h3>提交项目结案</h3>
-                    <label>结案总结<textarea name="closing_summary" rows={4} required /></label>
-                    <div className="formGrid twoColumns"><label>实际收入<input name="actual_revenue" type="number" min="0" step="0.01" required /></label><label>实际成本<input name="actual_cost" type="number" min="0" step="0.01" required /></label><label>未收金额<input name="actual_receivable" type="number" min="0" step="0.01" defaultValue="0" /></label><label>未付金额<input name="actual_payable" type="number" min="0" step="0.01" defaultValue="0" /></label></div>
-                    <label className="fileInputCard">结案报告（选填）<input name="closing_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.zip" /></label>
-                    <button className="primaryButton" disabled={busy === "closing"}>提交结案复核</button>
-                  </form>
+                  {isOwner && (
+                    <form className="businessForm" onSubmit={onSubmitClosing}>
+                      <h3>提交项目结案</h3>
+                      <label>结案总结<textarea name="closing_summary" rows={4} required /></label>
+                      <div className="formGrid twoColumns"><label>实际收入<input name="actual_revenue" type="number" min="0" step="0.01" required /></label><label>实际成本<input name="actual_cost" type="number" min="0" step="0.01" required /></label><label>未收金额<input name="actual_receivable" type="number" min="0" step="0.01" defaultValue="0" /></label><label>未付金额<input name="actual_payable" type="number" min="0" step="0.01" defaultValue="0" /></label></div>
+                      <label className="fileInputCard">结案报告（选填）<input name="closing_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.zip" /></label>
+                      <button className="primaryButton" disabled={busy === "closing"}>提交结案复核</button>
+                    </form>
+                  )}
                 </section>
               )}
 
@@ -8673,7 +9372,7 @@ function CompactAnswer({ response }: { response: SearchResponse }) {
       <span>
         {response.scope === "current" ? "当前事实检索" : "历史资料检索"} · {mode} · {
           response.generation_mode === "llm" ? "AI证据回答" : "本地证据结果"
-        } · {response.results.length} 条引用
+        } · {response.total || response.results.length} 份相关资料
         {response.unavailable_count > 0 ? ` · ${response.unavailable_count} 份原件失联已隔离` : ""}
       </span>
     </div>
@@ -8684,10 +9383,14 @@ function FullAnswer({
   response,
   previewBusy,
   onPreview,
+  loadingMore,
+  onLoadMore,
 }: {
   response: SearchResponse;
   previewBusy: string;
   onPreview: (documentId: string, page: number) => void;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }) {
   const mode = response.retrieval_mode === "hybrid"
     ? "关键词 + 语义融合"
@@ -8756,6 +9459,14 @@ function FullAnswer({
         ))}
         {!response.results.length && <div className="noEvidence">没有可引用证据，因此未生成结论。</div>}
       </div>
+      {onLoadMore && response.total > response.results.length && (
+        <div className="searchLoadMore">
+          <span>共 {response.total} 份相关资料，已显示 {response.results.length} 份</span>
+          <button type="button" className="secondaryButton" disabled={loadingMore} onClick={onLoadMore}>
+            {loadingMore ? "继续加载中…" : "继续显示更多"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

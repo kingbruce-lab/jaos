@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import tempfile
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -43,6 +44,13 @@ class BackupError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class BackupSource:
+    content_hash: str
+    size_bytes: int
+    source_path: str
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -74,7 +82,7 @@ def _copy_tree(source: Path, target: Path) -> None:
 
 
 def _copy_content_addressed_sources(
-    blobs: list[FileBlob],
+    blobs: list[BackupSource],
     target: Path,
 ) -> set[str]:
     copied_hashes: set[str] = set()
@@ -249,7 +257,16 @@ def create_backup(db: Session, output_root: Path | None = None) -> dict:
         else:
             raise BackupError("database_engine_unsupported")
 
-        blobs = db.scalars(select(FileBlob)).all()
+        # Large media copies can take hours. Release metadata table locks and
+        # the pooled connection before any filesystem copying or hashing.
+        with Session(bind=db.get_bind()) as metadata_db:
+            blobs = [
+                BackupSource(*row)
+                for row in metadata_db.execute(select(
+                    FileBlob.content_hash, FileBlob.size_bytes, FileBlob.source_path,
+                )).all()
+            ]
+            database_counts = _database_counts(metadata_db)
         _copy_tree(settings.managed_source_dir, incomplete / "sources")
         copied_source_hashes = _copy_content_addressed_sources(
             blobs,
@@ -265,7 +282,7 @@ def create_backup(db: Session, output_root: Path | None = None) -> dict:
             "database_engine": database_engine,
             "database_file": database_name,
             "policy_version": settings.policy_version,
-            "counts": _database_counts(db),
+            "counts": database_counts,
             "source_content_hashes_available": available_hashes,
             "source_content_hashes_missing": sorted(
                 all_source_hashes - copied_source_hashes

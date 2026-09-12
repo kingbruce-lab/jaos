@@ -653,7 +653,7 @@ def test_review_queue_filters_by_role_and_confidentiality(tmp_path) -> None:
         assert len(queue.json()) == 1
         assert queue.json()[0]["review_state"] == "待预览确认"
         assert queue.json()[0]["knowledge_status"] == "candidate"
-        assert queue.json()[0]["uploader_name"] == "NAS直接上传"
+        assert queue.json()[0]["uploader_name"] == "NAS用户未识别"
         assert queue.json()[0]["uploader_username"] is None
         assert queue.json()[0]["upload_source"] == "nas"
     finally:
@@ -684,6 +684,24 @@ def test_review_queue_shows_original_web_uploader(tmp_path) -> None:
         db.close()
 
 
+def test_review_queue_shows_nas_filesystem_owner(tmp_path) -> None:
+    db, users, document = review_db(tmp_path)
+    document.file_blob.source_owner_name = "jalijicheng"
+    document.file_blob.source_owner_uid = 1010
+    db.commit()
+    configure_overrides(db, users["founder"])
+    try:
+        response = TestClient(app).get("/v1/review/queue")
+
+        assert response.status_code == 200
+        assert response.json()[0]["uploader_name"] == "jalijicheng"
+        assert response.json()[0]["uploader_username"] == "jalijicheng"
+        assert response.json()[0]["upload_source"] == "nas"
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
 def test_only_founder_can_read_unclassified_inbox_issue_names(tmp_path) -> None:
     db, users, _document = review_db(tmp_path)
     db.add(
@@ -707,6 +725,15 @@ def test_only_founder_can_read_unclassified_inbox_issue_names(tmp_path) -> None:
         assert response.status_code == 200
         assert response.json()[0]["relative_path"] == "未分类/敏感候选.pdf"
         assert "source_path" not in response.json()[0]
+
+        issue_id = response.json()[0]["id"]
+        ignored = client.post(f"/v1/review/inbox/issues/{issue_id}/ignore")
+        assert ignored.status_code == 200
+        assert ignored.json()["status"] == "ignored"
+        assert client.get("/v1/review/inbox/issues").json() == []
+        db.refresh(db.get(InboxIssue, issue_id))
+        assert db.get(InboxIssue, issue_id).status == "ignored"
+        assert db.get(InboxIssue, issue_id).resolved_at is not None
     finally:
         app.dependency_overrides.clear()
         db.close()

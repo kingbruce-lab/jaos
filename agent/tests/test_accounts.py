@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pytest
+from sqlalchemy.exc import OperationalError, TimeoutError as DatabasePoolTimeout
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -49,6 +51,29 @@ def account_db() -> tuple[Session, User, User]:
     ])
     db.commit()
     return db, founder, employee
+
+
+@pytest.mark.parametrize("failure", [
+    DatabasePoolTimeout("private connection details"),
+    OperationalError("SELECT secret", {"password": "private"}, Exception("lock timeout")),
+])
+def test_login_database_errors_are_retryable_and_do_not_expose_details(failure):
+    def unavailable_db():
+        raise failure
+        yield
+
+    app.dependency_overrides[get_db] = unavailable_db
+    try:
+        response = TestClient(app).post("/v1/auth/login", json={
+            "username": "founder", "password": "No-Authentication-Attempt",
+        })
+        assert response.status_code == 503
+        assert response.headers["retry-after"] == "5"
+        assert "无需更改密码" in response.json()["detail"]
+        assert "private" not in response.text
+        assert "SELECT" not in response.text
+    finally:
+        app.dependency_overrides.clear()
 
 
 def configure_overrides(db: Session, actor: User) -> None:

@@ -31,6 +31,15 @@ BUSINESS_ENTITY_DEFINITIONS = (
         "default_bank_name": "",
         "is_headquarters": False,
     },
+    {
+        "key": "xingyao",
+        "name": "星曜电竞",
+        "display_name": "星曜电竞",
+        "business_name": "电竞教培",
+        "account_label": "独立银行账户",
+        "default_bank_name": "",
+        "is_headquarters": False,
+    },
 )
 
 BUSINESS_ENTITY_NAMES = {

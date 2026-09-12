@@ -19,6 +19,7 @@ class SearchRequest(BaseModel):
         pattern="^(auto|exact|semantic|hybrid)$",
     )
     limit: int = Field(default=8, ge=1, le=20)
+    offset: int = Field(default=0, ge=0, le=10000)
     category: str | None = Field(default=None, min_length=1, max_length=40)
 
 
@@ -92,6 +93,7 @@ class ProposalBrief(BaseModel):
 
 
 LocalRole = Literal[
+    "education",
     "administrative",
     "personnel",
     "business",

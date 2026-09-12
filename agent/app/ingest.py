@@ -20,6 +20,7 @@ from .models import (
     InboxIssue,
     KnowledgeCategory,
     Project,
+    SourceHealth,
 )
 from .parsers import chunk_text, parse_file
 from .config import settings
@@ -73,6 +74,10 @@ AUTO_APPROVED_ASSET_SUFFIXES = {
 }
 TEMPORARY_SUFFIXES = {".tmp", ".part", ".crdownload", ".download"}
 TEMPORARY_NAME_RE = re.compile(r"\.~#\d+$", re.IGNORECASE)
+# Camera and editing sidecars carry no independently searchable business
+# content. They are intentionally ignored instead of filling the admin issue
+# queue with hundreds of XML/XMP records.
+IGNORED_SIDECAR_SUFFIXES = {".xml", ".xmp", ".aae", ".thm"}
 # System-owned records are governed by their own workflow and permissions.  They
 # must never be picked up by the knowledge-library scanner merely because the
 # scanner is pointed at the shared NAS root.
@@ -123,6 +128,35 @@ CONFIDENTIALITY_RANK = {"L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5}
 
 class FileChangedDuringRead(RuntimeError):
     pass
+
+
+def _asset_metadata_text(
+    path: Path,
+    *,
+    title: str,
+    project_name: str,
+) -> str:
+    """Build a local lexical index for assets that have no extracted body."""
+    folder_parts = list(path.parent.parts)
+    for marker in ("01_知识资料", "00_合同档案库"):
+        if marker in folder_parts:
+            folder_parts = folder_parts[folder_parts.index(marker) + 1:]
+            break
+    folder_parts = [
+        part
+        for part in folder_parts[-10:]
+        if part.strip().casefold() not in {"l1", "l2", "l3", "l4", "l5"}
+    ]
+    directory = " / ".join(folder_parts)
+    values = [
+        "图片视频音频素材",
+        f"文件名：{path.name}",
+        f"资料名称：{title}",
+        f"素材项目：{project_name}",
+    ]
+    if directory:
+        values.append(f"素材文件夹：{directory}")
+    return "\n".join(dict.fromkeys(values))
 
 
 def requires_ingestion_review(path_or_suffix: Path | str) -> bool:
@@ -323,6 +357,8 @@ def ingest_document(
             content_hash=content_hash,
             size_bytes=path.stat().st_size,
             source_path=str(managed_path),
+            source_owner_name=entry.get("source_owner_name"),
+            source_owner_uid=entry.get("source_owner_uid"),
         )
         db.add(blob)
         db.flush()
@@ -331,6 +367,10 @@ def ingest_document(
     ):
         blob.source_path = str(managed_path)
         blob.size_bytes = managed_path.stat().st_size
+    if entry.get("source_owner_name"):
+        blob.source_owner_name = entry["source_owner_name"]
+    if entry.get("source_owner_uid") is not None:
+        blob.source_owner_uid = int(entry["source_owner_uid"])
     managed_stat = managed_path.stat()
     record_source_health(
         db,
@@ -401,6 +441,18 @@ def ingest_document(
         }
 
     pages, citation_basis, page_count = parse_file(path)
+    if not pages and path.suffix.lower() in AUTO_APPROVED_ASSET_SUFFIXES:
+        pages = [
+            (
+                1,
+                _asset_metadata_text(
+                    path,
+                    title=entry.get("title", path.name),
+                    project_name=target_project_name,
+                ),
+                "素材元数据",
+            )
+        ]
     _assert_stable(path, expected_stat)
     requested_status = entry.get("knowledge_status", "candidate")
     knowledge_status = (
@@ -474,6 +526,62 @@ def ingest_document(
         "duplicate_filtered": False,
         "source_adopted": source_adopted,
         "source_available": True,
+    }
+
+
+def backfill_asset_metadata_chunks(db: Session) -> dict:
+    """Make previously registered metadata-only assets lexically searchable."""
+    documents_with_chunks = set(
+        db.scalars(select(Chunk.document_id).distinct()).all()
+    )
+    scanned = 0
+    inserted = 0
+    unavailable = 0
+    for document in db.scalars(select(Document)).all():
+        if document.id in documents_with_chunks:
+            continue
+        source_path = Path(document.file_blob.source_path)
+        if source_path.suffix.lower() not in AUTO_APPROVED_ASSET_SUFFIXES:
+            continue
+        scanned += 1
+        if not source_path.is_file():
+            unavailable += 1
+            continue
+        db.add(
+            Chunk(
+                document_id=document.id,
+                page=1,
+                chunk_index=0,
+                section="素材元数据",
+                text=_asset_metadata_text(
+                    source_path,
+                    title=document.title,
+                    project_name=document.project.name,
+                ),
+            )
+        )
+        inserted += 1
+    db.add(
+        AuditLog(
+            user_id=None,
+            action="asset_metadata_index_backfill",
+            document_ids_json="[]",
+            details_json=json.dumps(
+                {
+                    "scanned": scanned,
+                    "inserted": inserted,
+                    "unavailable": unavailable,
+                },
+                ensure_ascii=False,
+            ),
+        )
+    )
+    db.commit()
+    return {
+        "status": "completed",
+        "scanned": scanned,
+        "inserted": inserted,
+        "unavailable": unavailable,
     }
 
 
@@ -639,6 +747,29 @@ def _issue_message(status: str, code: str, suffix: str = "") -> str:
     if code == "contract_layout_invalid":
         return "合同档案目录不符合固定分类与密级规则"
     return f"解析失败：{code}"
+
+
+def _nas_owner_identity(stat_result) -> tuple[str | None, int | None]:
+    """Resolve a bind-mounted fnOS file owner without exposing host paths.
+
+    Production mounts the NAS host passwd file read-only at
+    ``/host/etc/passwd``.  Tests and developer machines fall back to the
+    container passwd file and finally to the numeric UID.
+    """
+    uid = getattr(stat_result, "st_uid", None)
+    if uid is None:
+        return None, None
+    for passwd_path in (Path("/host/etc/passwd"), Path("/etc/passwd")):
+        try:
+            for line in passwd_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines():
+                fields = line.split(":")
+                if len(fields) >= 3 and fields[2].isdigit() and int(fields[2]) == uid:
+                    return fields[0], uid
+        except OSError:
+            continue
+    return f"UID {uid}", uid
 
 
 def _upsert_issue(
@@ -808,6 +939,27 @@ def scan_inbox(
         counts["discovered"] += 1
         seen_relative_paths.add(relative_value)
         stat = path.stat()
+        suffix = path.suffix.lower()
+        if suffix in IGNORED_SIDECAR_SUFFIXES:
+            counts["skipped"] += 1
+            successful_relative_paths.add(relative_value)
+            _resolve_issue(db, relative_value, checked_at)
+            continue
+        ignored_issue = db.scalar(
+            select(InboxIssue).where(
+                InboxIssue.relative_path == relative_value,
+                InboxIssue.status == "ignored",
+                InboxIssue.resolved_at.is_not(None),
+            )
+        )
+        if (
+            ignored_issue
+            and ignored_issue.size_bytes == stat.st_size
+            and ignored_issue.modified_ns == stat.st_mtime_ns
+        ):
+            counts["skipped"] += 1
+            successful_relative_paths.add(relative_value)
+            continue
         contract_category = None
         if is_contract_archive_path(relative):
             try:
@@ -852,7 +1004,6 @@ def scan_inbox(
             })
             continue
 
-        suffix = path.suffix.lower()
         if suffix not in SUPPORTED_SUFFIXES:
             counts["unsupported"] += 1
             _upsert_issue(
@@ -913,6 +1064,48 @@ def scan_inbox(
             })
             continue
 
+        # Avoid re-reading and re-hashing unchanged NAS assets on every scan.
+        # Large photo/video folders can be hundreds of gigabytes, while the
+        # source-health record already gives us a trusted size+mtime signature.
+        existing_blob = db.scalar(
+            select(FileBlob).where(FileBlob.source_path == str(path))
+        )
+        if existing_blob:
+            owner_name, owner_uid = _nas_owner_identity(stat)
+            if owner_name:
+                existing_blob.source_owner_name = owner_name
+                existing_blob.source_owner_uid = owner_uid
+            source_health = db.get(SourceHealth, existing_blob.content_hash)
+            if (
+                source_health
+                and source_health.status == "verified"
+                and source_health.observed_size_bytes == stat.st_size
+                and source_health.observed_mtime_ns == stat.st_mtime_ns
+            ):
+                existing_document = db.scalar(
+                    select(Document)
+                    .where(
+                        Document.content_hash == existing_blob.content_hash,
+                        Document.knowledge_status.notin_(
+                            ["deleted", "quarantined", "rejected", "duplicate"]
+                        ),
+                    )
+                    .order_by(Document.ingested_at.asc(), Document.id.asc())
+                )
+                counts["unchanged"] += 1
+                successful_relative_paths.add(relative_value)
+                _resolve_issue(db, relative_value, checked_at)
+                results.append(
+                    {
+                        "relative_path": relative_value,
+                        "status": "unchanged",
+                        "document_id": (
+                            existing_document.id if existing_document else None
+                        ),
+                    }
+                )
+                continue
+
         try:
             category_domain = (
                 category_domains.get(relative.parts[0].casefold())
@@ -927,6 +1120,13 @@ def scan_inbox(
                     if contract_category
                     else category_domain
                 ),
+            )
+            owner_name, owner_uid = _nas_owner_identity(stat)
+            entry.update(
+                {
+                    "source_owner_name": owner_name,
+                    "source_owner_uid": owner_uid,
+                }
             )
             if contract_category:
                 entry.update(

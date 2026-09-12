@@ -4,10 +4,11 @@ import hashlib
 import json
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, Base, FileBlob, SourceHealth
+from app import source_integrity
 from app.source_integrity import (
     reconcile_sources,
     source_is_available,
@@ -44,6 +45,30 @@ def test_verify_records_matching_hash(tmp_path) -> None:
         assert health.status == "verified"
         assert health.observed_hash == blob.content_hash
         assert source_is_available(blob, health) is True
+    finally:
+        db.close()
+
+
+def test_reconcile_releases_metadata_connection_while_hashing(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{(tmp_path / 'source.db').as_posix()}")
+    Base.metadata.create_all(engine)
+    db = Session(engine)
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"source-metadata-lock-test")
+    add_blob(db, source, source.read_bytes())
+    checked_out = set()
+    event.listen(engine, "checkout", lambda connection, record, proxy: checked_out.add(id(connection)))
+    event.listen(engine, "checkin", lambda connection, record: checked_out.discard(id(connection)))
+    original_verify = source_integrity.verify_blob
+
+    def verify_without_connection(blob):
+        assert not checked_out, "Hashing must not hold a metadata table lock"
+        return original_verify(blob)
+
+    monkeypatch.setattr(source_integrity, "verify_blob", verify_without_connection)
+    try:
+        result = reconcile_sources(db, tmp_path)
+        assert result["counts"]["verified"] == 1
     finally:
         db.close()
 

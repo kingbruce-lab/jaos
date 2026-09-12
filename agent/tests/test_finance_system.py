@@ -25,8 +25,10 @@ from app.models import (
     BankTransactionPurposeCorrection,
     BusinessEntity,
     CashEntry,
+    FinanceReceivablePayable,
     FinancialAccount,
     ManagedProject,
+    ProjectCashflowPlan,
     User,
 )
 
@@ -72,6 +74,17 @@ def _xlsx() -> bytes:
     sheet.append(["交易日期", "贷方发生额", "借方发生额", "交易后余额", "对方户名", "摘要", "流水号"])
     sheet.append(["2026-08-01", 10000, None, 50000, "客户A", "项目回款", "S001"])
     sheet.append(["2026-08-02", None, 3000, 47000, "供应商B", "场地费用", "S002"])
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _project_code_xlsx() -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["交易日期", "贷方发生额", "借方发生额", "交易后余额", "对方户名", "摘要", "流水号"])
+    sheet.append(["2026-08-01", 12000, None, 52000, "赛事客户", "CC26B05 项目回款", "CC-IN"])
+    sheet.append(["2026-08-02", None, 3500, 48500, "执行供应商", "执行费，项目代码 cc26-b05", "CC-OUT"])
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -450,6 +463,160 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
             "expense": "3000.00",
             "net": "7000.00",
         }
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_cost_center_in_statement_auto_links_confirmed_project_cash(
+    tmp_path, monkeypatch
+) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        entities = client.get("/v1/finance/entities").json()
+        entity = entities[0]
+        project = ManagedProject(
+            project_no="CC26B05",
+            name="三角洲国际战队培训",
+            entity_id=entity["id"],
+            company_name=entity["name"],
+            client="测试甲方",
+            business_category="电竞培训",
+            manager_user_id=users["business"].id,
+            members_json='["执行成员"]',
+            planned_start=date(2026, 8, 1),
+            planned_end=date(2026, 9, 30),
+            objective="验证流水代码自动归集",
+            status="active",
+            created_by_user_id=users["business"].id,
+        )
+        db.add(project)
+        db.commit()
+
+        uploaded = client.post(
+            "/v1/finance/statements/upload",
+            data={
+                "entity_id": entity["id"],
+                "bank_name": "项目归集测试银行",
+                "account_name": "基本户",
+                "account_number": "6222000099990001",
+            },
+            files={
+                "file": (
+                    "项目代码流水.xlsx",
+                    _project_code_xlsx(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+        )
+        assert uploaded.status_code == 200
+        transactions = db.scalars(
+            select(BankTransaction).where(
+                BankTransaction.batch_id == uploaded.json()["id"]
+            )
+        ).all()
+        assert {item.project_reference for item in transactions} == {"CC26B05"}
+        assert {item.pm_project_id for item in transactions} == {project.id}
+
+        confirmed = client.post(
+            f"/v1/finance/statements/{uploaded.json()['id']}/confirm",
+            params={"entity_id": entity["id"]},
+        )
+        assert confirmed.status_code == 200
+        project_payload = client.get(f"/v1/pm/projects/{project.id}").json()
+        assert project_payload["bank_received"] == "12000.00"
+        assert project_payload["bank_spent"] == "3500.00"
+        assert project_payload["bank_transaction_count"] == 2
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_dashboard_combines_project_and_finance_receivables_payables(
+    tmp_path, monkeypatch
+) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        entity = client.get("/v1/finance/entities").json()[0]
+        project = ManagedProject(
+            project_no="CC26B06",
+            name="后勤保障项目",
+            entity_id=entity["id"],
+            company_name=entity["name"],
+            client="赛事主办方",
+            business_category="赛事保障",
+            manager_user_id=users["business"].id,
+            members_json='["执行成员"]',
+            planned_start=date(2026, 8, 1),
+            planned_end=date(2026, 9, 30),
+            objective="验证应收应付自动汇总",
+            status="active",
+            created_by_user_id=users["business"].id,
+        )
+        db.add(project)
+        db.flush()
+        db.add(ProjectCashflowPlan(
+            project_id=project.id,
+            direction="receivable",
+            due_date=date(2026, 9, 10),
+            amount=Decimal("1000"),
+            actual_amount=Decimal("200"),
+            counterparty="项目客户",
+            created_by_user_id=users["business"].id,
+        ))
+        db.commit()
+
+        manual = client.post(
+            "/v1/finance/receivables-payables",
+            json={
+                "entity_id": entity["id"],
+                "direction": "payable",
+                "due_date": "2026-09-20",
+                "amount": "600.00",
+                "actual_amount": "100.00",
+                "counterparty": "非项目供应商",
+                "note": "总部服务费",
+            },
+        )
+        assert manual.status_code == 200
+        dashboard = client.get(
+            "/v1/finance/dashboard", params={"entity_id": entity["id"]}
+        ).json()["receivables_payables"]
+        assert dashboard["receivable"]["total"] == "800.00"
+        assert dashboard["receivable"]["count"] == 1
+        assert dashboard["receivable"]["items"][0]["project_no"] == "CC26B06"
+        assert dashboard["payable"]["total"] == "500.00"
+        assert dashboard["payable"]["items"][0]["source"] == "finance"
+
+        updated = client.patch(
+            f"/v1/finance/receivables-payables/{manual.json()['id']}",
+            params={"entity_id": entity["id"]},
+            json={
+                "direction": "payable",
+                "due_date": "2026-09-22",
+                "amount": "600.00",
+                "actual_amount": "250.00",
+                "counterparty": "非项目供应商",
+                "note": "总部服务费已部分支付",
+            },
+        )
+        assert updated.status_code == 200
+        assert updated.json()["outstanding_amount"] == "350.00"
+        assert db.scalar(select(func.count(FinanceReceivablePayable.id))) == 1
+
+        app.dependency_overrides[current_user] = lambda: users["founder"]
+        forbidden = client.post(
+            "/v1/finance/receivables-payables",
+            json={
+                "entity_id": entity["id"],
+                "direction": "receivable",
+                "due_date": "2026-09-30",
+                "amount": "1.00",
+            },
+        )
+        assert forbidden.status_code == 403
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -1394,18 +1561,27 @@ def test_finance_entities_are_fixed_and_company_data_is_isolated(tmp_path, monke
             "jingao",
             "ace-leopard",
             "power-leopard",
+            "xingyao",
         ]
         assert [item["display_name"] for item in entities] == [
             "京奥电竞",
             "王牌猎豹",
             "劲腾豹跃",
+            "星曜电竞",
         ]
         assert [item["business_name"] for item in entities] == [
             "总公司",
             "JAG三角洲",
             "JAG王者",
+            "电竞教培",
         ]
-        assert [item["show_cash"] for item in entities] == [True, False, False]
+        assert [item["show_cash"] for item in entities] == [True, False, False, False]
+        assert client.get("/v1/finance/entities").json() == entities
+        registry_audit = db.scalars(select(AuditLog).where(
+            AuditLog.action == "business_entity_registry_normalized_v1"
+        )).all()
+        assert len(registry_audit) == 1
+        assert json.loads(registry_audit[0].details_json)["active_entity_count"] == 4
         entity_by_key = {item["key"]: item for item in entities}
         jingao = entity_by_key["jingao"]
         ace_leopard = entity_by_key["ace-leopard"]
@@ -1555,6 +1731,38 @@ def test_finance_entities_are_fixed_and_company_data_is_isolated(tmp_path, monke
         assert power_dashboard.json()["income"] == "0"
         assert power_dashboard.json()["expense"] == "0"
         assert power_dashboard.json()["accounts"] == []
+
+        xingyao = entity_by_key["xingyao"]
+        assert xingyao["default_bank_name"] == ""
+        assert client.get("/v1/finance/statements", params={"entity_id": xingyao["id"]}).json() == []
+        xingyao_upload = client.post(
+            "/v1/finance/statements/upload",
+            data={"entity_id": xingyao["id"], "bank_name": "测试银行",
+                  "account_name": "星曜基本户", "account_number": "20000100000000000004"},
+            files={"file": ("星曜流水.xlsx", _company_xlsx(
+                serial_prefix="XINGYAO", income=Decimal("8000"), expense=Decimal("1500"),
+                opening_balance=Decimal("20000"), income_counterparty="教培客户",
+                expense_counterparty="教培供应商",
+            ), "application/octet-stream")},
+        )
+        assert xingyao_upload.status_code == 200
+        xingyao_batch = xingyao_upload.json()
+        assert xingyao_batch["entity_id"] == xingyao["id"]
+        assert client.post(
+            f"/v1/finance/statements/{xingyao_batch['id']}/confirm",
+            params={"entity_id": xingyao["id"]},
+        ).status_code == 200
+        xingyao_dashboard = client.get(
+            "/v1/finance/dashboard", params={**period, "entity_id": xingyao["id"]},
+        )
+        assert xingyao_dashboard.status_code == 200
+        assert xingyao_dashboard.json()["income"] == "8000.00"
+        assert xingyao_dashboard.json()["expense"] == "1500.00"
+        assert xingyao_dashboard.json()["bank_balance"] == "26500.00"
+        assert client.get(
+            f"/v1/finance/statements/{xingyao_batch['id']}/transactions",
+            params={"entity_id": jingao["id"]},
+        ).status_code == 404
 
         jingao_cash_payload = {
             "entity_id": jingao["id"],
@@ -1777,6 +1985,7 @@ def test_finance_entity_seed_normalizes_finance_projects_and_active_registry(
             "京奥电竞（北京）科技有限公司",
             "王牌猎豹（JAG三角洲）",
             "劲腾豹跃（JAG王者）",
+            "星曜电竞",
         }
     finally:
         app.dependency_overrides.clear()
@@ -1926,6 +2135,158 @@ def test_annual_dashboard_is_natural_year_confirmed_only_and_entity_scoped(
         assert payload["coverage"]["pending_batches"][0]["filename"] == "2025第四季度.xlsx"
         assert payload["unclassified"]["count"] == 2
         assert all(item["counterparty"] != "其他公司客户" for item in payload["anomalies"])
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_annual_transaction_search_is_keyword_year_entity_and_permission_scoped(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    entity = BusinessEntity(
+        name="京奥电竞（北京）科技有限公司",
+        short_name="京奥电竞",
+        created_by_user_id=users["founder"].id,
+    )
+    other_entity = BusinessEntity(
+        name="王牌猎豹（JAG三角洲）",
+        short_name="王牌猎豹",
+        created_by_user_id=users["founder"].id,
+    )
+    db.add_all([entity, other_entity])
+    db.flush()
+    account = FinancialAccount(
+        entity_id=entity.id,
+        bank_name="北京银行成寿寺支行",
+        account_name="基本户",
+        account_number_masked="2000****6862",
+        account_number_hash="SEARCH-JINGAO",
+    )
+    other_account = FinancialAccount(
+        entity_id=other_entity.id,
+        bank_name="测试银行",
+        account_name="基本户",
+        account_number_masked="1000****0001",
+        account_number_hash="SEARCH-OTHER",
+    )
+    db.add_all([account, other_account])
+    db.flush()
+    batch = BankStatementBatch(
+        entity_id=entity.id,
+        account_id=account.id,
+        original_filename="京奥2025年度流水.xlsx",
+        source_path="/finance/jingao-2025.xlsx",
+        file_hash="SEARCH-BATCH",
+        period_start=date(2025, 1, 1),
+        period_end=date(2025, 12, 31),
+        status="confirmed",
+        row_count=2,
+        uploaded_by_user_id=users["finance"].id,
+        confirmed_by_user_id=users["finance"].id,
+        confirmed_at=datetime.now(timezone.utc),
+    )
+    pending_batch = BankStatementBatch(
+        entity_id=entity.id,
+        account_id=account.id,
+        original_filename="京奥待确认.xlsx",
+        source_path="/finance/pending.xlsx",
+        file_hash="SEARCH-PENDING",
+        period_start=date(2025, 1, 1),
+        period_end=date(2025, 1, 31),
+        status="pending",
+        row_count=1,
+        uploaded_by_user_id=users["finance"].id,
+    )
+    other_batch = BankStatementBatch(
+        entity_id=other_entity.id,
+        account_id=other_account.id,
+        original_filename="其他公司2025.xlsx",
+        source_path="/finance/other.xlsx",
+        file_hash="SEARCH-OTHER-BATCH",
+        period_start=date(2025, 1, 1),
+        period_end=date(2025, 12, 31),
+        status="confirmed",
+        row_count=1,
+        uploaded_by_user_id=users["finance"].id,
+    )
+    db.add_all([batch, pending_batch, other_batch])
+    db.flush()
+    db.add_all([
+        BankTransaction(
+            batch_id=batch.id,
+            entity_id=entity.id,
+            account_id=account.id,
+            transacted_at=datetime(2025, 6, 18, 8, 30, tzinfo=timezone.utc),
+            income=Decimal("0"),
+            expense=Decimal("100000"),
+            balance=Decimal("520000"),
+            counterparty="杭州星河会展有限公司",
+            summary="场馆服务费",
+            note="KPL发布会场租",
+            category="场地费用",
+            project_reference="Cc2508",
+            bank_serial="SEARCH-001",
+            fingerprint="SEARCH-TX-1",
+            status="confirmed",
+        ),
+        BankTransaction(
+            batch_id=pending_batch.id,
+            entity_id=entity.id,
+            account_id=account.id,
+            transacted_at=datetime(2025, 1, 2, tzinfo=timezone.utc),
+            income=Decimal("999"),
+            expense=Decimal("0"),
+            balance=Decimal("999"),
+            counterparty="未确认星河客户",
+            fingerprint="SEARCH-PENDING-TX",
+            status="pending",
+        ),
+        BankTransaction(
+            batch_id=other_batch.id,
+            entity_id=other_entity.id,
+            account_id=other_account.id,
+            transacted_at=datetime(2025, 6, 18, tzinfo=timezone.utc),
+            income=Decimal("100000"),
+            expense=Decimal("0"),
+            balance=Decimal("100000"),
+            counterparty="其他星河客户",
+            fingerprint="SEARCH-OTHER-TX",
+            status="confirmed",
+        ),
+    ])
+    db.commit()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        by_party = client.get(
+            "/v1/finance/annual-transactions/search",
+            params={"entity_id": entity.id, "year": 2025, "q": "杭州星河"},
+        )
+        assert by_party.status_code == 200
+        assert by_party.json()["total"] == 1
+        assert by_party.json()["items"][0]["counterparty"] == "杭州星河会展有限公司"
+        assert by_party.json()["items"][0]["matched_fields"] == ["往来单位"]
+
+        by_purpose = client.get(
+            "/v1/finance/annual-transactions/search",
+            params={"entity_id": entity.id, "year": 2025, "q": "发布会场租"},
+        )
+        assert by_purpose.json()["items"][0]["note"] == "KPL发布会场租"
+
+        by_amount = client.get(
+            "/v1/finance/annual-transactions/search",
+            params={"entity_id": entity.id, "year": 2025, "q": "100,000.00"},
+        )
+        assert by_amount.json()["total"] == 1
+        assert by_amount.json()["items"][0]["expense"] == "100000.00"
+
+        app.dependency_overrides[current_user] = lambda: users["business"]
+        forbidden = client.get(
+            "/v1/finance/annual-transactions/search",
+            params={"entity_id": entity.id, "year": 2025, "q": "星河"},
+        )
+        assert forbidden.status_code == 403
     finally:
         app.dependency_overrides.clear()
         db.close()

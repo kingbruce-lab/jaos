@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from .models import AuditLog, FileBlob, SourceHealth
@@ -217,7 +217,17 @@ def reconcile_sources(
     if checked_at.tzinfo is None:
         checked_at = checked_at.replace(tzinfo=timezone.utc)
     started = time.perf_counter()
-    blobs = db.scalars(select(FileBlob)).all()
+    # Hashing the whole NAS must not leave a read transaction open for hours.
+    # These are detached snapshots; apply any discovered path changes only
+    # after the filesystem work finishes, and only if the path is unchanged.
+    with Session(bind=db.get_bind()) as metadata_db:
+        blobs = [
+            FileBlob(content_hash=row[0], size_bytes=row[1], source_path=row[2])
+            for row in metadata_db.execute(select(
+                FileBlob.content_hash, FileBlob.size_bytes, FileBlob.source_path,
+            )).all()
+        ]
+    original_paths = {blob.content_hash: blob.source_path for blob in blobs}
     observations: dict[str, dict] = {}
     unhealthy: list[FileBlob] = []
     for blob in blobs:
@@ -256,8 +266,25 @@ def reconcile_sources(
         "missing": 0,
         "mismatch": 0,
         "failed": 0,
+        "skipped_changed": 0,
     }
+    current_paths = dict(db.execute(select(FileBlob.content_hash, FileBlob.source_path)).all())
     for blob in blobs:
+        original_path = original_paths[blob.content_hash]
+        if current_paths.get(blob.content_hash) != original_path:
+            counts["skipped_changed"] += 1
+            if blob.source_path != original_path:
+                counts["rebound"] -= 1
+            continue
+        if blob.source_path != original_path:
+            result = db.execute(update(FileBlob).where(
+                FileBlob.content_hash == blob.content_hash,
+                FileBlob.source_path == original_path,
+            ).values(source_path=blob.source_path))
+            if result.rowcount != 1:
+                counts["skipped_changed"] += 1
+                counts["rebound"] -= 1
+                continue
         observation = observations[blob.content_hash]
         record_source_health(
             db,
@@ -273,6 +300,7 @@ def reconcile_sources(
         if counts["missing"] == 0
         and counts["mismatch"] == 0
         and counts["failed"] == 0
+        and counts["skipped_changed"] == 0
         else "warning"
     )
     duration_ms = round((time.perf_counter() - started) * 1000, 2)

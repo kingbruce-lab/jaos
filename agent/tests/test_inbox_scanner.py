@@ -364,6 +364,39 @@ def test_scan_skips_fnos_temporary_sidecar_files(tmp_path, monkeypatch) -> None:
         db.close()
 
 
+def test_scan_skips_camera_xml_sidecars_and_resolves_old_issue(
+    tmp_path, monkeypatch
+) -> None:
+    inbox = tmp_path / "99_AI入库待审核"
+    inbox.mkdir()
+    sidecar = inbox / "C1130M01.XML"
+    sidecar.write_text("<NonRealTimeMeta />", encoding="utf-8")
+    make_old(sidecar)
+    configure_scanner(monkeypatch, inbox)
+    db = scanner_db()
+    db.add(
+        InboxIssue(
+            relative_path=sidecar.name,
+            status="unsupported",
+            error_code="unsupported_type",
+            message="暂不支持的文件类型：.xml",
+            size_bytes=sidecar.stat().st_size,
+            modified_ns=sidecar.stat().st_mtime_ns,
+        )
+    )
+    db.commit()
+    try:
+        result = ingest.scan_inbox(db)
+        issue = db.scalar(select(InboxIssue))
+
+        assert result["status"] == "ok"
+        assert result["counts"]["skipped"] == 1
+        assert issue.resolved_at is not None
+        assert db.scalar(select(func.count(Document.id))) == 0
+    finally:
+        db.close()
+
+
 def test_blank_image_registers_as_metadata_asset(tmp_path) -> None:
     image_path = tmp_path / "活动照片.png"
     Image.new("RGB", (120, 60), "white").save(image_path)
@@ -494,7 +527,9 @@ def test_non_text_assets_register_as_metadata_assets(
         assert all(document.citation_basis == "asset-metadata" for document in documents)
         assert all(document.knowledge_status == "approved" for document in documents)
         assert all(document.page_count == 1 for document in documents)
-        assert all(document.chunks == [] for document in documents)
+        assert all(len(document.chunks) == 1 for document in documents)
+        assert all(document.chunks[0].section == "素材元数据" for document in documents)
+        assert all(document.title in document.chunks[0].text for document in documents)
     finally:
         db.close()
 

@@ -185,9 +185,9 @@ class BankTransaction(Base):
     bank_serial: Mapped[str | None] = mapped_column(String(160), nullable=True)
     category: Mapped[str] = mapped_column(String(80), default="待确认", index=True)
     pm_project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    # A human-entered Feishu/project segment reference (for example Cc2609).
-    # This remains useful even when the historical project has not yet been
-    # created in JAOS and can later be reconciled to pm_project_id.
+    # Canonical company cost-centre/project code (for example CC26B01).
+    # Historical Feishu references remain readable and can later be
+    # reconciled to pm_project_id without altering the bank-originated memo.
     project_reference: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)
@@ -338,6 +338,27 @@ class ManagedProject(Base):
     )
 
 
+class ProjectCollaborator(Base):
+    """Account-based edit access delegated by a project's manager."""
+
+    __tablename__ = "project_collaborators"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "user_id", name="uq_project_collaborator_project_user"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("managed_projects.id"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    added_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
 class ProjectNumberSequence(Base):
     __tablename__ = "project_number_sequences"
 
@@ -359,6 +380,32 @@ class ProjectCashflowPlan(Base):
     actual_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class FinanceReceivablePayable(Base):
+    """A finance-entered receivable/payable that is not tied to a project."""
+
+    __tablename__ = "finance_receivables_payables"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    entity_id: Mapped[str] = mapped_column(
+        ForeignKey("business_entities.id"), index=True
+    )
+    direction: Mapped[str] = mapped_column(String(16), index=True)
+    due_date: Mapped[date] = mapped_column(Date, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    actual_amount: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("0")
+    )
+    counterparty: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    updated_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class ProjectProgressUpdate(Base):
@@ -547,6 +594,16 @@ class FileBlob(Base):
     content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     size_bytes: Mapped[int] = mapped_column(Integer)
     source_path: Mapped[str] = mapped_column(Text)
+    # For files discovered directly on fnOS/SMB, retain the NAS filesystem
+    # owner so review screens can identify the real uploader instead of the
+    # ambiguous label "NAS直接上传". Web uploads are still attributed from the
+    # immutable AuditLog entry because the container owns their staged file.
+    source_owner_name: Mapped[str | None] = mapped_column(
+        String(120), nullable=True
+    )
+    source_owner_uid: Mapped[int | None] = mapped_column(
+        BigInteger, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     documents: Mapped[list["Document"]] = relationship(back_populates="file_blob")
 
@@ -964,6 +1021,217 @@ class AuditLog(Base):
     denied_count: Mapped[int] = mapped_column(Integer, default=0)
     details_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EducationCohort(Base):
+    __tablename__ = "education_cohorts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("business_entities.id"), index=True)
+    owner_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    start_date: Mapped[date] = mapped_column(Date, index=True)
+    end_date: Mapped[date] = mapped_column(Date)
+    course_period: Mapped[str] = mapped_column(String(20), default="1_month", server_default="1_month")
+    student_count: Mapped[int] = mapped_column(Integer, default=0)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationCashEntry(Base):
+    __tablename__ = "education_cash_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    direction: Mapped[str] = mapped_column(String(10))
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    occurred_on: Mapped[date] = mapped_column(Date)
+    purpose: Mapped[str] = mapped_column(String(500))
+    category: Mapped[str] = mapped_column(String(40), default="其他", server_default="其他")
+    detail: Mapped[str] = mapped_column(String(80), default="其他", server_default="其他")
+    staff_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationStaff(Base):
+    __tablename__ = "education_staff"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    role: Mapped[str] = mapped_column(String(40))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EducationStudent(Base):
+    __tablename__ = "education_students"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    student_no: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    registration_date: Mapped[date] = mapped_column(Date, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    gender: Mapped[str] = mapped_column(String(10))
+    age: Mapped[int] = mapped_column(Integer)
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    identity_number: Mapped[str] = mapped_column(String(32), default="")
+    phone: Mapped[str] = mapped_column(String(30), default="")
+    guardian_name: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    guardian_phone: Mapped[str] = mapped_column(String(30), default="", server_default="")
+    emergency_contact: Mapped[str] = mapped_column(String(240), default="", server_default="")
+    health_notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    game: Mapped[str] = mapped_column(String(40))
+    game_account: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    current_rank: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    course_period: Mapped[str] = mapped_column(String(20))
+    study_start: Mapped[date] = mapped_column(Date)
+    study_end: Mapped[date] = mapped_column(Date)
+    accommodation_days: Mapped[int] = mapped_column(Integer, default=0)
+    room_type: Mapped[str] = mapped_column(String(10))
+    fee_notes: Mapped[str] = mapped_column(Text, default="")
+    fees_json: Mapped[str] = mapped_column(Text, default="[]")
+    receivable: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
+    received: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
+    cost: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    learning_status: Mapped[str] = mapped_column(String(24), default="已报名", server_default="已报名", index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationAssessment(Base):
+    __tablename__ = "education_assessments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("education_students.id"), index=True)
+    evaluator_staff_id: Mapped[str] = mapped_column(ForeignKey("education_staff.id"))
+    stage: Mapped[str] = mapped_column(String(20))
+    assessed_on: Mapped[date] = mapped_column(Date)
+    content_json: Mapped[str] = mapped_column(Text)
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationInstallment(Base):
+    """A planned package payment; it is not cash until linked receipts exist."""
+
+    __tablename__ = "education_installments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("education_students.id"), index=True)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    label: Mapped[str] = mapped_column(String(80))
+    due_on: Mapped[date] = mapped_column(Date, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    note: Mapped[str] = mapped_column(Text, default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationPayment(Base):
+    """Auditable receipt/refund detail that maintains the student's net received total."""
+
+    __tablename__ = "education_payments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("education_students.id"), index=True)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    installment_id: Mapped[str | None] = mapped_column(ForeignKey("education_installments.id"), nullable=True, index=True)
+    direction: Mapped[str] = mapped_column(String(16), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    occurred_on: Mapped[date] = mapped_column(Date, index=True)
+    method: Mapped[str] = mapped_column(String(24), default="银行转账")
+    account: Mapped[str] = mapped_column(String(120), default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationCostDocument(Base):
+    """One source cost document; allocations never create a second expense."""
+
+    __tablename__ = "education_cost_documents"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    entity_id: Mapped[str] = mapped_column(ForeignKey("business_entities.id"), index=True)
+    occurred_on: Mapped[date] = mapped_column(Date, index=True)
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    detail: Mapped[str] = mapped_column(String(80), default="其他")
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    vendor: Mapped[str] = mapped_column(String(240), default="")
+    document_no: Mapped[str] = mapped_column(String(120), default="")
+    source_ref: Mapped[str] = mapped_column(Text, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationCostAllocation(Base):
+    """Analytical ownership of a source cost by cohort/month and optionally student."""
+
+    __tablename__ = "education_cost_allocations"
+    __table_args__ = (
+        UniqueConstraint("cost_document_id", "cohort_id", "student_id", "allocation_month", name="uq_education_cost_allocation_target"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cost_document_id: Mapped[str] = mapped_column(ForeignKey("education_cost_documents.id"), index=True)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    student_id: Mapped[str | None] = mapped_column(ForeignKey("education_students.id"), nullable=True, index=True)
+    allocation_month: Mapped[date] = mapped_column(Date, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EducationScheduleDay(Base):
+    __tablename__ = "education_schedule_days"
+    __table_args__ = (
+        UniqueConstraint("cohort_id", "calendar_date", name="uq_education_schedule_day"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    calendar_date: Mapped[date] = mapped_column(Date, index=True)
+    day_number: Mapped[int] = mapped_column(Integer)
+    day_type: Mapped[str] = mapped_column(String(20), index=True)
+    title: Mapped[str] = mapped_column(String(160), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    updated_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationDailyLog(Base):
+    __tablename__ = "education_daily_logs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    schedule_day_id: Mapped[str | None] = mapped_column(ForeignKey("education_schedule_days.id"), nullable=True, index=True)
+    log_date: Mapped[date] = mapped_column(Date, index=True)
+    staff_id: Mapped[str] = mapped_column(ForeignKey("education_staff.id"), index=True)
+    log_type: Mapped[str] = mapped_column(String(24), index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    student_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    follow_up: Mapped[str] = mapped_column(Text, default="")
+    created_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class DocumentArtifact(Base):

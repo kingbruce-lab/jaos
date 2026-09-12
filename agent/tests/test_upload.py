@@ -223,7 +223,9 @@ def test_archive_upload_is_catalogued_without_extraction(tmp_path, monkeypatch) 
         assert document.citation_basis == "asset-metadata"
         assert document.knowledge_status == "approved"
         assert response.json()["review_required"] is False
-        assert document.chunks == []
+        assert len(document.chunks) == 1
+        assert document.chunks[0].section == "素材元数据"
+        assert document.title in document.chunks[0].text
         assert len(stored) == 1
         assert stored[0].read_bytes() == payload
     finally:

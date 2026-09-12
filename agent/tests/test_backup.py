@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 import pymupdf
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from app import backup
@@ -236,3 +236,35 @@ def test_backup_detects_file_tampering(tmp_path, monkeypatch) -> None:
 
     with pytest.raises(backup.BackupError, match="backup_size_mismatch"):
         backup.verify_backup(package)
+
+
+def test_backup_releases_database_connection_before_copying_files(tmp_path, monkeypatch) -> None:
+    db, _source_hash = seeded_backup(tmp_path, monkeypatch)
+    engine = db.get_bind()
+    checked_out = set()
+    event.listen(engine, "checkout", lambda connection, record, proxy: checked_out.add(id(connection)))
+    event.listen(engine, "checkin", lambda connection, record: checked_out.discard(id(connection)))
+    original_copy = backup._copy_tree
+    original_sources = backup._copy_content_addressed_sources
+    original_manifest = backup._manifest_files
+
+    def copy_without_connection(*args):
+        assert not checked_out, "Filesystem copies must not retain database locks"
+        return original_copy(*args)
+
+    def sources_without_connection(*args):
+        assert not checked_out
+        return original_sources(*args)
+
+    def manifest_without_connection(*args):
+        assert not checked_out
+        return original_manifest(*args)
+
+    monkeypatch.setattr(backup, "_copy_tree", copy_without_connection)
+    monkeypatch.setattr(backup, "_copy_content_addressed_sources", sources_without_connection)
+    monkeypatch.setattr(backup, "_manifest_files", manifest_without_connection)
+    try:
+        result = backup.create_backup(db, tmp_path / "backups")
+        assert backup.verify_backup(Path(result["path"]))["status"] == "verified"
+    finally:
+        db.close()

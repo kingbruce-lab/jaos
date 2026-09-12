@@ -23,7 +23,11 @@ from .evaluation import (
     run_technical_evaluation,
 )
 from .recall_evaluation import run_recall_quality_evaluation
-from .ingest import ingest_manifest, scan_inbox
+from .ingest import (
+    backfill_asset_metadata_chunks,
+    ingest_manifest,
+    scan_inbox,
+)
 from .maintained_artifacts import run_due_artifact_reviews
 from .models import AuditLog, Chunk, Document, InboxIssue, Project, User
 from .config import settings
@@ -58,6 +62,14 @@ def command_scan_inbox(path: str | None = None) -> int:
         result = scan_inbox(db, Path(path).resolve() if path else None)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if result["status"] == "unavailable" else 0
+
+
+def command_backfill_asset_metadata() -> int:
+    init_database()
+    with SessionLocal() as db:
+        result = backfill_asset_metadata_chunks(db)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
 
 
 def command_reconcile_sources(path: str | None = None) -> int:
@@ -262,6 +274,7 @@ def main() -> int:
     ingest_parser.add_argument("--manifest", required=True)
     scan_parser = subparsers.add_parser("scan-inbox")
     scan_parser.add_argument("--path")
+    subparsers.add_parser("backfill-asset-metadata")
     reconcile_parser = subparsers.add_parser("reconcile-sources")
     reconcile_parser.add_argument("--path")
     normalize_parser = subparsers.add_parser("normalize-web-storage")
@@ -306,6 +319,8 @@ def main() -> int:
         return command_ingest(args.manifest)
     if args.command == "scan-inbox":
         return command_scan_inbox(args.path)
+    if args.command == "backfill-asset-metadata":
+        return command_backfill_asset_metadata()
     if args.command == "reconcile-sources":
         return command_reconcile_sources(args.path)
     if args.command == "normalize-web-storage":

@@ -3,13 +3,13 @@ from __future__ import annotations
 import hashlib
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.auth import current_user
 from app.database import get_db
-from app.main import app
+from app.main import app, _governance_documents
 from app.models import AuditLog, Base, Chunk, Document, FileBlob, Project, User
 
 
@@ -96,6 +96,35 @@ def override(db: Session, actor: User) -> None:
 
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[current_user] = lambda: actor
+
+
+def test_governance_loads_collections_without_cartesian_joins(tmp_path):
+    db, users, documents = governance_db(tmp_path)
+    project = documents["ordinary"].project
+    for document in documents.values():
+        document.project = project
+    db.commit()
+    actor = users["founder"]
+    db.refresh(actor)
+    db.expire_all()
+    statements = []
+
+    def record_sql(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement.upper())
+
+    event.listen(db.get_bind(), "before_cursor_execute", record_sql)
+    try:
+        rows = _governance_documents(actor, db)
+        assert len(rows) == len(documents)
+        assert all(document.chunks for document in rows)
+        assert len(rows[0].project.documents) == len(documents)
+        assert not any("JOIN CHUNKS " in sql for sql in statements)
+        assert not any("JOIN DOCUMENT_ARTIFACTS " in sql for sql in statements)
+        assert not any("JOIN DOCUMENTS AS" in sql for sql in statements)
+        assert len(statements) <= 8
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", record_sql)
+        db.close()
 
 
 def test_ai_classification_and_manual_governance_are_audited(tmp_path) -> None:
