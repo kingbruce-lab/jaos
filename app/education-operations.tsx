@@ -3,9 +3,10 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 type Api = <T>(path: string, options?: RequestInit, token?: string) => Promise<T>;
-type Day = { id: string; calendar_date: string; day_number: number; day_type: "teaching" | "practice" | "rest"; title: string; notes: string; version: number };
+type DayReport = { instructor_ids: string[]; student_ids: string[]; attendance: string; lesson_objectives: string; lesson_content: string; student_performance: string; issues_and_adjustments: string; homework_or_practice: string; parent_communication: string; next_plan: string };
+type Day = { id: string; calendar_date: string; day_number: number; day_type: "teaching" | "practice" | "rest"; title: string; notes: string; report: DayReport; version: number };
 type CostAllocation = { id: string; cohort_id: string; cohort_name?: string; student_id: string | null; student_name: string | null; allocation_month: string; amount: string; note?: string };
-type Cost = { id: string; occurred_on: string; category: string; detail: string; amount: string; allocated_amount: string; vendor: string; document_no: string; source_ref: string; note: string; allocations: CostAllocation[]; version: number };
+type Cost = { id: string; occurred_on: string; ended_on: string; category: string; detail: string; amount: string; allocated_amount: string; vendor: string; document_no: string; source_ref: string; note: string; allocations: CostAllocation[]; version: number };
 type CostDetail = Cost & { allocation_mode: "cohort" | "equal_students" | "custom"; allocation_month: string | null; can_edit: boolean; has_hidden_allocations: boolean };
 type DailyLog = { id: string; log_date: string; staff_id: string; staff_name: string; staff_role: string; log_type: string; summary: string; follow_up: string; student_ids: string[]; version: number };
 type Operations = { schedule: { generated: boolean; days: Day[]; summary: { teaching: number; practice: number; rest: number } }; costs: { items: Cost[]; source_total: string; allocated_to_cohort: string }; logs: DailyLog[]; missing_log_days: string[]; can_view_logs: boolean; can_edit: boolean };
@@ -36,6 +37,7 @@ export function EducationOperations({ api, token, cohortId, canEdit, cohorts }: 
   const [logTypeFilter, setLogTypeFilter] = useState("");
   const [staffFilter, setStaffFilter] = useState("");
   const [editingCost, setEditingCost] = useState<CostDetail | null>(null);
+  const [selectedDayId, setSelectedDayId] = useState("");
   const [editCategory, setEditCategory] = useState("住宿费");
   const [editAllocationMode, setEditAllocationMode] = useState<"cohort" | "equal_students" | "custom">("cohort");
   const [editAllocations, setEditAllocations] = useState<CustomAllocation[]>([]);
@@ -73,11 +75,21 @@ export function EducationOperations({ api, token, cohortId, canEdit, cohorts }: 
     event.preventDefault();
     if (busy || !canEdit) return;
     const form = event.currentTarget;
-    const values = Object.fromEntries(new FormData(form).entries());
+    const formData = new FormData(form);
+    const values = Object.fromEntries(formData.entries());
+    const report = {
+      instructor_ids: formData.getAll("instructor_ids").map(String),
+      student_ids: formData.getAll("student_ids").map(String),
+      attendance: String(values.attendance || ""), lesson_objectives: String(values.lesson_objectives || ""),
+      lesson_content: String(values.lesson_content || ""), student_performance: String(values.student_performance || ""),
+      issues_and_adjustments: String(values.issues_and_adjustments || ""), homework_or_practice: String(values.homework_or_practice || ""),
+      parent_communication: String(values.parent_communication || ""), next_plan: String(values.next_plan || ""),
+    };
+    ["instructor_ids", "student_ids", "attendance", "lesson_objectives", "lesson_content", "student_performance", "issues_and_adjustments", "homework_or_practice", "parent_communication", "next_plan"].forEach((key) => delete values[key]);
     setBusy(`day-${day.id}`); setError("");
     try {
-      await api(`v1/pm/education/cohorts/${cohortId}/schedule/${day.id}`, { method: "PATCH", body: JSON.stringify({ ...values, version: day.version }) }, token);
-      setMessage("课表日期已调整并保留审计记录。"); setRevision((value) => value + 1);
+      await api(`v1/pm/education/cohorts/${cohortId}/schedule/${day.id}`, { method: "PATCH", body: JSON.stringify({ ...values, report, version: day.version }) }, token);
+      setMessage(`${day.calendar_date} 的教学日报已保存。`); setRevision((value) => value + 1);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "课表调整失败"); }
     finally { setBusy(""); }
   }
@@ -178,6 +190,8 @@ export function EducationOperations({ api, token, cohortId, canEdit, cohorts }: 
 
   const visibleLogs = (data?.logs || []).filter((item) =>
     (!logTypeFilter || item.log_type === logTypeFilter) && (!staffFilter || item.staff_id === staffFilter));
+  const selectedDay = data?.schedule.days.find((day) => day.id === selectedDayId);
+  const reportComplete = (day: Day) => Boolean(day.report?.lesson_content || day.report?.student_performance || day.report?.attendance);
 
   return <section className="educationOperations">
     <header><div><p className="eyebrow">COHORT OPERATIONS</p><h3>班期运营台账</h3><p>原始成本只记一次；分摊用于明确班期、月份和学员归属，不重复增加总支出。</p></div></header>
@@ -188,13 +202,33 @@ export function EducationOperations({ api, token, cohortId, canEdit, cohorts }: 
       <summary>6＋1 教学日历</summary>
       <div className="educationOperationSummary"><span>授课 {data?.schedule.summary.teaching || 0} 天</span><span>自主练习 {data?.schedule.summary.practice || 0} 天</span><span>休息/调整 {data?.schedule.summary.rest || 0} 天</span></div>
       {canEdit && <button type="button" className="secondaryButton" disabled={!!busy} onClick={() => void generateSchedule()}>{data?.schedule.generated ? "补齐缺失日期（不覆盖调整）" : "按6＋1生成完整课表"}</button>}
-      <div className="educationCalendarGrid">{data?.schedule.days.map((day) => <form key={day.id} onSubmit={(event) => void updateDay(event, day)} className={`educationCalendarDay ${day.day_type}`}>
+      {!!data?.missing_log_days.length && <div className="educationMissingLogs" role="status"><strong>日报待填：{data.missing_log_days.length}天</strong><span>{data.missing_log_days.slice(0, 8).join("、")}{data.missing_log_days.length > 8 ? "…" : ""}</span></div>}
+      <p className="educationHint">点击任意日期，会在下方打开完整的每日报告。日历用于每天的主记录；临时异常或多位老师的补充事项可在页面末尾另行追加。</p>
+      <div className="educationCalendarGrid">{data?.schedule.days.map((day) => <button type="button" key={day.id} onClick={() => setSelectedDayId(day.id)} className={`educationCalendarDay ${day.day_type} ${selectedDayId === day.id ? "selected" : ""}`}>
         <strong>第{day.day_number}天 · {day.calendar_date}</strong>
-        <select name="day_type" defaultValue={day.day_type} disabled={!canEdit}><option value="teaching">授课日</option><option value="practice">自主练习日</option><option value="rest">休息/调整</option></select>
-        <input name="title" defaultValue={day.title} maxLength={160} disabled={!canEdit} aria-label={`${day.calendar_date}安排`} />
-        <input name="notes" defaultValue={day.notes} maxLength={2000} placeholder="课程重点/调整说明" disabled={!canEdit} />
-        {canEdit && <button disabled={!!busy}>{busy === `day-${day.id}` ? "保存中…" : "保存"}</button>}
-      </form>)}</div>
+        <span>{day.day_type === "teaching" ? "授课日" : day.day_type === "practice" ? "自主练习日" : "休息/调整"}</span>
+        <b>{day.title || "未填写安排"}</b>
+        <small>{reportComplete(day) ? "日报已填写 · 点击查看或修正" : "点击填写完整日报"}</small>
+      </button>)}</div>
+      {selectedDay && <form key={`${selectedDay.id}-${selectedDay.version}`} onSubmit={(event) => void updateDay(event, selectedDay)} className="educationDayEditor">
+        <header><div><span>第 {selectedDay.day_number} 天</span><h4>{selectedDay.calendar_date} 教学日报</h4></div><button type="button" onClick={() => setSelectedDayId("")}>关闭</button></header>
+        <div className="educationForm">
+          <label>日期类型<select name="day_type" defaultValue={selectedDay.day_type} disabled={!canEdit}><option value="teaching">授课日</option><option value="practice">自主练习日</option><option value="rest">休息/调整</option></select></label>
+          <label>当日主题<input name="title" defaultValue={selectedDay.title} maxLength={160} disabled={!canEdit} /></label>
+          <label>授课教师 / 助教（可多选）<select name="instructor_ids" multiple size={Math.min(6, Math.max(3, staff.length))} defaultValue={selectedDay.report?.instructor_ids || []} disabled={!canEdit}>{staff.filter((item) => item.active || selectedDay.report?.instructor_ids.includes(item.id)).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}</select></label>
+          <label>关联学员（可多选）<select name="student_ids" multiple size={Math.min(6, Math.max(3, students.length))} defaultValue={selectedDay.report?.student_ids || []} disabled={!canEdit}>{students.map((item) => <option key={item.id} value={item.id}>{item.student_no ? `${item.student_no} · ` : ""}{item.name}</option>)}</select></label>
+          <label className="educationWide">出勤与状态<textarea name="attendance" defaultValue={selectedDay.report?.attendance} maxLength={2000} disabled={!canEdit} placeholder="到课、迟到、请假、精神及身体状态等客观情况" /></label>
+          <label className="educationWide">课程目标<textarea name="lesson_objectives" defaultValue={selectedDay.report?.lesson_objectives} maxLength={3000} disabled={!canEdit} placeholder="今天计划达成的知识、操作或训练目标" /></label>
+          <label className="educationWide">教学内容与训练安排<textarea name="lesson_content" defaultValue={selectedDay.report?.lesson_content} maxLength={5000} disabled={!canEdit} placeholder="实际讲授内容、训练项目、时长和完成情况" /></label>
+          <label className="educationWide">学员表现与进步<textarea name="student_performance" defaultValue={selectedDay.report?.student_performance} maxLength={5000} disabled={!canEdit} placeholder="记录具体表现、数据变化和可验证的进步" /></label>
+          <label className="educationWide">问题、纠偏与调整<textarea name="issues_and_adjustments" defaultValue={selectedDay.report?.issues_and_adjustments} maxLength={5000} disabled={!canEdit} placeholder="出现的问题、采取的处理以及课程节奏调整" /></label>
+          <label className="educationWide">课后作业 / 自主练习<textarea name="homework_or_practice" defaultValue={selectedDay.report?.homework_or_practice} maxLength={3000} disabled={!canEdit} /></label>
+          <label className="educationWide">家长沟通记录<textarea name="parent_communication" defaultValue={selectedDay.report?.parent_communication} maxLength={3000} disabled={!canEdit} placeholder="仅记录客观沟通内容及已确认事项" /></label>
+          <label className="educationWide">次日计划<textarea name="next_plan" defaultValue={selectedDay.report?.next_plan} maxLength={3000} disabled={!canEdit} /></label>
+          <label className="educationWide">日程调整说明<textarea name="notes" defaultValue={selectedDay.notes} maxLength={2000} disabled={!canEdit} placeholder="临时调课、休息或其他日程说明" /></label>
+          {canEdit && <button className="primaryButton" disabled={!!busy}>{busy === `day-${selectedDay.id}` ? "保存中…" : "保存本日完整报告"}</button>}
+        </div>
+      </form>}
       {!data?.schedule.days.length && <p className="educationHint">尚未生成课表。系统会以开班日为第1天，循环安排6天授课、1天自主练习。</p>}
     </details>
 
@@ -203,6 +237,7 @@ export function EducationOperations({ api, token, cohortId, canEdit, cohorts }: 
       <div className="educationOperationSummary"><span>原始单据合计 {money(data?.costs.source_total || "0")}</span><span>分摊到本期 {money(data?.costs.allocated_to_cohort || "0")}</span></div>
       {canEdit && <form className="educationForm" onSubmit={(event) => void createCost(event)}>
         <label>发生日期<input name="occurred_on" type="date" defaultValue={today()} required /></label>
+        <label>结束日期<input name="ended_on" type="date" defaultValue={today()} required /></label>
         <label>成本分类<select name="category" value={category} onChange={(event) => setCategory(event.target.value)}>{Object.keys(costDetails).map((item) => <option key={item}>{item}</option>)}</select></label>
         <label>成本明细<select name="detail" key={category}>{costDetails[category].map((item) => <option key={item}>{item}</option>)}</select></label>
         <label>金额<input name="amount" type="number" min="0.01" step="0.01" required /></label>
@@ -227,7 +262,7 @@ export function EducationOperations({ api, token, cohortId, canEdit, cohorts }: 
       </form>}
       <div className="educationCostDocuments">{data?.costs.items.map((item) => <article key={item.id}>
         <header><strong>{item.category} / {item.detail}</strong><b>{money(item.amount)}</b></header>
-        <p>{item.occurred_on}{item.vendor ? ` · ${item.vendor}` : ""}{item.document_no ? ` · 单据 ${item.document_no}` : ""}</p>
+        <p>发生 {item.occurred_on} · 结束 {item.ended_on || item.occurred_on}{item.vendor ? ` · ${item.vendor}` : ""}{item.document_no ? ` · 单据 ${item.document_no}` : ""}</p>
         <p>本期已分摊 {money(item.allocated_amount)} · {item.allocations.some((allocation) => allocation.student_id) ? `${item.allocations.length}名学员` : "班期公共成本"}</p>
         {item.source_ref && <p className="educationHint">凭证：{item.source_ref}</p>}
         {canEdit && <button type="button" disabled={!!busy} onClick={() => void loadCostForEdit(item.id)}>{busy === `cost-load-${item.id}` ? "加载中…" : "修正单据与分摊"}</button>}
@@ -237,6 +272,7 @@ export function EducationOperations({ api, token, cohortId, canEdit, cohorts }: 
         {!editingCost.can_edit && <p className="educationError">该单据包含当前账号不可管理的班期分摊，请由L5管理修正。</p>}
         <form className="educationForm" onSubmit={(event) => void updateCost(event)}>
           <label>发生日期<input name="occurred_on" type="date" defaultValue={editingCost.occurred_on} required disabled={!editingCost.can_edit} /></label>
+          <label>结束日期<input name="ended_on" type="date" defaultValue={editingCost.ended_on || editingCost.occurred_on} required disabled={!editingCost.can_edit} /></label>
           <label>成本分类<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value)} disabled={!editingCost.can_edit}>{Object.keys(costDetails).map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>成本明细<select name="detail" key={editCategory} defaultValue={editingCost.category === editCategory ? editingCost.detail : costDetails[editCategory][0]} disabled={!editingCost.can_edit}>{costDetails[editCategory].map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>金额<input name="amount" type="number" min="0.01" step="0.01" defaultValue={editingCost.amount} required disabled={!editingCost.can_edit} /></label>
@@ -260,9 +296,9 @@ export function EducationOperations({ api, token, cohortId, canEdit, cohorts }: 
       {!data?.costs.items.length && <p className="educationHint">尚未登记结构化成本单据。原有“公共收支”仍保留，不会被自动重复迁移。</p>}
     </details>
 
-    {data?.can_view_logs && <details className="educationOperationSection" open>
-      <summary>教学与生活每日记录</summary>
-      {!!data.missing_log_days.length && <div className="educationMissingLogs" role="status"><strong>缺报提醒：{data.missing_log_days.length}天</strong><span>{data.missing_log_days.slice(0, 8).join("、")}{data.missing_log_days.length > 8 ? "…" : ""}</span></div>}
+    {data?.can_view_logs && <details className="educationOperationSection">
+      <summary>补充记录与异常事项（可选）</summary>
+      <div className="educationPurposeNote"><strong>这里做什么？</strong><span>上方“6＋1教学日历”保存每一天的完整教学日报。这里只用于同一天由不同老师追加单项教学、考勤、生活管理或异常事件，一天可以多条；普通日报不需要重复填写。</span></div>
       {canEdit && <form className="educationForm" onSubmit={(event) => void createLog(event)}>
         <label>记录日期<input name="log_date" type="date" defaultValue={today()} required /></label>
         <label>记录人员<select name="staff_id" required defaultValue=""><option value="" disabled>选择在册人员</option>{staff.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}</select></label>

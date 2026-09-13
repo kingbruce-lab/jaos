@@ -199,7 +199,11 @@ export function EducationEnrollment({ api, token, cohortId, start, period, canEd
     {options && <>
       <details className="educationRoster" open><summary>教师 / 助教人员名册（{staff.filter((item) => item.active !== false).length}） · 可连续添加</summary>
         <p className="educationHint">添加成功后录入区保持展开，可直接继续添加下一位。移除不删除历史费用、评估和学员师资记录，也不影响登录账号。</p>
-        {staff.filter((item) => item.active !== false).map((item) => <p key={item.id} className="educationRosterPerson"><span>{item.name}（{item.role}）{item.note ? ` · ${item.note}` : ""}</span>{canEdit && <button type="button" disabled={busy} onClick={() => void removeStaff(item)}>移除人员</button>}</p>)}
+        <div className="educationRosterGrid">{staff.filter((item) => item.active !== false).map((item) => <article key={item.id} className="educationRosterPerson">
+          <span className="educationRosterAvatar" aria-hidden="true">{item.name.slice(0, 1)}</span>
+          <span className="educationRosterIdentity"><strong>{item.name}</strong><small>{item.role}</small>{item.note && <em>{item.note}</em>}</span>
+          {canEdit && <button type="button" disabled={busy} onClick={() => void removeStaff(item)}>移除</button>}
+        </article>)}</div>
         {!staff.some((item) => item.active !== false) && <p>暂无在册人员；此名册不创建登录账号。</p>}
         {canEdit && <form className="educationForm educationStaffQuickAdd" onSubmit={(e) => void addStaff(e)}><label>人员姓名<input name="name" required maxLength={80} autoComplete="off" /></label><label>人员类型<select name="role" value={staffRole || options.staff_roles[0]} onChange={(event) => setStaffRole(event.target.value)}>{options.staff_roles.map((role) => <option key={role}>{role}</option>)}</select></label><label>人员备注{(staffRole || options.staff_roles[0]) === "其他教师" ? "（必填）" : "（选填）"}<input name="note" required={(staffRole || options.staff_roles[0]) === "其他教师"} maxLength={500} placeholder="其他教师请注明类型或职责" /></label><button className="primaryButton" disabled={busy}>{busy ? "添加中…" : "添加并继续下一位"}</button></form>}
       </details>

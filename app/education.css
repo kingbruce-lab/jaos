@@ -14,6 +14,8 @@
 .educationForm label { display: grid; gap: 7px; color: #52667a; font-size: 13px; min-width: 0; }
 .educationForm input, .educationForm select, .educationForm textarea { width: 100%; box-sizing: border-box; padding: 11px; border: 1px solid #d9e3eb; border-radius: 8px; background: #fff; color: #172c3e; font: inherit; }
 .educationForm textarea { min-height: 75px; resize: vertical; }
+.educationWorkspace input[type="date"], .educationWorkspace input[type="month"] { min-height: 54px; font-size: 16px; padding: 12px 14px; }
+.educationWorkspace input[type="date"]::-webkit-calendar-picker-indicator, .educationWorkspace input[type="month"]::-webkit-calendar-picker-indicator { width: 25px; height: 25px; padding: 5px; cursor: pointer; }
 .educationWide { grid-column: 1 / -1; }
 .educationCohortList { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,330px),1fr)); gap: 12px; margin: 14px 0; }
 .educationCohortList button { display: grid; gap: 9px; border: 1px solid #dce5ed; background: #fff; border-radius: 12px; padding: 18px; text-align: left; cursor: pointer; color: #536a7d; overflow-wrap: anywhere; }
@@ -56,7 +58,14 @@
   .educationMetrics strong { font-size: 17px; }
   .educationForm { grid-template-columns: 1fr; }
 }
-.educationRosterPerson { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.educationRosterGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap: 12px; margin: 14px 0; }
+.educationRosterPerson { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 14px; border: 1px solid #d8e6f1; border-radius: 14px; background: linear-gradient(145deg,#fff,#f3f8fc); box-shadow: 0 5px 16px rgba(31,78,113,.06); }
+.educationRosterAvatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 13px; background: #1d6598; color: #fff; font-size: 18px; font-weight: 800; }
+.educationRosterIdentity { display: grid; gap: 4px; min-width: 0; }
+.educationRosterIdentity strong { color: #153b57; font-size: 15px; }
+.educationRosterIdentity small { width: max-content; max-width: 100%; padding: 3px 8px; border-radius: 999px; background: #e5f1fa; color: #23628f; overflow-wrap: anywhere; }
+.educationRosterIdentity em { color: #6b7e90; font-size: 12px; font-style: normal; overflow-wrap: anywhere; }
+.educationRosterPerson button { padding: 7px 10px; border: 1px solid #edc5cb; border-radius: 8px; background: #fff7f8; color: #a72a3b; cursor: pointer; }
 .educationCohortDelete { border: 1px solid #efb4bd; background: #fff7f8; border-radius: 12px; padding: 16px; margin: 16px 0; }
 .educationCohortDelete > summary { color: #b32137; }
 .educationLedger { display: grid; gap: 18px; }
@@ -92,10 +101,23 @@
 .educationOperationSummary { display: flex; flex-wrap: wrap; gap: 9px; margin: 14px 0; }
 .educationOperationSummary span { padding: 7px 11px; border-radius: 999px; background: #eaf3fb; color: #24567f; font-weight: 700; }
 .educationCalendarGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(245px,1fr)); gap: 11px; margin-top: 16px; }
-.educationCalendarDay { display: grid; gap: 7px; padding: 12px; border: 1px solid #d8e2ec; border-left: 4px solid #2563eb; border-radius: 12px; background: #fff; }
+.educationCalendarDay { display: grid; gap: 7px; padding: 14px; border: 1px solid #d8e2ec; border-left: 4px solid #2563eb; border-radius: 12px; background: #fff; color: #23435c; text-align: left; cursor: pointer; font: inherit; }
 .educationCalendarDay.practice { border-left-color: #14936f; }
 .educationCalendarDay.rest { border-left-color: #94a3b8; }
-.educationCalendarDay input, .educationCalendarDay select { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #cbd5e1; border-radius: 8px; }
+.educationCalendarDay:hover, .educationCalendarDay.selected { border-color: #2563eb; background: #eef6ff; box-shadow: 0 7px 18px rgba(37,99,235,.1); transform: translateY(-1px); }
+.educationCalendarDay span { width: max-content; padding: 3px 8px; border-radius: 999px; background: #e7efff; color: #2457a4; font-size: 12px; }
+.educationCalendarDay.practice span { background: #e4f7f0; color: #147458; }
+.educationCalendarDay.rest span { background: #eef1f4; color: #5e6c7a; }
+.educationCalendarDay b { overflow-wrap: anywhere; }
+.educationCalendarDay small { color: #667b8f; }
+.educationDayEditor { margin-top: 18px; padding: 20px; border: 1px solid #9fc2df; border-radius: 16px; background: #fff; box-shadow: 0 14px 32px rgba(24,75,112,.11); }
+.educationDayEditor > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid #dbe8f1; }
+.educationDayEditor h4 { margin: 4px 0 0; color: #153b61; font-size: 21px; }
+.educationDayEditor header span { color: #2870a4; font-weight: 700; }
+.educationDayEditor header button { padding: 8px 13px; border: 1px solid #d6e2eb; border-radius: 8px; background: #f7fafc; cursor: pointer; }
+.educationDayEditor textarea { min-height: 112px; line-height: 1.65; }
+.educationPurposeNote { display: grid; gap: 6px; margin: 14px 0; padding: 14px 16px; border-left: 4px solid #2873a8; border-radius: 10px; background: #edf6fc; color: #536d82; line-height: 1.65; }
+.educationPurposeNote strong { color: #174f78; }
 .educationCostDocuments, .educationDailyLogs { display: grid; gap: 10px; margin-top: 16px; }
 .educationCostDocuments article, .educationDailyLogs article { padding: 14px; border: 1px solid #dbe4ee; border-radius: 12px; background: #fff; }
 .educationCostDocuments article header, .educationDailyLogs article header { display: flex; justify-content: space-between; gap: 16px; }
@@ -111,4 +133,6 @@
   .educationCustomAllocationRow { grid-template-columns: 1fr; }
   .educationAssignmentRow { grid-template-columns: 1fr; }
   .educationCostDocuments article header, .educationDailyLogs article header { display: grid; gap: 5px; }
+  .educationRosterPerson { grid-template-columns: 42px minmax(0,1fr); }
+  .educationRosterPerson button { grid-column: 1 / -1; }
 }

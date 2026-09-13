@@ -10,7 +10,7 @@ import { EducationOperations } from "./education-operations";
 type Api = <T>(path: string, options?: RequestInit, token?: string) => Promise<T>;
 type Summary = { cohort_count: number; student_count: number; expected_income: string; income: string; expense: string; net: string };
 type Cohort = { id: string; name: string; start_date: string; end_date: string; course_period?: string; enrollment_count?: number; effective_student_count?: number; student_count: number; unit_price: string; notes: string; version: number; owner_name: string; expected_income: string; income: string; expense: string; net: string };
-type Entry = { id: string; direction: "income" | "expense"; amount: string; occurred_on: string; purpose: string; version: number; category?: string; detail?: string; staff_id?: string | null };
+type Entry = { id: string; direction: "income" | "expense"; amount: string; occurred_on: string; ended_on: string; purpose: string; version: number; category?: string; detail?: string; staff_id?: string | null };
 type Registry = { items: Cohort[]; summary: Summary; enrollment_summary?: { receivable: string; received: string; arrears: string }; has_more: boolean; can_edit: boolean; can_delete?: boolean; scope: string };
 const money = (value: string) => Number(value).toLocaleString("zh-CN", { style: "currency", currency: "CNY" });
 const today = () => new Date().toLocaleDateString("sv-SE");
@@ -31,6 +31,7 @@ function EntryFields({ entry }: { entry?: Entry }) {
     <label>收支方向<select name="direction" defaultValue={entry?.direction || "income"}><option value="income">收入</option><option value="expense">支出</option></select></label>
     <label>金额（元）<input name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required defaultValue={entry?.amount} /></label>
     <label>发生日期<input name="occurred_on" type="date" required defaultValue={entry?.occurred_on || today()} /></label>
+    <label>结束日期<input name="ended_on" type="date" required defaultValue={entry?.ended_on || entry?.occurred_on || today()} /></label>
     <label className="educationWide">收支用途<input name="purpose" required maxLength={500} defaultValue={entry?.purpose} placeholder="例如：本期学费、住宿、餐饮、教练课酬" /></label>
   </>;
 }
@@ -199,7 +200,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
         <p className="educationHint">修正会保留操作记录，不会重复累计。</p>
         {!detail.entries.length && <p>尚未登记收支。</p>}
         <div className="educationEntries">{detail.entries.map((entry) => <article key={entry.id}>
-          <div><strong>{entry.direction === "income" ? "收入" : "支出"} {money(entry.amount)}</strong><span>{entry.occurred_on} · {entry.category || "其他"} / {entry.detail || "其他"} · {entry.purpose}</span></div>
+          <div><strong>{entry.direction === "income" ? "收入" : "支出"} {money(entry.amount)}</strong><span>发生 {entry.occurred_on} · 结束 {entry.ended_on || entry.occurred_on} · {entry.category || "其他"} / {entry.detail || "其他"} · {entry.purpose}</span></div>
           {registry.can_edit && <button type="button" disabled={!!busy} onClick={() => setEditing(entry)}>修正</button>}
         </article>)}</div>
       </section>}

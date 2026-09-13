@@ -41,7 +41,13 @@ test("education phase two provides 6+1 calendar, source costs, daily logs and fi
   assert.match(operations, /6＋1 教学日历/);
   assert.match(operations, /原始成本只记一次/);
   assert.match(operations, /均摊至本期在册学员/);
-  assert.match(operations, /教学与生活每日记录/);
+  assert.match(operations, /点击填写完整日报/);
+  assert.match(operations, /课程目标/);
+  assert.match(operations, /学员表现与进步/);
+  assert.match(operations, /补充记录与异常事项（可选）/);
+  assert.match(operations, /这里只用于同一天由不同老师追加/);
+  assert.match(operations, /name="ended_on"/);
+  assert.match(education, /name="ended_on"/);
   assert.match(page, /星曜教培同步/);
 });
 

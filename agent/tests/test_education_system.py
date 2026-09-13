@@ -94,6 +94,7 @@ def test_monthly_cohorts_accumulate_and_corrections_replace_not_duplicate(setup)
     income = entry_payload()
     saved = client.post(path + "/entries", json=income)
     assert saved.status_code == 200
+    assert client.get(path).json()["entries"][0]["ended_on"] == "2026-10-01"
     assert client.post(path + "/entries", json=income).json() == saved.json()
     assert client.post(path + "/entries", json={**income, "amount": "999"}).status_code == 409
     assert client.post(path + "/entries", json=entry_payload(direction="expense", amount="1234.56", purpose="住宿费")).status_code == 200
@@ -169,6 +170,18 @@ def test_invalid_entries_rejected(setup, overrides):
     cohort_id = client.post("/v1/pm/education/cohorts", json=cohort_payload()).json()["id"]
     assert client.post(f"/v1/pm/education/cohorts/{cohort_id}/entries", json=entry_payload(**overrides)).status_code == 422
     assert db.scalar(select(func.count(EducationCashEntry.id))) == 0
+
+
+def test_entry_period_has_end_date_and_rejects_reverse_range(setup):
+    client, _, _, _ = setup
+    cohort_id = client.post("/v1/pm/education/cohorts", json=cohort_payload()).json()["id"]
+    path = f"/v1/pm/education/cohorts/{cohort_id}/entries"
+    saved = client.post(path, json=entry_payload(occurred_on="2026-10-02", ended_on="2026-10-08"))
+    assert saved.status_code == 200, saved.text
+    detail = client.get(f"/v1/pm/education/cohorts/{cohort_id}").json()
+    assert detail["entries"][0]["ended_on"] == "2026-10-08"
+    rejected = client.post(path, json=entry_payload(occurred_on="2026-10-08", ended_on="2026-10-02"))
+    assert rejected.status_code == 422
 
 
 def test_month_duration_boundaries():

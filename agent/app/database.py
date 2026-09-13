@@ -44,6 +44,7 @@ ADDITIVE_COLUMNS = {
         "category": "VARCHAR(40) NOT NULL DEFAULT '其他'",
         "detail": "VARCHAR(80) NOT NULL DEFAULT '其他'",
         "staff_id": "VARCHAR(36)",
+        "ended_on": "DATE",
     },
     "education_students": {
         "student_no": "VARCHAR(32)",
@@ -58,6 +59,12 @@ ADDITIVE_COLUMNS = {
         "current_rank": "VARCHAR(100) NOT NULL DEFAULT ''",
         "learning_status": "VARCHAR(24) NOT NULL DEFAULT '已报名'",
         "staff_assignments_json": "TEXT NOT NULL DEFAULT '[]'",
+    },
+    "education_cost_documents": {
+        "ended_on": "DATE",
+    },
+    "education_schedule_days": {
+        "report_json": "TEXT NOT NULL DEFAULT '{}'",
     },
     "users": {
         "organization_role": "VARCHAR(40)",

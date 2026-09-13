@@ -27,6 +27,10 @@ def test_schedule_generation_is_idempotent_and_manual_changes_survive(setup):
     client, db, *_ = setup
     cohort_id = _cohort(client)
     path = f"/v1/pm/education/cohorts/{cohort_id}"
+    student_id = _student(client, cohort_id, name="日报学员")
+    staff_id = client.post(path + "/staff", json={
+        "request_id": str(uuid4()), "name": "日报教师", "role": "王者荣耀教师",
+    }).json()["id"]
     generated = client.post(path + "/schedule/generate")
     assert generated.status_code == 200
     assert generated.json() == {"created": 29, "total_days": 29}
@@ -37,12 +41,18 @@ def test_schedule_generation_is_idempotent_and_manual_changes_survive(setup):
     first = operations["schedule"]["days"][0]
     changed = client.patch(path + f"/schedule/{first['id']}", json={
         "day_type": "rest", "title": "入营调整", "notes": "办理入住", "version": first["version"],
+        "report": {"instructor_ids": [staff_id], "student_ids": [student_id],
+                   "attendance": "全员到齐", "lesson_objectives": "完成入学基线",
+                   "lesson_content": "操作测试", "student_performance": "完成测试"},
     })
     assert changed.status_code == 200
     assert client.post(path + "/schedule/generate").json() == {"created": 0, "total_days": 29}
     refreshed = client.get(path + "/operations").json()["schedule"]
     assert refreshed["days"][0]["day_type"] == "rest"
     assert refreshed["days"][0]["title"] == "入营调整"
+    assert refreshed["days"][0]["report"]["instructor_ids"] == [staff_id]
+    assert refreshed["days"][0]["report"]["student_ids"] == [student_id]
+    assert refreshed["days"][0]["report"]["lesson_content"] == "操作测试"
     assert db.scalar(select(func.count(EducationScheduleDay.id))) == 29
 
 
@@ -56,6 +66,7 @@ def test_cost_document_allocates_exact_cents_without_double_counting(setup):
     payload = {
         "request_id": request_id,
         "occurred_on": "2026-10-03",
+        "ended_on": "2026-10-09",
         "category": "饭费",
         "detail": "餐费套餐",
         "amount": "100.01",
@@ -73,6 +84,7 @@ def test_cost_document_allocates_exact_cents_without_double_counting(setup):
 
     operations = client.get(path + "/operations").json()
     assert operations["costs"]["source_total"] == "100.01"
+    assert operations["costs"]["items"][0]["ended_on"] == "2026-10-09"
     assert operations["costs"]["allocated_to_cohort"] == "100.01"
     assert sorted(item["amount"] for item in operations["costs"]["items"][0]["allocations"]) == ["50.00", "50.01"]
     assert client.get(path).json()["expense"] == "1920.51"
@@ -107,6 +119,13 @@ def test_daily_logs_are_scoped_and_hidden_from_finance(setup):
     operations = client.get(path + "/operations").json()
     assert operations["logs"][0]["staff_name"] == "班主任甲"
     assert operations["logs"][0]["student_ids"] == [student_id]
+    schedule_day = operations["schedule"]["days"][0]
+    report_saved = client.patch(path + f"/schedule/{schedule_day['id']}", json={
+        "day_type": schedule_day["day_type"], "title": schedule_day["title"], "notes": "",
+        "report": {"instructor_ids": [staff["id"]], "student_ids": [student_id],
+                   "lesson_content": "仅教学与管理可见的日报正文"}, "version": schedule_day["version"],
+    })
+    assert report_saved.status_code == 200, report_saved.text
     updated = client.patch(path + f"/daily-logs/{result.json()['id']}", json={
         "log_date": "2026-10-03", "staff_id": staff["id"], "log_type": "异常事件",
         "summary": "学员设备临时故障，已更换备用设备。", "student_ids": [student_id],
@@ -124,6 +143,7 @@ def test_daily_logs_are_scoped_and_hidden_from_finance(setup):
     assert finance_view.status_code == 200
     assert finance_view.json()["can_view_logs"] is False
     assert finance_view.json()["logs"] == []
+    assert finance_view.json()["schedule"]["days"][0]["report"]["lesson_content"] == ""
     assert client.post(path + "/daily-logs", json={**payload, "request_id": str(uuid4())}).status_code == 403
 
     actor[0] = users["other"]
@@ -153,6 +173,9 @@ def test_cost_and_log_validation(setup):
         "detail": "课程学费", "amount": "100", "allocation_mode": "cohort",
     }
     assert client.post(path + "/cost-documents", json=invalid_cost).status_code == 422
+    invalid_period = {**invalid_cost, "request_id": str(uuid4()), "category": "饭费", "detail": "餐费套餐",
+                      "occurred_on": "2026-10-10", "ended_on": "2026-10-09"}
+    assert client.post(path + "/cost-documents", json=invalid_period).status_code == 422
     assert client.post(path + "/daily-logs", json={
         "request_id": str(uuid4()), "log_date": "2026-09-01", "staff_id": str(uuid4()),
         "log_type": "教学记录", "summary": "日期越界",

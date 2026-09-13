@@ -8,7 +8,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import case, func, literal, select, union_all
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -63,10 +63,17 @@ class EntryFields(BaseModel):
     direction: Literal["income", "expense"]
     amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     occurred_on: date
+    ended_on: date | None = None
     purpose: str = Field(min_length=1, max_length=500)
     category: str = "其他"
     detail: str = "其他"
     staff_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def valid_period(self):
+        if self.ended_on and self.ended_on < self.occurred_on:
+            raise ValueError("结束日期不能早于发生日期")
+        return self
 
 
 class EntryCreate(EntryFields):
@@ -147,6 +154,7 @@ def _cohort_data(row: EducationCohort) -> dict:
 def _entry_data(row: EducationCashEntry) -> dict:
     return {"id": row.id, "cohort_id": row.cohort_id, "direction": row.direction,
             "amount": _money(row.amount), "occurred_on": row.occurred_on.isoformat(),
+            "ended_on": (row.ended_on or row.occurred_on).isoformat(),
             "purpose": row.purpose, "category": row.category, "detail": row.detail, "staff_id": row.staff_id,
             "version": row.version, "created_by_user_id": row.created_by_user_id}
 
@@ -163,7 +171,9 @@ def _entry_fields(db: Session, cohort_id: str, payload: EntryFields, previous=No
             raise HTTPException(422, "该人员已移除，请选择在册人员")
     elif staff_id:
         raise HTTPException(422, "仅人员成本可关联教师或助教")
-    return {**payload.model_dump(exclude={"request_id", "version", "staff_id"}), "staff_id": staff_id}
+    values = payload.model_dump(exclude={"request_id", "version", "staff_id"})
+    values["ended_on"] = payload.ended_on or payload.occurred_on
+    return {**values, "staff_id": staff_id}
 
 
 def _totals(db: Session, cohort_ids):

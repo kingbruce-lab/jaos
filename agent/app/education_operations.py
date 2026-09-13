@@ -8,7 +8,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
@@ -37,6 +37,7 @@ class CostDocumentCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     request_id: UUID
     occurred_on: date
+    ended_on: date | None = None
     category: str = Field(min_length=1, max_length=40)
     detail: str = Field(min_length=1, max_length=80)
     amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
@@ -54,6 +55,12 @@ class CostDocumentCreate(BaseModel):
         if value is not None and value.day != 1:
             raise ValueError("分摊月份必须选择当月第一天")
         return value
+
+    @model_validator(mode="after")
+    def valid_period(self):
+        if self.ended_on and self.ended_on < self.occurred_on:
+            raise ValueError("结束日期不能早于发生日期")
+        return self
 
 
 class CostAllocationInput(BaseModel):
@@ -77,11 +84,26 @@ class CostDocumentUpdate(CostDocumentCreate):
     version: int = Field(ge=1)
 
 
+class ScheduleReport(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    instructor_ids: list[UUID] = Field(default_factory=list, max_length=30)
+    student_ids: list[UUID] = Field(default_factory=list, max_length=200)
+    attendance: str = Field(default="", max_length=2000)
+    lesson_objectives: str = Field(default="", max_length=3000)
+    lesson_content: str = Field(default="", max_length=5000)
+    student_performance: str = Field(default="", max_length=5000)
+    issues_and_adjustments: str = Field(default="", max_length=5000)
+    homework_or_practice: str = Field(default="", max_length=3000)
+    parent_communication: str = Field(default="", max_length=3000)
+    next_plan: str = Field(default="", max_length=3000)
+
+
 class ScheduleDayUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     day_type: Literal["teaching", "practice", "rest"]
     title: str = Field(default="", max_length=160)
     notes: str = Field(default="", max_length=2000)
+    report: ScheduleReport | None = None
     version: int = Field(ge=1)
 
 
@@ -116,6 +138,7 @@ def _cost_data(row: EducationCostDocument, allocations: list[dict]) -> dict:
     return {
         "id": row.id,
         "occurred_on": row.occurred_on.isoformat(),
+        "ended_on": (row.ended_on or row.occurred_on).isoformat(),
         "category": row.category,
         "detail": row.detail,
         "amount": _money(row.amount),
@@ -152,7 +175,11 @@ def _cost_allocations(db: Session, document_id: str, cohort_ids: set[str] | None
     } for allocation, student_name, cohort_name in db.execute(query).all()]
 
 
-def _day_data(row: EducationScheduleDay) -> dict:
+def _day_data(row: EducationScheduleDay, include_report: bool = True) -> dict:
+    try:
+        report = json.loads(row.report_json or "{}") if include_report else {}
+    except (TypeError, json.JSONDecodeError):
+        report = {}
     return {
         "id": row.id,
         "calendar_date": row.calendar_date.isoformat(),
@@ -160,8 +187,44 @@ def _day_data(row: EducationScheduleDay) -> dict:
         "day_type": row.day_type,
         "title": row.title,
         "notes": row.notes,
+        "report": {
+            "instructor_ids": report.get("instructor_ids", []),
+            "student_ids": report.get("student_ids", []),
+            "attendance": report.get("attendance", ""),
+            "lesson_objectives": report.get("lesson_objectives", ""),
+            "lesson_content": report.get("lesson_content", ""),
+            "student_performance": report.get("student_performance", ""),
+            "issues_and_adjustments": report.get("issues_and_adjustments", ""),
+            "homework_or_practice": report.get("homework_or_practice", ""),
+            "parent_communication": report.get("parent_communication", ""),
+            "next_plan": report.get("next_plan", ""),
+        },
         "version": row.version,
     }
+
+
+def _validate_schedule_report(db: Session, cohort_id: str, report: ScheduleReport) -> dict:
+    instructor_ids = [str(item) for item in dict.fromkeys(report.instructor_ids)]
+    student_ids = [str(item) for item in dict.fromkeys(report.student_ids)]
+    if instructor_ids:
+        valid_staff = set(db.scalars(select(EducationStaff.id).where(
+            EducationStaff.cohort_id == cohort_id,
+            EducationStaff.id.in_(instructor_ids),
+            EducationStaff.active.is_(True),
+        )).all())
+        if valid_staff != set(instructor_ids):
+            raise HTTPException(422, "日报包含不属于本班期的在册教师或助教")
+    if student_ids:
+        valid_students = set(db.scalars(select(EducationStudent.id).where(
+            EducationStudent.cohort_id == cohort_id,
+            EducationStudent.id.in_(student_ids),
+        )).all())
+        if valid_students != set(student_ids):
+            raise HTTPException(422, "日报包含不属于本班期的学员")
+    result = report.model_dump(mode="json")
+    result["instructor_ids"] = instructor_ids
+    result["student_ids"] = student_ids
+    return result
 
 
 def _log_data(row: EducationDailyLog, staff_name: str, staff_role: str) -> dict:
@@ -306,18 +369,20 @@ def operations(
                 .limit(100)
             ).all()
         ]
-        reported_dates = set(db.scalars(select(EducationDailyLog.log_date).where(EducationDailyLog.cohort_id == cohort.id)).all())
         cutoff = min(date.today(), cohort.end_date)
         missing_log_days = [
             day.calendar_date.isoformat() for day in days
-            if day.calendar_date <= cutoff and day.day_type != "rest" and day.calendar_date not in reported_dates
+            if day.calendar_date <= cutoff and day.day_type != "rest"
+            and not any(_day_data(day)["report"].get(key) for key in (
+                "attendance", "lesson_objectives", "lesson_content", "student_performance",
+            ))
         ]
 
     costs = [_cost_data(document, allocations) for document, allocations in grouped.values()]
     return {
         "schedule": {
             "generated": bool(days),
-            "days": [_day_data(day) for day in days],
+            "days": [_day_data(day, include_report=can_view_logs) for day in days],
             "summary": {
                 "teaching": sum(day.day_type == "teaching" for day in days),
                 "practice": sum(day.day_type == "practice" for day in days),
@@ -376,6 +441,8 @@ def update_schedule_day(cohort_id: str, day_id: str, payload: ScheduleDayUpdate,
     row.day_type = payload.day_type
     row.title = payload.title
     row.notes = payload.notes
+    if payload.report is not None:
+        row.report_json = json.dumps(_validate_schedule_report(db, cohort.id, payload.report), ensure_ascii=False)
     row.updated_by_user_id = user.id
     row.version += 1
     _audit(db, user, "education_schedule_day_updated", before, _day_data(row))
@@ -457,6 +524,7 @@ def create_cost_document(cohort_id: str, payload: CostDocumentCreate,
             existing.entity_id == cohort.entity_id
             and existing.created_by_user_id == user.id
             and existing.occurred_on == payload.occurred_on
+            and (existing.ended_on or existing.occurred_on) == (payload.ended_on or payload.occurred_on)
             and existing.category == payload.category
             and existing.detail == payload.detail
             and existing.amount == payload.amount
@@ -477,6 +545,7 @@ def create_cost_document(cohort_id: str, payload: CostDocumentCreate,
 
     document = EducationCostDocument(
         id=str(payload.request_id), entity_id=cohort.entity_id, occurred_on=payload.occurred_on,
+        ended_on=payload.ended_on or payload.occurred_on,
         category=payload.category, detail=payload.detail, amount=payload.amount,
         vendor=payload.vendor, document_no=payload.document_no, source_ref=payload.source_ref,
         note=payload.note, created_by_user_id=user.id, version=1, active=True,
@@ -561,6 +630,7 @@ def update_cost_document(cohort_id: str, document_id: str, payload: CostDocument
         )),
     }
     document.occurred_on = payload.occurred_on
+    document.ended_on = payload.ended_on or payload.occurred_on
     document.category = payload.category
     document.detail = payload.detail
     document.amount = payload.amount
