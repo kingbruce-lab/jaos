@@ -217,6 +217,13 @@ def list_cohorts(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=1
         func.coalesce(func.sum(enrolled.c.arrears), 0),
     ).select_from(scoped).outerjoin(totals, totals.c.cohort_id == scoped.c.id)
         .outerjoin(enrolled, enrolled.c.cohort_id == scoped.c.id)).one()
+    student_cost = db.scalar(select(func.coalesce(func.sum(EducationStudent.cost), 0))
+        .where(EducationStudent.cohort_id.in_(select(scoped.c.id)))) or Decimal(0)
+    cash_expense = db.scalar(select(func.coalesce(func.sum(EducationCashEntry.amount), 0))
+        .where(EducationCashEntry.cohort_id.in_(select(scoped.c.id)), EducationCashEntry.direction == "expense")) or Decimal(0)
+    allocated_cost = db.scalar(select(func.coalesce(func.sum(EducationCostAllocation.amount), 0))
+        .join(EducationCostDocument, EducationCostDocument.id == EducationCostAllocation.cost_document_id)
+        .where(EducationCostAllocation.cohort_id.in_(select(scoped.c.id)), EducationCostDocument.active.is_(True))) or Decimal(0)
     rows = db.execute(select(EducationCohort, User.display_name, totals.c.income, totals.c.expense, enrolled.c.count, enrolled.c.receivable)
         .join(User, User.id == EducationCohort.owner_user_id)
         .outerjoin(totals, totals.c.cohort_id == EducationCohort.id)
@@ -229,7 +236,9 @@ def list_cohorts(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=1
                        "income": _money(income), "expense": _money(expense),
                        "net": _money((income or 0) - (expense or 0))} for row, owner, income, expense, count, due in rows],
             "summary": {"cohort_count": summary[0], "student_count": summary[1], "expected_income": _money(summary[2]),
-                        "income": _money(summary[3]), "expense": _money(summary[4]), "net": _money(summary[3] - summary[4])},
+                        "income": _money(summary[3]), "student_cost": _money(student_cost),
+                        "operating_expense": _money(cash_expense + allocated_cost),
+                        "expense": _money(summary[4]), "net": _money(summary[3] - summary[4])},
             "enrollment_summary": {"receivable": _money(summary[5]), "received": _money(summary[6]), "arrears": _money(summary[7])},
             "has_more": offset + len(rows) < summary[0], "can_edit": user.organization_role == "education" or _management(user),
             "can_delete": _reviewer_slot(user) == "founder",

@@ -1,27 +1,35 @@
 """Education cost allocation, 6+1 calendars and auditable daily operations logs."""
 from __future__ import annotations
 
+import hashlib
 import json
+import re
+import secrets
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_DOWN
+from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .auth import current_user
+from .config import settings
 from .database import get_db
 from .education_catalog import FEE_DETAILS
 from .education_system import _audit, _cohort, _commit, _money, _scope
 from .models import (
     EducationCostAllocation,
+    EducationCostAttachment,
     EducationCostDocument,
     EducationCohort,
     EducationDailyLog,
     EducationScheduleDay,
+    EducationMonthlySummary,
     EducationStaff,
     EducationStudent,
     User,
@@ -31,6 +39,8 @@ router = APIRouter(prefix="/v1/pm/education", tags=["education-operations"])
 
 COST_CATEGORIES = {key for key in FEE_DETAILS if key != "学费"}
 LOG_TYPES = {"教学记录", "自主练习", "考勤记录", "生活管理", "异常事件"}
+ATTACHMENT_SUFFIXES = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".zip"}
+ATTACHMENT_MAX_BYTES = 200 * 1024 * 1024
 
 
 class CostDocumentCreate(BaseModel):
@@ -96,6 +106,10 @@ class ScheduleReport(BaseModel):
     homework_or_practice: str = Field(default="", max_length=3000)
     parent_communication: str = Field(default="", max_length=3000)
     next_plan: str = Field(default="", max_length=3000)
+    special_achievement: bool = False
+    special_achievement_note: str = Field(default="", max_length=2000)
+    problem_flag: bool = False
+    problem_note: str = Field(default="", max_length=2000)
 
 
 class ScheduleDayUpdate(BaseModel):
@@ -105,6 +119,15 @@ class ScheduleDayUpdate(BaseModel):
     notes: str = Field(default="", max_length=2000)
     report: ScheduleReport | None = None
     version: int = Field(ge=1)
+
+
+class MonthlySummaryUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    summary: str = Field(default="", max_length=8000)
+    achievements: str = Field(default="", max_length=5000)
+    problems: str = Field(default="", max_length=5000)
+    next_month_plan: str = Field(default="", max_length=5000)
+    version: int = Field(ge=0)
 
 
 class DailyLogCreate(BaseModel):
@@ -133,7 +156,17 @@ def _month(value: date) -> date:
     return value.replace(day=1)
 
 
-def _cost_data(row: EducationCostDocument, allocations: list[dict]) -> dict:
+def _attachment_data(row: EducationCostAttachment) -> dict:
+    return {
+        "id": row.id,
+        "filename": row.filename,
+        "size_bytes": row.size_bytes,
+        "sha256": row.sha256,
+        "created_at": row.created_at,
+    }
+
+
+def _cost_data(row: EducationCostDocument, allocations: list[dict], attachments: list[EducationCostAttachment] | None = None) -> dict:
     allocated = sum((Decimal(item["amount"]) for item in allocations), Decimal("0"))
     return {
         "id": row.id,
@@ -150,6 +183,7 @@ def _cost_data(row: EducationCostDocument, allocations: list[dict]) -> dict:
         "note": row.note,
         "version": row.version,
         "allocations": allocations,
+        "attachments": [_attachment_data(item) for item in (attachments or [])],
     }
 
 
@@ -198,6 +232,10 @@ def _day_data(row: EducationScheduleDay, include_report: bool = True) -> dict:
             "homework_or_practice": report.get("homework_or_practice", ""),
             "parent_communication": report.get("parent_communication", ""),
             "next_plan": report.get("next_plan", ""),
+            "special_achievement": bool(report.get("special_achievement", False)),
+            "special_achievement_note": report.get("special_achievement_note", ""),
+            "problem_flag": bool(report.get("problem_flag", False)),
+            "problem_note": report.get("problem_note", ""),
         },
         "version": row.version,
     }
@@ -225,6 +263,51 @@ def _validate_schedule_report(db: Session, cohort_id: str, report: ScheduleRepor
     result["instructor_ids"] = instructor_ids
     result["student_ids"] = student_ids
     return result
+
+
+def _monthly_summary_data(row: EducationMonthlySummary) -> dict:
+    return {
+        "id": row.id,
+        "month": row.month.strftime("%Y-%m"),
+        "summary": row.summary,
+        "achievements": row.achievements,
+        "problems": row.problems,
+        "next_month_plan": row.next_month_plan,
+        "version": row.version,
+    }
+
+
+def _safe_attachment_name(value: str | None) -> str:
+    name = Path((value or "").replace("\\", "/")).name.strip()
+    name = re.sub(r'[\x00-\x1f<>:"/\\|?*]+', "_", name).strip(" .")
+    suffix = Path(name).suffix.lower()
+    if not name:
+        raise HTTPException(422, "附件文件名无效")
+    if suffix not in ATTACHMENT_SUFFIXES:
+        raise HTTPException(415, "凭证附件仅支持 PDF、图片、Word、Excel 和 ZIP")
+    if len(name) > 180:
+        name = f"{Path(name).stem[:150]}{suffix}"
+    return name
+
+
+def _attachment_root() -> Path:
+    root = (settings.knowledge_root / ".jaos-ledger-files" / "education-costs").resolve()
+    root.relative_to(settings.knowledge_root.resolve())
+    return root
+
+
+def _cost_for_cohort(db: Session, user: User, cohort_id: str, document_id: str, *, write: bool = False):
+    cohort = _cohort(db, user, cohort_id, write=write)
+    document = db.get(EducationCostDocument, document_id)
+    if document is None or not document.active or document.entity_id != cohort.entity_id:
+        raise HTTPException(404, "成本单据不存在")
+    belongs = db.scalar(select(func.count(EducationCostAllocation.id)).where(
+        EducationCostAllocation.cost_document_id == document.id,
+        EducationCostAllocation.cohort_id == cohort.id,
+    ))
+    if not belongs:
+        raise HTTPException(404, "成本单据不属于当前班期")
+    return cohort, document
 
 
 def _log_data(row: EducationDailyLog, staff_name: str, staff_role: str) -> dict:
@@ -322,6 +405,11 @@ def operations(
         .where(EducationScheduleDay.cohort_id == cohort.id)
         .order_by(EducationScheduleDay.calendar_date)
     ).all()
+    monthly_summaries = db.scalars(
+        select(EducationMonthlySummary)
+        .where(EducationMonthlySummary.cohort_id == cohort.id)
+        .order_by(EducationMonthlySummary.month)
+    ).all()
 
     allocation_rows = db.execute(
         select(EducationCostAllocation, EducationCostDocument, EducationStudent.name)
@@ -341,6 +429,12 @@ def operations(
             "amount": _money(allocation.amount),
             "note": allocation.note,
         })
+    attachments_by_document: dict[str, list[EducationCostAttachment]] = {}
+    if grouped:
+        for attachment in db.scalars(select(EducationCostAttachment).where(
+            EducationCostAttachment.cost_document_id.in_(grouped.keys()),
+        ).order_by(EducationCostAttachment.created_at, EducationCostAttachment.id)).all():
+            attachments_by_document.setdefault(attachment.cost_document_id, []).append(attachment)
 
     can_view_logs = user.organization_role != "finance"
     logs: list[dict] = []
@@ -378,11 +472,12 @@ def operations(
             ))
         ]
 
-    costs = [_cost_data(document, allocations) for document, allocations in grouped.values()]
+    costs = [_cost_data(document, allocations, attachments_by_document.get(document.id, [])) for document, allocations in grouped.values()]
     return {
         "schedule": {
             "generated": bool(days),
             "days": [_day_data(day, include_report=can_view_logs) for day in days],
+            "monthly_summaries": [_monthly_summary_data(item) for item in monthly_summaries] if can_view_logs else [],
             "summary": {
                 "teaching": sum(day.day_type == "teaching" for day in days),
                 "practice": sum(day.day_type == "practice" for day in days),
@@ -448,6 +543,42 @@ def update_schedule_day(cohort_id: str, day_id: str, payload: ScheduleDayUpdate,
     _audit(db, user, "education_schedule_day_updated", before, _day_data(row))
     _commit(db)
     return {"id": row.id}
+
+
+@router.put("/cohorts/{cohort_id}/monthly-summaries/{month_value}")
+def update_monthly_summary(cohort_id: str, month_value: str, payload: MonthlySummaryUpdate,
+                           user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    cohort = _cohort(db, user, cohort_id, write=True)
+    try:
+        month = date.fromisoformat(f"{month_value}-01")
+    except ValueError:
+        raise HTTPException(422, "月份格式无效") from None
+    if month < cohort.start_date.replace(day=1) or month > cohort.end_date.replace(day=1):
+        raise HTTPException(422, "月度总结月份必须在本班期内")
+    row = db.scalar(select(EducationMonthlySummary).where(
+        EducationMonthlySummary.cohort_id == cohort.id,
+        EducationMonthlySummary.month == month,
+    ).with_for_update())
+    before = _monthly_summary_data(row) if row else None
+    if row is None:
+        if payload.version != 0:
+            raise HTTPException(409, "月度总结已更新，请刷新后重试")
+        row = EducationMonthlySummary(
+            cohort_id=cohort.id, month=month, updated_by_user_id=user.id, version=1,
+        )
+        db.add(row)
+    else:
+        if row.version != payload.version:
+            raise HTTPException(409, "月度总结已更新，请刷新后重试")
+        row.version += 1
+    row.summary = payload.summary
+    row.achievements = payload.achievements
+    row.problems = payload.problems
+    row.next_month_plan = payload.next_month_plan
+    row.updated_by_user_id = user.id
+    _audit(db, user, "education_monthly_summary_updated", before, _monthly_summary_data(row))
+    _commit(db)
+    return {"id": row.id, "version": row.version}
 
 
 @router.post("/cohorts/{cohort_id}/daily-logs")
@@ -583,7 +714,10 @@ def cost_document_detail(cohort_id: str, document_id: str,
     allocations = _cost_allocations(db, document.id, visible_ids)
     if not allocations:
         raise HTTPException(404, "成本单据不存在或无权查看")
-    result = _cost_data(document, allocations)
+    attachments = db.scalars(select(EducationCostAttachment).where(
+        EducationCostAttachment.cost_document_id == document.id,
+    ).order_by(EducationCostAttachment.created_at, EducationCostAttachment.id)).all()
+    result = _cost_data(document, allocations, attachments)
     same_month = {item["allocation_month"] for item in allocations}
     result.update({
         "allocation_mode": (
@@ -652,3 +786,99 @@ def update_cost_document(cohort_id: str, document_id: str, payload: CostDocument
     })
     _commit(db)
     return {"id": document.id}
+
+
+@router.post("/cohorts/{cohort_id}/cost-documents/{document_id}/attachments")
+async def upload_cost_attachment(cohort_id: str, document_id: str, file: UploadFile = File(...),
+                                 user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    cohort, document = _cost_for_cohort(db, user, cohort_id, document_id, write=True)
+    filename = _safe_attachment_name(file.filename)
+    attachment_id = secrets.token_hex(16)
+    target_dir = (_attachment_root() / cohort.id / document.id).resolve()
+    target_dir.relative_to(_attachment_root())
+    temporary = target_dir / f".{attachment_id}.part"
+    final_path = target_dir / f"{attachment_id}-{filename}"
+    size = 0
+    digest = hashlib.sha256()
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        with temporary.open("wb") as destination:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > min(settings.inbox_max_file_bytes, ATTACHMENT_MAX_BYTES):
+                    raise HTTPException(413, "单个凭证附件不能超过200MB")
+                digest.update(chunk)
+                destination.write(chunk)
+        if size == 0:
+            raise HTTPException(422, "不能上传空附件")
+        temporary.replace(final_path)
+    except HTTPException:
+        temporary.unlink(missing_ok=True)
+        raise
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise HTTPException(503, "凭证附件暂时无法写入NAS") from exc
+    row = EducationCostAttachment(
+        id=attachment_id, cost_document_id=document.id, filename=filename,
+        source_path=str(final_path), size_bytes=size, sha256=digest.hexdigest(),
+        uploaded_by_user_id=user.id,
+    )
+    db.add(row)
+    _audit(db, user, "education_cost_attachment_uploaded", None, {
+        "id": row.id, "cost_document_id": document.id, "filename": filename,
+        "size_bytes": size, "sha256": row.sha256,
+    })
+    try:
+        _commit(db)
+    except Exception:
+        final_path.unlink(missing_ok=True)
+        raise
+    return _attachment_data(row)
+
+
+@router.get("/cohorts/{cohort_id}/cost-documents/{document_id}/attachments/{attachment_id}")
+def download_cost_attachment(cohort_id: str, document_id: str, attachment_id: str,
+                             user: User = Depends(current_user), db: Session = Depends(get_db)):
+    _cost_for_cohort(db, user, cohort_id, document_id)
+    row = db.scalar(select(EducationCostAttachment).where(
+        EducationCostAttachment.id == attachment_id,
+        EducationCostAttachment.cost_document_id == document_id,
+    ))
+    if row is None:
+        raise HTTPException(404, "凭证附件不存在")
+    source = Path(row.source_path).resolve()
+    try:
+        source.relative_to(_attachment_root())
+    except ValueError:
+        raise HTTPException(409, "凭证附件路径异常") from None
+    if not source.is_file():
+        raise HTTPException(404, "凭证附件原文件不存在")
+    return FileResponse(source, filename=row.filename)
+
+
+@router.delete("/cohorts/{cohort_id}/cost-documents/{document_id}/attachments/{attachment_id}")
+def delete_cost_attachment(cohort_id: str, document_id: str, attachment_id: str,
+                           user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
+    _cost_for_cohort(db, user, cohort_id, document_id, write=True)
+    row = db.scalar(select(EducationCostAttachment).where(
+        EducationCostAttachment.id == attachment_id,
+        EducationCostAttachment.cost_document_id == document_id,
+    ).with_for_update())
+    if row is None:
+        raise HTTPException(404, "凭证附件不存在")
+    source = Path(row.source_path).resolve()
+    try:
+        source.relative_to(_attachment_root())
+    except ValueError:
+        raise HTTPException(409, "凭证附件路径异常") from None
+    before = _attachment_data(row)
+    db.delete(row)
+    _audit(db, user, "education_cost_attachment_deleted", before, {
+        "id": row.id, "cost_document_id": document_id,
+    })
+    _commit(db)
+    source.unlink(missing_ok=True)
+    return {"deleted": True}

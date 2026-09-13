@@ -8,7 +8,7 @@ import { EducationLedgerOverview } from "./education-ledger";
 import { EducationOperations } from "./education-operations";
 
 type Api = <T>(path: string, options?: RequestInit, token?: string) => Promise<T>;
-type Summary = { cohort_count: number; student_count: number; expected_income: string; income: string; expense: string; net: string };
+type Summary = { cohort_count: number; student_count: number; expected_income: string; income: string; student_cost: string; operating_expense: string; expense: string; net: string };
 type Cohort = { id: string; name: string; start_date: string; end_date: string; course_period?: string; enrollment_count?: number; effective_student_count?: number; student_count: number; unit_price: string; notes: string; version: number; owner_name: string; expected_income: string; income: string; expense: string; net: string };
 type Entry = { id: string; direction: "income" | "expense"; amount: string; occurred_on: string; ended_on: string; purpose: string; version: number; category?: string; detail?: string; staff_id?: string | null };
 type Registry = { items: Cohort[]; summary: Summary; enrollment_summary?: { receivable: string; received: string; arrears: string }; has_more: boolean; can_edit: boolean; can_delete?: boolean; scope: string };
@@ -26,12 +26,12 @@ function CohortFields({ cohort }: { cohort?: Cohort }) {
   </>;
 }
 
-function EntryFields({ entry }: { entry?: Entry }) {
+function EntryFields({ entry, start, end }: { entry?: Entry; start: string; end: string }) {
   return <>
     <label>收支方向<select name="direction" defaultValue={entry?.direction || "income"}><option value="income">收入</option><option value="expense">支出</option></select></label>
     <label>金额（元）<input name="amount" type="number" min="0.01" max="9999999999.99" step="0.01" required defaultValue={entry?.amount} /></label>
-    <label>发生日期<input name="occurred_on" type="date" required defaultValue={entry?.occurred_on || today()} /></label>
-    <label>结束日期<input name="ended_on" type="date" required defaultValue={entry?.ended_on || entry?.occurred_on || today()} /></label>
+    <label>发生日期<input name="occurred_on" type="date" required defaultValue={entry?.occurred_on || start} /></label>
+    <label>结束日期<input name="ended_on" type="date" required defaultValue={entry?.ended_on || entry?.occurred_on || end} /></label>
     <label className="educationWide">收支用途<input name="purpose" required maxLength={500} defaultValue={entry?.purpose} placeholder="例如：本期学费、住宿、餐饮、教练课酬" /></label>
   </>;
 }
@@ -142,13 +142,17 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
       </div>
       {module === "ledger" && <EducationLedgerOverview api={api} token={token} cohorts={registry.items} onOpenCohort={(id) => { setSelectedId(id); setModule("cohorts"); }} />}
       {module === "cohorts" && <>
-      <section className="educationMetrics" aria-label="教培累计统计">
+      <section className="educationMetrics educationStickyMetrics" aria-label="教培实时经营统计">
+        <article><span>总收入</span><strong>{money(registry.summary.income)}</strong></article>
+        <article><span>学员直接成本</span><strong>{money(registry.summary.student_cost)}</strong></article>
+        <article><span>其他支出</span><strong>{money(registry.summary.operating_expense)}</strong></article>
+        <article><span>实时结余</span><strong>{money(registry.summary.net)}</strong></article>
+      </section>
+      <section className="educationMetrics educationSecondaryMetrics" aria-label="教培累计业务统计">
         <article><span>累计班期</span><strong>{registry.summary.cohort_count} 期</strong></article>
         <article><span>累计生源（人次）</span><strong>{registry.summary.student_count}</strong></article>
         <article><span>预计收入 · 报名应收优先</span><strong>{money(registry.summary.expected_income)}</strong></article>
-        <article><span>累计实际收入</span><strong>{money(registry.summary.income)}</strong></article>
-        <article><span>累计实际支出</span><strong>{money(registry.summary.expense)}</strong></article>
-        <article><span>累计收支结余</span><strong>{money(registry.summary.net)}</strong></article>
+        <article><span>总成本及支出</span><strong>{money(registry.summary.expense)}</strong></article>
       </section>
       {registry.enrollment_summary && <section className="educationMetrics"><article><span>学员应收合计</span><strong>{money(registry.enrollment_summary.receivable)}</strong></article><article><span>学员已收金额</span><strong>{money(registry.enrollment_summary.received)}</strong></article><article><span>学员欠费合计</span><strong>{money(registry.enrollment_summary.arrears)}</strong></article></section>}
       <p className="educationHint">已登记学员的班期按报名记录统计人数及应收；尚未逐位登记的班期沿用手工人数×客单价。实际收支＝学员已收 / 成本＋班期公共收支，请勿重复登记。同一学员参加多期计多人次，不自动生成银行流水。</p>
@@ -183,7 +187,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
         </div>
         {detail.notes && <p className="educationNotes">{detail.notes}</p>}
         <EducationEnrollment key={`${detail.id}-${revision}`} api={api} token={token} cohortId={detail.id} start={detail.start_date} period={detail.course_period || "1_month"} canEdit={registry.can_edit} onSaved={() => { setMessage("已保存，报名与班期汇总已更新。"); setRevision((value) => value + 1); }} />
-        <EducationOperations key={`operations-${detail.id}`} api={api} token={token} cohortId={detail.id} canEdit={registry.can_edit} cohorts={registry.items.map((item) => ({ id: item.id, name: item.name }))} />
+        <EducationOperations key={`operations-${detail.id}`} api={api} token={token} cohortId={detail.id} cohortStart={detail.start_date} cohortEnd={detail.end_date} canEdit={registry.can_edit} cohorts={registry.items.map((item) => ({ id: item.id, name: item.name }))} onChanged={() => setRevision((value) => value + 1)} />
         {registry.can_edit && <>
           <details key={`${detail.id}-${detail.version}`}><summary>编辑班期、招生人数和客单价</summary>
             <form className="educationForm" onSubmit={(event) => void submit(event, "cohort")}><CohortFields cohort={detail} /><button className="primaryButton" disabled={!!busy}>保存班期</button></form>
@@ -192,7 +196,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
           <p className="educationHint">此处登记班期公共收支（如公共教师成本）。学员费用已在报名表自动计入，请勿重复添加。</p>
           <form className="educationForm" key={`${detail.id}-${editing?.id || "new"}-${formKey}`} onSubmit={(event) => void submit(event, editing ? "correct" : "entry")}>
             <EducationCostClassification key={`${revision}-${editing?.id || "new"}`} api={api} token={token} cohortId={detail.id} entry={editing || undefined} />
-            <EntryFields entry={editing || undefined} /><button className="primaryButton" disabled={!!busy}>{editing ? "保存修正" : "追加收支"}</button>
+            <EntryFields entry={editing || undefined} start={detail.start_date} end={detail.end_date} /><button className="primaryButton" disabled={!!busy}>{editing ? "保存修正" : "追加收支"}</button>
             {editing && <button type="button" disabled={!!busy} onClick={() => setEditing(null)}>取消修正</button>}
           </form>
         </>}

@@ -1187,6 +1187,20 @@ class EducationCostDocument(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class EducationCostAttachment(Base):
+    """A private NAS-backed voucher or attachment for a source cost document."""
+
+    __tablename__ = "education_cost_attachments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cost_document_id: Mapped[str] = mapped_column(ForeignKey("education_cost_documents.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(180))
+    source_path: Mapped[str] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    uploaded_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class EducationCostAllocation(Base):
     """Analytical ownership of a source cost by cohort/month and optionally student."""
 
@@ -1218,6 +1232,24 @@ class EducationScheduleDay(Base):
     title: Mapped[str] = mapped_column(String(160), default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     report_json: Mapped[str] = mapped_column(Text, default="{}", server_default="{}")
+    updated_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class EducationMonthlySummary(Base):
+    __tablename__ = "education_monthly_summaries"
+    __table_args__ = (
+        UniqueConstraint("cohort_id", "month", name="uq_education_monthly_summary"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    cohort_id: Mapped[str] = mapped_column(ForeignKey("education_cohorts.id"), index=True)
+    month: Mapped[date] = mapped_column(Date, index=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    achievements: Mapped[str] = mapped_column(Text, default="")
+    problems: Mapped[str] = mapped_column(Text, default="")
+    next_month_plan: Mapped[str] = mapped_column(Text, default="")
     updated_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

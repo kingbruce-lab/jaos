@@ -3,7 +3,10 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from app.finance_system import _receivables_payables_payload
-from app.models import EducationCostAllocation, EducationCostDocument, EducationDailyLog, EducationScheduleDay
+from app.models import (
+    EducationCostAllocation, EducationCostAttachment, EducationCostDocument,
+    EducationDailyLog, EducationMonthlySummary, EducationScheduleDay,
+)
 from test_education_enrollment import student_payload
 from test_education_system import cohort_payload, setup
 
@@ -43,7 +46,9 @@ def test_schedule_generation_is_idempotent_and_manual_changes_survive(setup):
         "day_type": "rest", "title": "入营调整", "notes": "办理入住", "version": first["version"],
         "report": {"instructor_ids": [staff_id], "student_ids": [student_id],
                    "attendance": "全员到齐", "lesson_objectives": "完成入学基线",
-                   "lesson_content": "操作测试", "student_performance": "完成测试"},
+                   "lesson_content": "操作测试", "student_performance": "完成测试",
+                   "special_achievement": True, "special_achievement_note": "反应速度提升",
+                   "problem_flag": True, "problem_note": "设备延迟已处理"},
     })
     assert changed.status_code == 200
     assert client.post(path + "/schedule/generate").json() == {"created": 0, "total_days": 29}
@@ -53,7 +58,22 @@ def test_schedule_generation_is_idempotent_and_manual_changes_survive(setup):
     assert refreshed["days"][0]["report"]["instructor_ids"] == [staff_id]
     assert refreshed["days"][0]["report"]["student_ids"] == [student_id]
     assert refreshed["days"][0]["report"]["lesson_content"] == "操作测试"
+    assert refreshed["days"][0]["report"]["special_achievement"] is True
+    assert refreshed["days"][0]["report"]["problem_note"] == "设备延迟已处理"
     assert db.scalar(select(func.count(EducationScheduleDay.id))) == 29
+
+    monthly = client.put(path + "/monthly-summaries/2026-10", json={
+        "summary": "本月完成入学基线与六加一课程安排。", "achievements": "操作明显进步。",
+        "problems": "设备延迟已解决。", "next_month_plan": "加强团队配合。", "version": 0,
+    })
+    assert monthly.status_code == 200, monthly.text
+    assert client.put(path + "/monthly-summaries/2026-10", json={
+        "summary": "并发旧版本", "achievements": "", "problems": "", "next_month_plan": "", "version": 0,
+    }).status_code == 409
+    monthly_view = client.get(path + "/operations").json()["schedule"]["monthly_summaries"]
+    assert monthly_view[0]["month"] == "2026-10"
+    assert monthly_view[0]["summary"].startswith("本月完成")
+    assert db.scalar(select(func.count(EducationMonthlySummary.id))) == 1
 
 
 def test_cost_document_allocates_exact_cents_without_double_counting(setup):
@@ -93,6 +113,33 @@ def test_cost_document_allocates_exact_cents_without_double_counting(setup):
     assert sorted(item["allocated_cost"] for item in ledger["items"]) == ["50.00", "50.01"]
     assert db.scalar(select(func.count(EducationCostDocument.id))) == 1
     assert db.scalar(select(func.count(EducationCostAllocation.id))) == 2
+
+
+def test_cost_voucher_is_saved_downloaded_and_deleted_as_a_file(setup, tmp_path, monkeypatch):
+    client, db, _, _ = setup
+    monkeypatch.setattr("app.education_operations._attachment_root", lambda: tmp_path.resolve())
+    cohort_id = _cohort(client)
+    path = f"/v1/pm/education/cohorts/{cohort_id}"
+    created = client.post(path + "/cost-documents", json={
+        "request_id": str(uuid4()), "occurred_on": "2026-10-01", "ended_on": "2026-10-08",
+        "category": "住宿费", "detail": "一人间", "amount": "800.00", "allocation_mode": "cohort",
+    })
+    assert created.status_code == 200, created.text
+    document_id = created.json()["id"]
+    upload_path = path + f"/cost-documents/{document_id}/attachments"
+    uploaded = client.post(upload_path, files={"file": ("住宿凭证.pdf", b"voucher-pdf", "application/pdf")})
+    assert uploaded.status_code == 200, uploaded.text
+    attachment = uploaded.json()
+    assert attachment["filename"] == "住宿凭证.pdf"
+    assert attachment["size_bytes"] == 11
+    operation_item = client.get(path + "/operations").json()["costs"]["items"][0]
+    assert operation_item["attachments"][0]["id"] == attachment["id"]
+    downloaded = client.get(upload_path + f"/{attachment['id']}")
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"voucher-pdf"
+    assert client.delete(upload_path + f"/{attachment['id']}").json() == {"deleted": True}
+    assert db.scalar(select(func.count(EducationCostAttachment.id))) == 0
+    assert not list(tmp_path.rglob("*.pdf"))
 
 
 def test_daily_logs_are_scoped_and_hidden_from_finance(setup):

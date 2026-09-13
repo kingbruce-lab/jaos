@@ -1478,7 +1478,7 @@ async function kbFetch<T>(
   token?: string,
 ): Promise<T> {
   const headers = new Headers(options.headers);
-  if (options.body && !headers.has("content-type")) {
+  if (options.body && !(options.body instanceof FormData) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
   if (token) headers.set("authorization", `Bearer ${token}`);

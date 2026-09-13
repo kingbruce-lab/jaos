@@ -9,6 +9,9 @@
 .educationMetrics span, .educationMetrics strong { display: block; overflow-wrap: anywhere; }
 .educationMetrics span { font-size: 12px; color: #728297; margin-bottom: 10px; }
 .educationMetrics strong { font-size: 21px; color: #173d58; }
+.educationStickyMetrics { position: sticky; top: 0; z-index: 20; grid-template-columns: repeat(4,minmax(170px,1fr)); margin: 0 -10px; padding: 10px; border: 1px solid rgba(209,222,232,.9); border-radius: 16px; background: rgba(245,248,251,.96); box-shadow: 0 10px 28px rgba(21,56,82,.12); backdrop-filter: blur(12px); }
+.educationStickyMetrics article { background: #fff; box-shadow: 0 3px 12px rgba(20,55,80,.05); }
+.educationSecondaryMetrics { margin-top: 14px; }
 .educationWorkspace summary { cursor: pointer; color: #215c86; font-weight: 700; padding: 8px 0; }
 .educationForm { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 14px; padding: 16px 0; }
 .educationForm label { display: grid; gap: 7px; color: #52667a; font-size: 13px; min-width: 0; }
@@ -98,24 +101,50 @@
 .educationOperations > header p { margin: 0; color: #64748b; }
 .educationOperationSection { margin-top: 14px; padding: 16px; border: 1px solid #dbe4ee; border-radius: 16px; background: #fbfdff; }
 .educationOperationSection > summary { cursor: pointer; font-weight: 800; color: #153b61; }
+.educationSectionTitle { margin: 0; color: #153b61; font-size: 18px; }
 .educationOperationSummary { display: flex; flex-wrap: wrap; gap: 9px; margin: 14px 0; }
 .educationOperationSummary span { padding: 7px 11px; border-radius: 999px; background: #eaf3fb; color: #24567f; font-weight: 700; }
-.educationCalendarGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(245px,1fr)); gap: 11px; margin-top: 16px; }
-.educationCalendarDay { display: grid; gap: 7px; padding: 14px; border: 1px solid #d8e2ec; border-left: 4px solid #2563eb; border-radius: 12px; background: #fff; color: #23435c; text-align: left; cursor: pointer; font: inherit; }
-.educationCalendarDay.practice { border-left-color: #14936f; }
-.educationCalendarDay.rest { border-left-color: #94a3b8; }
+.educationCalendarMonths { display: grid; gap: 24px; margin-top: 16px; }
+.educationCalendarMonth { min-width: 0; padding: 14px; border: 1px solid #dce7ef; border-radius: 14px; background: #f7fafc; }
+.educationCalendarMonth > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.educationCalendarMonth h5 { margin: 0; color: #173d58; font-size: 17px; }
+.educationCalendarMonth > header span { color: #6d8193; font-size: 12px; }
+.educationCalendarScroller { overflow-x: auto; padding-bottom: 4px; }
+.educationWeekdayRow, .educationCalendarGrid { min-width: 980px; display: grid; grid-template-columns: repeat(7,minmax(130px,1fr)); gap: 8px; }
+.educationWeekdayRow { margin-bottom: 8px; }
+.educationWeekdayRow b { padding: 8px; border-radius: 8px; color: #60758a; background: #eaf0f5; text-align: center; font-size: 12px; }
+.educationCalendarGrid { margin-top: 0; }
+.educationCalendarBlank { min-height: 1px; }
+.educationCalendarDay { position: relative; min-height: 154px; display: grid; grid-template-rows: 1fr auto; border: 1px solid #d8e2ec; border-top: 4px solid #2563eb; border-radius: 11px; background: #fff; color: #23435c; overflow: hidden; }
+.educationDayOpen { min-width: 0; display: grid; align-content: start; gap: 6px; padding: 11px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; font: inherit; }
 .educationCalendarDay:hover, .educationCalendarDay.selected { border-color: #2563eb; background: #eef6ff; box-shadow: 0 7px 18px rgba(37,99,235,.1); transform: translateY(-1px); }
-.educationCalendarDay span { width: max-content; padding: 3px 8px; border-radius: 999px; background: #e7efff; color: #2457a4; font-size: 12px; }
-.educationCalendarDay.practice span { background: #e4f7f0; color: #147458; }
-.educationCalendarDay.rest span { background: #eef1f4; color: #5e6c7a; }
-.educationCalendarDay b { overflow-wrap: anywhere; }
-.educationCalendarDay small { color: #667b8f; }
+.educationDayOpen span { width: max-content; padding: 3px 8px; border-radius: 999px; background: #e7efff; color: #2457a4; font-size: 11px; }
+.educationCalendarDay.practice { border-top-color: #14936f; }
+.educationCalendarDay.rest { border-top-color: #94a3b8; }
+.educationCalendarDay.practice .educationDayOpen span { background: #e4f7f0; color: #147458; }
+.educationCalendarDay.rest .educationDayOpen span { background: #eef1f4; color: #5e6c7a; }
+.educationDayOpen b { overflow-wrap: anywhere; font-size: 12px; }
+.educationDayOpen small { color: #667b8f; font-size: 10px; }
+.educationDayMarks { display: flex; gap: 6px; padding: 0 10px 10px; }
+.educationDayMarks button { width: 30px; height: 28px; border: 1px solid #efc9cd; border-radius: 8px; color: #b4a0a3; background: #fff7f8; cursor: pointer; font-weight: 900; }
+.educationDayMarks button.active { border-color: #dc2637; color: #fff; background: #dc2637; box-shadow: 0 4px 10px rgba(220,38,55,.2); }
+.educationMonthlySummaryCard { min-height: 154px; display: grid; align-content: center; gap: 8px; padding: 14px; border: 2px dashed #c99430; border-radius: 11px; color: #76500e; background: #fff9e9; text-align: left; cursor: pointer; }
+.educationMonthlySummaryCard.complete { border-style: solid; border-color: #2b8c65; color: #22684d; background: #edf9f4; }
+.educationMonthlySummaryCard span, .educationMonthlySummaryCard small { font-size: 11px; }
+.educationMonthlySummaryCard small { color: #7c6b4d; }
 .educationDayEditor { margin-top: 18px; padding: 20px; border: 1px solid #9fc2df; border-radius: 16px; background: #fff; box-shadow: 0 14px 32px rgba(24,75,112,.11); }
 .educationDayEditor > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid #dbe8f1; }
 .educationDayEditor h4 { margin: 4px 0 0; color: #153b61; font-size: 21px; }
 .educationDayEditor header span { color: #2870a4; font-weight: 700; }
 .educationDayEditor header button { padding: 8px 13px; border: 1px solid #d6e2eb; border-radius: 8px; background: #f7fafc; cursor: pointer; }
 .educationDayEditor textarea { min-height: 112px; line-height: 1.65; }
+.educationDayFlagGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.educationDayFlag { padding: 13px; border: 1px solid #efc9cd; border-radius: 12px; background: #fff8f8; }
+.educationDayFlag > span { display: flex; align-items: center; gap: 7px; color: #b51f30; }
+.educationDayFlag input { width: 18px; height: 18px; }
+.educationDayFlag textarea { margin-top: 10px; background: #fff; }
+.educationDayFlag.problem { border-color: #e8c092; background: #fff9f1; }
+.educationMonthlyEditor { border-color: #dfbd74; background: #fffdf7; }
 .educationPurposeNote { display: grid; gap: 6px; margin: 14px 0; padding: 14px 16px; border-left: 4px solid #2873a8; border-radius: 10px; background: #edf6fc; color: #536d82; line-height: 1.65; }
 .educationPurposeNote strong { color: #174f78; }
 .educationCostDocuments, .educationDailyLogs { display: grid; gap: 10px; margin-top: 16px; }
@@ -123,13 +152,20 @@
 .educationCostDocuments article header, .educationDailyLogs article header { display: flex; justify-content: space-between; gap: 16px; }
 .educationCostDocuments article p, .educationDailyLogs article p { margin: 6px 0 0; }
 .educationCustomAllocations { display: grid; gap: 10px; padding: 12px; border: 1px dashed #9fb8cc; border-radius: 10px; background: #f5f9fc; }
-.educationCustomAllocationRow { display: grid; grid-template-columns: minmax(180px,2fr) repeat(3,minmax(120px,1fr)) auto; gap: 8px; }
+.educationCustomAllocationRow { display: grid; grid-template-columns: minmax(180px,2fr) minmax(130px,1fr) minmax(160px,1fr) auto; gap: 8px; }
+.educationFileField small { color: #6d7f90; font-weight: 500; }
+.educationAttachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.educationAttachments > span { display: flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid #cfe0ed; border-radius: 9px; background: #f4f9fd; }
+.educationAttachments button { border: 0; padding: 0; color: #17639a; background: transparent; cursor: pointer; font-weight: 700; }
+.educationAttachments small { color: #748596; }
+.educationAttachments .educationAttachmentDelete { color: #b32535; }
 .educationLogFilters { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
 .educationLogFilters label { display: grid; gap: 5px; color: #52667a; font-size: 13px; }
 .educationLogFilters select { min-width: 190px; padding: 9px; border: 1px solid #d9e3eb; border-radius: 8px; background: #fff; }
 .educationMissingLogs { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; padding: 11px; border-left: 4px solid #e49a18; border-radius: 8px; background: #fff8e8; color: #76520f; }
 @media(max-width:720px) {
-  .educationCalendarGrid { grid-template-columns: 1fr; }
+  .educationStickyMetrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .educationDayFlagGrid { grid-template-columns: 1fr; }
   .educationCustomAllocationRow { grid-template-columns: 1fr; }
   .educationAssignmentRow { grid-template-columns: 1fr; }
   .educationCostDocuments article header, .educationDailyLogs article header { display: grid; gap: 5px; }
