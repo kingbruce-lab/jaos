@@ -1,6 +1,7 @@
 """Cross-cohort education ledger, installment plans and auditable cash detail."""
 from __future__ import annotations
 
+import json
 from datetime import date
 from decimal import Decimal
 from typing import Literal
@@ -135,7 +136,9 @@ def ledger_overview(
         escaped = cleaned.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         where.append(or_(EducationStudent.name.ilike(f"%{escaped}%", escape="\\"),
                          EducationCohort.name.ilike(f"%{escaped}%", escape="\\"),
-                         EducationStudent.game.ilike(f"%{escaped}%", escape="\\")))
+                         EducationStudent.game.ilike(f"%{escaped}%", escape="\\"),
+                         EducationStudent.referrer_name.ilike(f"%{escaped}%", escape="\\"),
+                         EducationStudent.referral_channel.ilike(f"%{escaped}%", escape="\\")))
     if payment_status == "arrears":
         where.append(EducationStudent.receivable > EducationStudent.received)
     elif payment_status == "paid":
@@ -174,6 +177,8 @@ def ledger_overview(
         "items": [{
             "id": row.id, "cohort_id": row.cohort_id, "cohort_name": cohort_name,
             "name": row.name, "registration_date": row.registration_date.isoformat(),
+            "referrer_name": row.referrer_name, "referral_channel": row.referral_channel,
+            "staff_assignments": json.loads(row.staff_assignments_json or "[]"),
             "game": row.game, "course_period": row.course_period,
             "study_start": row.study_start.isoformat(), "study_end": row.study_end.isoformat(),
             "receivable": _money(row.receivable), "received": _money(row.received),

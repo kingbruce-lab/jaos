@@ -33,6 +33,14 @@ class FeeLine(BaseModel):
     note: str = Field(default="", max_length=500)
 
 
+class StaffAssignment(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    staff_id: UUID
+    start_date: date | None = None
+    end_date: date | None = None
+    note: str = Field(default="", max_length=500)
+
+
 class StudentFields(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     registration_date: date
@@ -46,6 +54,8 @@ class StudentFields(BaseModel):
     guardian_phone: str | None = Field(default=None, max_length=30)
     emergency_contact: str = Field(default="", max_length=240)
     health_notes: str = Field(default="", max_length=2000)
+    referrer_name: str = Field(default="", max_length=120)
+    referral_channel: str = Field(default="", max_length=160)
     game: Literal["王者荣耀", "英雄联盟", "三角洲行动", "无畏契约", "CS2"]
     game_account: str = Field(default="", max_length=100)
     current_rank: str = Field(default="", max_length=100)
@@ -55,6 +65,7 @@ class StudentFields(BaseModel):
     room_type: Literal["一人间", "两人间"]
     fee_notes: str = Field(default="", max_length=2000)
     fees: list[FeeLine] = Field(default_factory=list, max_length=100)
+    staff_assignments: list[StaffAssignment] = Field(default_factory=list, max_length=100)
     received: Decimal = Field(default=Decimal(0), ge=0, max_digits=14, decimal_places=2)
     notes: str = Field(default="", max_length=2000)
     learning_status: Literal["已报名", "待入营", "在读", "已结营", "已退营"] = "已报名"
@@ -108,6 +119,13 @@ class StaffCreate(BaseModel):
     request_id: UUID
     name: str = Field(min_length=1, max_length=80)
     role: str = Field(min_length=1, max_length=40)
+    note: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def other_teacher_needs_note(self):
+        if self.role == "其他教师" and not self.note:
+            raise ValueError("其他教师请在人员备注中注明具体类型或职责")
+        return self
 
 
 def _student(db, user, cohort_id, student_id, *, write=False):
@@ -126,6 +144,7 @@ def _data(row, *, fees=True, private=False):
     result = {key: getattr(row, key) for key in (
         "id", "cohort_id", "student_no", "name", "gender", "age", "game", "game_account", "current_rank",
         "course_period", "accommodation_days", "room_type", "fee_notes", "notes", "learning_status", "version",
+        "referrer_name", "referral_channel",
     )}
     result.update(registration_date=row.registration_date.isoformat(), study_start=row.study_start.isoformat(),
                   study_end=month_end(row.study_start, row.course_period).isoformat())
@@ -140,11 +159,13 @@ def _data(row, *, fees=True, private=False):
                       health_notes=row.health_notes)
     if fees:
         result["fees"] = json.loads(row.fees_json)
+    result["staff_assignments"] = json.loads(row.staff_assignments_json or "[]")
     return result
 
 
 def _values(db, cohort_id, payload, previous=None):
     previous_staff = {item.get("staff_id") for item in json.loads(previous.fees_json)} if previous else set()
+    previous_assignments = {item.get("staff_id") for item in json.loads(previous.staff_assignments_json or "[]")} if previous else set()
     fees = []
     for item in payload.fees:
         if item.category not in FEE_DETAILS or item.detail not in FEE_DETAILS[item.category]:
@@ -162,9 +183,29 @@ def _values(db, cohort_id, payload, previous=None):
             raise HTTPException(422, "仅人员成本可关联人员")
         fees.append({"category": item.category, "detail": item.detail, "staff_id": staff_id,
                      "receivable": _money(item.receivable), "cost": _money(item.cost), "note": item.note})
-    result = payload.model_dump(exclude={"request_id", "version", "fees", "identity_number", "phone", "guardian_phone"})
+    study_end = month_end(payload.study_start, payload.course_period)
+    assignments = []
+    assigned_ids = set()
+    for item in payload.staff_assignments:
+        staff_id = str(item.staff_id)
+        if staff_id in assigned_ids:
+            raise HTTPException(422, "同一学员不能重复添加同一位人员")
+        assigned_ids.add(staff_id)
+        staff = db.get(EducationStaff, staff_id)
+        if staff is None or staff.cohort_id != cohort_id:
+            raise HTTPException(422, "授课人员须从本班期人员名册中选择")
+        if not staff.active and staff_id not in previous_assignments:
+            raise HTTPException(422, "该人员已移除，请选择在册人员")
+        start_date = item.start_date or payload.study_start
+        end_date = item.end_date or study_end
+        if start_date > end_date or start_date < payload.study_start or end_date > study_end:
+            raise HTTPException(422, "人员负责期间须在学员学习开始和结束日期内")
+        assignments.append({"staff_id": staff_id, "name": staff.name, "role": staff.role,
+                            "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
+                            "note": item.note or staff.note})
+    result = payload.model_dump(exclude={"request_id", "version", "fees", "staff_assignments", "identity_number", "phone", "guardian_phone"})
     result.update(fees_json=json.dumps(fees, ensure_ascii=False),
-        study_end=month_end(payload.study_start, payload.course_period),
+        staff_assignments_json=json.dumps(assignments, ensure_ascii=False), study_end=study_end,
         receivable=sum((item.receivable for item in payload.fees), Decimal(0)),
         cost=sum((item.cost for item in payload.fees), Decimal(0)))
     for field in ("identity_number", "phone", "guardian_phone"):
@@ -190,8 +231,8 @@ def options(user: User = Depends(current_user)):
 @router.get("/cohorts/{cohort_id}/staff")
 def list_staff(cohort_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     _cohort(db, user, cohort_id)
-    return {"items": [{"id": row.id, "name": row.name, "role": row.role, "active": row.active} for row in db.scalars(
-        select(EducationStaff).where(EducationStaff.cohort_id == cohort_id).order_by(EducationStaff.name)).all()]}
+    return {"items": [{"id": row.id, "name": row.name, "role": row.role, "note": row.note, "active": row.active} for row in db.scalars(
+        select(EducationStaff).where(EducationStaff.cohort_id == cohort_id).order_by(EducationStaff.created_at, EducationStaff.name)).all()]}
 
 
 @router.post("/cohorts/{cohort_id}/staff")
@@ -201,10 +242,11 @@ def create_staff(cohort_id: str, payload: StaffCreate, user: User = Depends(curr
         raise HTTPException(422, "人员类型无效")
     row = db.get(EducationStaff, str(payload.request_id))
     if row:
-        if row.cohort_id != cohort_id or row.name != payload.name or row.role != payload.role:
+        if row.cohort_id != cohort_id or row.name != payload.name or row.role != payload.role or row.note != payload.note:
             raise HTTPException(409, "提交标识冲突")
         return {"id": row.id}
-    row = EducationStaff(id=str(payload.request_id), cohort_id=cohort_id, created_by_user_id=user.id, name=payload.name, role=payload.role)
+    row = EducationStaff(id=str(payload.request_id), cohort_id=cohort_id, created_by_user_id=user.id,
+                         name=payload.name, role=payload.role, note=payload.note)
     db.add(row)
     _audit(db, user, "education_staff_created", None, {"staff_id": row.id, "cohort_id": cohort_id, "role": row.role})
     _commit(db)

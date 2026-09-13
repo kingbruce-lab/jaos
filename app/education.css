@@ -30,6 +30,11 @@
 .educationEnrollment { margin: 24px 0; padding: 20px 0; border-top: 2px solid #dce8f1; border-bottom: 2px solid #dce8f1; }
 .educationFeeRow { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 12px; padding: 16px; border: 1px solid #dce5ed; border-radius: 10px; margin-bottom: 12px; background: #f8fafc; }
 .educationFeeRow button { align-self: end; padding: 10px; }
+.educationAssignments { padding: 16px; border: 1px solid #bed4e6; border-radius: 12px; background: #f5faff; }
+.educationAssignments h4 { margin: 0 0 6px; }
+.educationAssignmentRow { display: grid; grid-template-columns: minmax(190px,1.5fr) repeat(2,minmax(145px,1fr)) minmax(190px,1.5fr) auto; gap: 10px; align-items: end; padding: 12px 0; border-top: 1px solid #d9e7f1; }
+.educationAssignmentRow button { padding: 10px; }
+.educationStaffQuickAdd { align-items: end; padding: 12px; border-radius: 10px; background: #f5faff; }
 .educationForm input[type=checkbox] { width: auto; }
 .educationStudentList { display: grid; gap: 12px; }
 .educationStudentList article { display: grid; gap: 8px; padding: 16px; border: 1px solid #dce5ed; border-radius: 10px; overflow-wrap: anywhere; }
@@ -104,5 +109,6 @@
 @media(max-width:720px) {
   .educationCalendarGrid { grid-template-columns: 1fr; }
   .educationCustomAllocationRow { grid-template-columns: 1fr; }
+  .educationAssignmentRow { grid-template-columns: 1fr; }
   .educationCostDocuments article header, .educationDailyLogs article header { display: grid; gap: 5px; }
 }

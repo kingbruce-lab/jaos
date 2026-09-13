@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 type Api = <T>(path: string, options?: RequestInit, token?: string) => Promise<T>;
-type LedgerRow = { id: string; cohort_id: string; cohort_name: string; name: string; registration_date: string; game: string; course_period: string; study_start: string; study_end: string; receivable: string; received: string; arrears: string; overpayment: string };
+type LedgerRow = { id: string; cohort_id: string; cohort_name: string; name: string; registration_date: string; referrer_name: string; referral_channel: string; staff_assignments: { staff_id: string; name: string; role: string; start_date: string; end_date: string; note: string }[]; game: string; course_period: string; study_start: string; study_end: string; receivable: string; received: string; arrears: string; overpayment: string };
 type Ledger = { items: LedgerRow[]; summary: { student_count: number; receivable: string; received: string; cost: string; arrears: string; overpayment: string }; has_more: boolean; scope: string };
 type Installment = { id: string; label: string; due_on: string; amount: string; paid: string; remaining: string; note: string; active: boolean; version: number };
 type Payment = { id: string; direction: "receipt" | "refund"; amount: string; occurred_on: string; method: string; account: string; note: string; installment_id: string | null; creator_name: string; version: number };
@@ -47,7 +47,7 @@ export function EducationLedgerOverview({ api, token, cohorts, onOpenCohort }: {
       <div className="educationRule"><strong>课程口径</strong><span>一个月 29天 · 三个月 87天</span><span>每周 6天课程 + 1天自主练习</span></div>
     </section>
     <form className="educationLedgerFilters" onSubmit={search}>
-      <label>学员或班期关键词<input value={query.keyword} onChange={(e) => setQuery({ ...query, keyword: e.target.value })} maxLength={120} placeholder="姓名、班期、游戏项目" /></label>
+      <label>学员、班期或推荐来源<input value={query.keyword} onChange={(e) => setQuery({ ...query, keyword: e.target.value })} maxLength={120} placeholder="姓名、班期、游戏项目、推荐人或渠道" /></label>
       <label>班期<select value={query.cohort_id} onChange={(e) => setQuery({ ...query, cohort_id: e.target.value })}><option value="">全部班期</option>{cohorts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>缴费状态<select value={query.payment_status} onChange={(e) => setQuery({ ...query, payment_status: e.target.value })}><option value="all">全部</option><option value="arrears">欠费</option><option value="paid">已收齐</option><option value="overpaid">超收或预收</option></select></label>
       <button className="primaryButton" disabled={busy}>检索台账</button>
@@ -63,8 +63,8 @@ export function EducationLedgerOverview({ api, token, cohorts, onOpenCohort }: {
         <article><span>已归集成本</span><strong>{money(data.summary.cost)}</strong></article>
       </section>
       <div className="educationLedgerTable" role="region" aria-label="综合台账学员明细" tabIndex={0}>
-        <table><thead><tr><th>学员及班期</th><th>课程</th><th>套餐应收</th><th>净实收</th><th>欠费</th><th>操作</th></tr></thead><tbody>
-          {data.items.map((row) => <tr key={row.id}><td><strong>{row.name}</strong><small>{row.cohort_name} · 报名 {row.registration_date}</small></td><td>{row.game}<small>{periodNames[row.course_period] || row.course_period}<br />{row.study_start} 至 {row.study_end}</small></td><td>{money(row.receivable)}</td><td>{money(row.received)}</td><td className={Number(row.arrears) > 0 ? "educationAmountWarn" : ""}>{money(row.arrears)}{Number(row.overpayment) > 0 && <small>超收 {money(row.overpayment)}</small>}</td><td><button type="button" onClick={() => onOpenCohort(row.cohort_id)}>进入班期</button></td></tr>)}
+        <table><thead><tr><th>学员及班期</th><th>课程与师资</th><th>推荐来源</th><th>套餐应收</th><th>净实收</th><th>欠费</th><th>操作</th></tr></thead><tbody>
+          {data.items.map((row) => <tr key={row.id}><td><strong>{row.name}</strong><small>{row.cohort_name} · 报名 {row.registration_date}</small></td><td>{row.game}<small>{periodNames[row.course_period] || row.course_period}<br />{row.study_start} 至 {row.study_end}<br />{row.staff_assignments.length ? row.staff_assignments.map((item) => `${item.name}（${item.role}）`).join("、") : "尚未安排人员"}</small></td><td>{row.referrer_name || row.referral_channel ? <>{row.referrer_name || "未填推荐人"}<small>{row.referral_channel || "未填渠道"}</small></> : "未填写"}</td><td>{money(row.receivable)}</td><td>{money(row.received)}</td><td className={Number(row.arrears) > 0 ? "educationAmountWarn" : ""}>{money(row.arrears)}{Number(row.overpayment) > 0 && <small>超收 {money(row.overpayment)}</small>}</td><td><button type="button" onClick={() => onOpenCohort(row.cohort_id)}>进入班期</button></td></tr>)}
         </tbody></table>
       </div>
       {!data.items.length && <p>当前筛选范围暂无台账记录。</p>}

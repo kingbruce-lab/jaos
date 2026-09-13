@@ -34,6 +34,7 @@ if settings.database_url.startswith("sqlite"):
 ADDITIVE_COLUMNS = {
     "education_staff": {
         "active": "BOOLEAN NOT NULL DEFAULT TRUE",
+        "note": "TEXT NOT NULL DEFAULT ''",
     },
     "education_cohorts": {
         "course_period": "VARCHAR(20) NOT NULL DEFAULT '1_month'",
@@ -51,9 +52,12 @@ ADDITIVE_COLUMNS = {
         "guardian_phone": "VARCHAR(30) NOT NULL DEFAULT ''",
         "emergency_contact": "VARCHAR(240) NOT NULL DEFAULT ''",
         "health_notes": "TEXT NOT NULL DEFAULT ''",
+        "referrer_name": "VARCHAR(120) NOT NULL DEFAULT ''",
+        "referral_channel": "VARCHAR(160) NOT NULL DEFAULT ''",
         "game_account": "VARCHAR(100) NOT NULL DEFAULT ''",
         "current_rank": "VARCHAR(100) NOT NULL DEFAULT ''",
         "learning_status": "VARCHAR(24) NOT NULL DEFAULT '已报名'",
+        "staff_assignments_json": "TEXT NOT NULL DEFAULT '[]'",
     },
     "users": {
         "organization_role": "VARCHAR(40)",

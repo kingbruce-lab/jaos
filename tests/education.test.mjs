@@ -44,3 +44,17 @@ test("education phase two provides 6+1 calendar, source costs, daily logs and fi
   assert.match(operations, /教学与生活每日记录/);
   assert.match(page, /星曜教培同步/);
 });
+
+test("education combines referral, commission and every assigned teacher in the student record", () => {
+  const enrollment = fs.readFileSync("app/education-enrollment.tsx", "utf8");
+  const catalog = fs.readFileSync("agent/app/education_catalog.py", "utf8");
+  const backend = fs.readFileSync("agent/app/education_enrollment.py", "utf8");
+  assert.match(enrollment, /推荐人/);
+  assert.match(enrollment, /推荐渠道/);
+  assert.match(enrollment, /本学员课程周期与全部师资/);
+  assert.match(enrollment, /添加并继续下一位/);
+  assert.match(catalog, /状态恢复师/);
+  assert.match(catalog, /推荐渠道提成费/);
+  assert.match(backend, /其他教师请在人员备注中注明/);
+  assert.match(backend, /同一学员不能重复添加同一位人员/);
+});

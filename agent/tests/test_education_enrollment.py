@@ -104,6 +104,42 @@ def test_enrollment_staff_scope_and_finance_identity_protection(setup):
     assert client.get("/v1/pm/education/options").status_code == 403
 
 
+def test_referral_commission_continuous_staff_and_student_staff_timeline(setup):
+    client, db, *_ = setup
+    path = make_cohort(client)
+    options = client.get("/v1/pm/education/options").json()
+    assert "状态恢复师" in options["staff_roles"]
+    assert options["fee_details"]["推荐渠道提成费"] == ["推荐人提成", "渠道提成", "其他"]
+    assert client.post(path + "/staff", json={"request_id": str(uuid4()), "name": "未注明教师", "role": "其他教师"}).status_code == 422
+    teacher = client.post(path + "/staff", json={"request_id": str(uuid4()), "name": "王老师", "role": "其他教师", "note": "战术复盘"})
+    recovery = client.post(path + "/staff", json={"request_id": str(uuid4()), "name": "李老师", "role": "状态恢复师", "note": "作息与心理状态"})
+    assert teacher.status_code == recovery.status_code == 200
+    roster = client.get(path + "/staff").json()["items"]
+    assert {(item["name"], item["note"]) for item in roster} == {("王老师", "战术复盘"), ("李老师", "作息与心理状态")}
+    assignments = [
+        {"staff_id": teacher.json()["id"], "start_date": "2026-10-01", "end_date": "2026-10-08", "note": "主课"},
+        {"staff_id": recovery.json()["id"], "start_date": "2026-10-02", "end_date": "2026-10-07", "note": "每日恢复"},
+    ]
+    payload = student_payload(referrer_name="张家长", referral_channel="家长转介绍", staff_assignments=assignments,
+        fees=[{"category": "学费", "detail": "课程学费", "receivable": "3000", "cost": "0"},
+              {"category": "推荐渠道提成费", "detail": "推荐人提成", "receivable": "0", "cost": "300", "note": "张家长10%"}])
+    created = client.post(path + "/students", json=payload)
+    assert created.status_code == 200, created.text
+    detail = client.get(path + "/students/" + created.json()["id"]).json()
+    assert detail["referrer_name"] == "张家长" and detail["referral_channel"] == "家长转介绍"
+    assert [(item["name"], item["role"]) for item in detail["staff_assignments"]] == [("王老师", "其他教师"), ("李老师", "状态恢复师")]
+    assert detail["cost"] == "300.00"
+    listed = client.get(path + "/students").json()["items"][0]
+    assert len(listed["staff_assignments"]) == 2
+    ledger = client.get("/v1/pm/education/ledger?keyword=家长转介绍").json()
+    assert ledger["items"][0]["referrer_name"] == "张家长"
+    assert len(ledger["items"][0]["staff_assignments"]) == 2
+    duplicated = {**payload, "request_id": str(uuid4()), "staff_assignments": assignments + [assignments[0]]}
+    assert client.post(path + "/students", json=duplicated).status_code == 422
+    outside = {**payload, "request_id": str(uuid4()), "staff_assignments": [{**assignments[0], "end_date": "2026-10-09"}]}
+    assert client.post(path + "/students", json=outside).status_code == 422
+
+
 @pytest.mark.parametrize("changes", [{"age": -1}, {"age": 2.5}, {"game": "其他"}, {"course_period": "one_year"},
     {"room_type": "三人间"}, {"accommodation_days": -1}, {"received": "NaN"}, {"identity_number": "invalid"},
     {"phone": "abc"}, {"fees": [{"category": "学费", "detail": "课程学费", "cost": "-1"}]},
