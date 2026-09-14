@@ -78,6 +78,10 @@ test("contract folders preserve structure and executive contracts stay uploader-
   assert.match(agent, /recover_legacy=True/);
   assert.match(page, /contractMoveErrors/);
   assert.match(page, /移动失败：/);
+  assert.match(page, /target_category: targetCategory/);
+  assert.match(page, /移入总办合同会自动升级为L5/);
+  assert.match(agent, /contract_category_move/);
+  assert.match(agent, /降低合同密级仅限L5最高管理账号操作/);
 });
 
 test("review supports visible L1-L3 batch approval and the approved level names", () => {

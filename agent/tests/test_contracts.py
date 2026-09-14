@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -297,6 +298,113 @@ def test_administrative_can_list_create_folders_and_move_own_contract(
         assert Path(document.file_blob.source_path).is_file()
         assert "2026年/租赁合同" in Path(document.file_blob.source_path).as_posix()
         assert not list(knowledge_root.rglob("待整理/租赁原件.docx"))
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_administrative_can_reclassify_own_business_contract_to_executive_office(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    knowledge_root = tmp_path / "knowledge"
+    _configure(monkeypatch, db, users["l4"], knowledge_root)
+    client = TestClient(app)
+    try:
+        upload = client.post(
+            "/v1/contracts/uploads",
+            data={
+                "category": "business",
+                "relative_path": "上海劲腾/业务承接协议.docx",
+            },
+            files={
+                "file": (
+                    "业务承接协议.docx",
+                    _word_payload("上海劲腾业务承接协议。"),
+                    "application/octet-stream",
+                )
+            },
+        )
+        assert upload.status_code == 200
+        document_id = upload.json()["document_id"]
+        old_path = next(knowledge_root.rglob("上海劲腾/业务承接协议.docx"))
+
+        moved = client.patch(
+            f"/v1/contracts/{document_id}/folder",
+            json={
+                "target_category": "executive_office",
+                "folder_path": "内部资料（密）",
+            },
+        )
+
+        assert moved.status_code == 200
+        assert moved.json() == {
+            "document_id": document_id,
+            "category": "executive_office",
+            "category_name": "总办合同",
+            "confidentiality": "L5",
+            "folder_path": "内部资料（密）",
+        }
+        db.expire_all()
+        document = db.get(Document, document_id)
+        source = db.get(ContractDocumentSource, document_id)
+        audit = db.scalar(
+            select(AuditLog).where(AuditLog.action == "contract_category_move")
+        )
+        assert document is not None
+        assert document.confidentiality == "L5"
+        assert document.project.domain == "contract_executive_office"
+        assert document.project.confidentiality == "L5"
+        assert source is not None
+        assert Path(source.source_path).is_file()
+        assert "总办合同/L5/内部资料（密）" in Path(source.source_path).as_posix()
+        assert not old_path.exists()
+        assert audit is not None
+        details = json.loads(audit.details_json)
+        assert details["from_category"] == "business"
+        assert details["to_category"] == "executive_office"
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_administrative_cannot_downgrade_executive_contract_to_l4(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    knowledge_root = tmp_path / "knowledge"
+    _configure(monkeypatch, db, users["l4"], knowledge_root)
+    client = TestClient(app)
+    try:
+        upload = client.post(
+            "/v1/contracts/uploads",
+            data={"category": "executive_office"},
+            files={
+                "file": (
+                    "总办协议.docx",
+                    _word_payload("总办L5协议。"),
+                    "application/octet-stream",
+                )
+            },
+        )
+        assert upload.status_code == 200
+
+        moved = client.patch(
+            f"/v1/contracts/{upload.json()['document_id']}/folder",
+            json={"target_category": "business", "folder_path": ""},
+        )
+
+        assert moved.status_code == 403
+        assert moved.json()["detail"] == "降低合同密级仅限L5最高管理账号操作"
+        executive_root = knowledge_root / "合同档案库" / "总办合同" / "L5"
+        assert list(executive_root.rglob("总办协议.docx"))
+        assert not list(
+            (knowledge_root / "合同档案库" / "业务合同" / "L4").rglob(
+                "总办协议.docx"
+            )
+        )
     finally:
         app.dependency_overrides.clear()
         db.close()

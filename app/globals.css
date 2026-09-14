@@ -1706,7 +1706,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .contractOwnIdentity span { color: #9e2631; font-weight: 700; }
 .contractOwnIdentity small { color: #7b8798; overflow-wrap: anywhere; }
 .contractOwnActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 8px; }
-.contractOwnActions select { width: min(300px, 30vw); }
+  .contractOwnActions select { width: min(240px, 24vw); }
 .contractOwnActions button { min-height: 44px; }
 .contractMoveError { flex-basis: 100%; color: #a22331; text-align: right; }
 .governanceLevelBadge.level-l5 { color: #fff; background: #66131b; }
@@ -1810,9 +1810,10 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .contractFolderCreate { grid-template-columns: 1fr; }
   .contractFolderCreate button { width: 100%; }
   .contractOwnList article { grid-template-columns: 1fr; }
-  .contractOwnActions { display: grid; grid-template-columns: minmax(0, 1fr) auto; justify-content: stretch; }
-  .contractOwnActions select { width: 100%; font-size: 16px; }
-  .contractOwnActions .previewLink { grid-column: 1 / -1; width: 100%; }
+    .contractOwnActions { display: grid; grid-template-columns: 1fr; justify-content: stretch; }
+    .contractOwnActions select { width: 100%; font-size: 16px; }
+    .contractOwnActions .previewLink { grid-column: 1 / -1; width: 100%; }
+    .contractOwnActions .secondaryButton { width: 100%; }
   .contractOwnActions .contractMoveError { grid-column: 1 / -1; text-align: left; }
   .batchReviewBar { align-items: flex-start; flex-direction: column; }
   .batchReviewBar > div:last-child { width: 100%; }

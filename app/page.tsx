@@ -1634,6 +1634,7 @@ export default function Home() {
   const [contractFolders, setContractFolders] = useState<Record<string, string[]>>({});
   const [contractNewFolderCategory, setContractNewFolderCategory] = useState("");
   const [contractNewFolderPath, setContractNewFolderPath] = useState("");
+  const [contractMoveCategories, setContractMoveCategories] = useState<Record<string, ContractCategory["key"]>>({});
   const [contractMoveTargets, setContractMoveTargets] = useState<Record<string, string>>({});
   const [contractMoveErrors, setContractMoveErrors] = useState<Record<string, string>>({});
   const [contractManageBusy, setContractManageBusy] = useState("");
@@ -3313,35 +3314,55 @@ export default function Home() {
 
   async function handleContractMove(item: OwnedContractDocument) {
     if (!token) return;
+    const targetCategory = contractMoveCategories[item.document_id] ?? item.category;
     const folderPath = contractMoveTargets[item.document_id] ?? item.folder_path ?? "";
     setContractManageBusy(item.document_id);
     setError("");
     setContractMoveErrors((current) => ({ ...current, [item.document_id]: "" }));
     try {
-      const moved = await kbFetch<{ folder_path: string }>(
+      const moved = await kbFetch<{
+        category: ContractCategory["key"];
+        category_name: string;
+        confidentiality: string;
+        folder_path: string;
+      }>(
         `v1/contracts/${encodeURIComponent(item.document_id)}/folder`,
         {
           method: "PATCH",
-          body: JSON.stringify({ folder_path: folderPath }),
+          body: JSON.stringify({ target_category: targetCategory, folder_path: folderPath }),
         },
         token,
       );
+      setContractMoveCategories((current) => ({
+        ...current,
+        [item.document_id]: moved.category,
+      }));
       setContractMoveTargets((current) => ({
         ...current,
         [item.document_id]: moved.folder_path,
       }));
       const mine = await kbFetch<OwnedContractResponse>("v1/contracts/mine", {}, token);
       setOwnedContractDocuments(mine.items);
-      await refreshContractFolders(item.category);
-      if (item.category === contractCategory && selectedContractCategory?.can_search) {
+      await Promise.all([
+        refreshContractFolders(item.category),
+        item.category === moved.category ? Promise.resolve() : refreshContractFolders(moved.category),
+      ]);
+      if (
+        (item.category === contractCategory || moved.category === contractCategory)
+        && selectedContractCategory?.can_search
+      ) {
         const archive = await kbFetch<ContractArchiveResponse>(
-          `v1/contracts?category=${encodeURIComponent(item.category)}`,
+          `v1/contracts?category=${encodeURIComponent(contractCategory)}`,
           {},
           token,
         );
         setContractDocuments(archive.items);
       }
-      setContractMessage(`《${item.title}》已移动到${moved.folder_path ? `“${moved.folder_path}”` : "分类根目录"}。`);
+      setContractMessage(
+        `《${item.title}》已移入${moved.category_name}（${confidentialityLabel(moved.confidentiality)}）${
+          moved.folder_path ? `的“${moved.folder_path}”` : "分类根目录"
+        }。`,
+      );
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "合同移动失败";
       setContractMoveErrors((current) => ({
@@ -5522,7 +5543,7 @@ export default function Home() {
             <section className="panel contractOwnLibrary">
               <div className="contractOwnHeader">
                 <PanelTitle eyebrow="MY CONTRACTS" title={`我上传的合同（${ownedContractDocuments.length}）`} />
-                <p>包含待审核与已审核合同。行政可新建文件夹并移动本人上传的合同，移动只发生在原合同分类内，不会改变L4/L5密级。</p>
+                <p>包含待审核与已审核合同。行政可新建文件夹，并将本人上传的合同移到其他合同分类；移入总办合同会自动升级为L5并同步NAS路径和查看权限。</p>
               </div>
               {canManageContractFolders && (
                 <form className="contractFolderCreate" onSubmit={handleContractFolderCreate}>
@@ -5573,16 +5594,40 @@ export default function Home() {
                         {item.can_move && (
                           <>
                             <select
+                              aria-label={`移动《${item.title}》到合同分类`}
+                              value={contractMoveCategories[item.document_id] ?? item.category}
+                              onChange={(event) => {
+                                const nextCategory = event.target.value as ContractCategory["key"];
+                                setContractMoveCategories((current) => ({
+                                  ...current,
+                                  [item.document_id]: nextCategory,
+                                }));
+                                setContractMoveTargets((current) => ({
+                                  ...current,
+                                  [item.document_id]: "",
+                                }));
+                                void refreshContractFolders(nextCategory);
+                              }}
+                            >
+                              {contractCategories.filter((category) => category.can_upload).map((category) => (
+                                <option value={category.key} key={category.key}>
+                                  {category.name} · {category.confidentiality}
+                                </option>
+                              ))}
+                            </select>
+                            <select
                               aria-label={`移动《${item.title}》到文件夹`}
                               value={contractMoveTargets[item.document_id] ?? item.folder_path ?? ""}
-                              onFocus={() => void refreshContractFolders(item.category)}
+                              onFocus={() => void refreshContractFolders(
+                                contractMoveCategories[item.document_id] ?? item.category,
+                              )}
                               onChange={(event) => setContractMoveTargets((current) => ({
                                 ...current,
                                 [item.document_id]: event.target.value,
                               }))}
                             >
                               <option value="">分类根目录</option>
-                              {(contractFolders[item.category] || []).map((folder) => (
+                              {(contractFolders[contractMoveCategories[item.document_id] ?? item.category] || []).map((folder) => (
                                 <option value={folder} key={folder}>{folder}</option>
                               ))}
                             </select>

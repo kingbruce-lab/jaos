@@ -1038,16 +1038,34 @@ def move_contract_document(
     )
     if not document or not document.project or not document.file_blob:
         raise HTTPException(status_code=404, detail="合同不存在")
-    category = CONTRACT_CATEGORIES_BY_DOMAIN.get(document.project.domain)
-    if category is None:
+    source_category = CONTRACT_CATEGORIES_BY_DOMAIN.get(document.project.domain)
+    if source_category is None:
         raise HTTPException(status_code=404, detail="合同不存在")
     if (user.organization_role or "business") != "management" and document.id not in _owned_contract_document_ids(db, user):
         raise HTTPException(status_code=404, detail="合同不存在")
+    target_category_key = payload.target_category or source_category.key
+    target_category = CONTRACT_CATEGORIES.get(target_category_key)
+    if target_category is None:
+        raise HTTPException(status_code=422, detail="目标合同分类不存在")
+    if not _can_upload_contract_category(user, target_category_key):
+        raise HTTPException(status_code=403, detail="无权将合同移入该分类")
+    source_rank = CONFIDENTIALITY_RANK.get(source_category.confidentiality, 99)
+    target_rank = CONFIDENTIALITY_RANK.get(target_category.confidentiality, 99)
+    is_l5_management = bool(
+        (user.organization_role or "business") == "management"
+        and CONFIDENTIALITY_RANK.get(user.confidentiality_ceiling, 0)
+        >= CONFIDENTIALITY_RANK["L5"]
+    )
+    if target_rank < source_rank and not is_l5_management:
+        raise HTTPException(
+            status_code=403,
+            detail="降低合同密级仅限L5最高管理账号操作",
+        )
     relative = _safe_contract_folder_path(payload.folder_path)
-    root = ensure_contract_layout(settings.knowledge_root)[category.key].resolve()
+    root = ensure_contract_layout(settings.knowledge_root)[target_category.key].resolve()
     source = _contract_document_source_path(
         document,
-        category.key,
+        source_category.key,
         recover_legacy=True,
     )
     if source is None or not source.is_file():
@@ -1055,21 +1073,62 @@ def move_contract_document(
             status_code=409,
             detail="未找到该合同在当前密级目录中的原件，请联系管理员核对NAS文件",
         )
-    previous_folder = _contract_document_folder_path(str(source), category.key)
+    previous_folder = _contract_document_folder_path(
+        str(source), source_category.key
+    )
     moved = _move_nas_file_without_overwrite(source, root / relative)
     _set_contract_document_source(db, document, moved)
     if Path(document.file_blob.source_path).resolve() == source.resolve():
         document.file_blob.source_path = str(moved)
+    if target_category.key != source_category.key:
+        project_document_count = int(
+            db.scalar(
+                select(func.count(Document.id)).where(
+                    Document.project_id == document.project_id
+                )
+            )
+            or 0
+        )
+        if project_document_count <= 1:
+            document.project.domain = target_category.domain
+            document.project.confidentiality = target_category.confidentiality
+        else:
+            # Contract uploads normally have one document per project.  Keep
+            # this operation safe for legacy grouped projects by separating
+            # only the selected contract before changing its security scope.
+            previous_project = document.project
+            reclassified_project = Project(
+                name=previous_project.name,
+                client=previous_project.client,
+                year=previous_project.year,
+                domain=target_category.domain,
+                status=previous_project.status,
+                confidentiality=target_category.confidentiality,
+                knowledge_status=previous_project.knowledge_status,
+                confirmed=previous_project.confirmed,
+            )
+            db.add(reclassified_project)
+            db.flush()
+            document.project_id = reclassified_project.id
+            document.project = reclassified_project
+        document.confidentiality = target_category.confidentiality
     db.add(
         AuditLog(
             user_id=user.id,
-            action="contract_folder_move",
+            action=(
+                "contract_category_move"
+                if target_category.key != source_category.key
+                else "contract_folder_move"
+            ),
             document_ids_json=json.dumps([document.id]),
             details_json=json.dumps(
                 {
-                    "category": category.key,
-                    "from": previous_folder,
-                    "to": relative.as_posix(),
+                    "from_category": source_category.key,
+                    "to_category": target_category.key,
+                    "from_folder": previous_folder,
+                    "to_folder": relative.as_posix(),
+                    "from_confidentiality": source_category.confidentiality,
+                    "to_confidentiality": target_category.confidentiality,
                 },
                 ensure_ascii=False,
             ),
@@ -1078,7 +1137,9 @@ def move_contract_document(
     db.commit()
     return {
         "document_id": document.id,
-        "category": category.key,
+        "category": target_category.key,
+        "category_name": target_category.name,
+        "confidentiality": target_category.confidentiality,
         "folder_path": relative.as_posix(),
     }
 

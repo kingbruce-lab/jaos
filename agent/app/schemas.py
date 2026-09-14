@@ -45,6 +45,12 @@ class ContractFolderCreateRequest(BaseModel):
 
 
 class ContractFolderMoveRequest(BaseModel):
+    target_category: Literal[
+        "administrative",
+        "personnel",
+        "business",
+        "executive_office",
+    ] | None = None
     folder_path: str = Field(default="", max_length=400)
 
 
