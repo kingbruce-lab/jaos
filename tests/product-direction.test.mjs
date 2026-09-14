@@ -74,6 +74,10 @@ test("contract folders preserve structure and executive contracts stay uploader-
   assert.match(page, /重新加载合同权限/);
   assert.match(page, /不会再把加载失败误显示为“仅可上传”/);
   assert.match(page, /selectedContractCategory && \(/);
+  assert.match(agent, /ContractDocumentSource/);
+  assert.match(agent, /recover_legacy=True/);
+  assert.match(page, /contractMoveErrors/);
+  assert.match(page, /移动失败：/);
 });
 
 test("review supports visible L1-L3 batch approval and the approved level names", () => {

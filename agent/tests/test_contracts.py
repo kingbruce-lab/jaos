@@ -15,7 +15,7 @@ from app.auth import current_user
 from app.contracts import CONTRACT_CATEGORIES, ensure_contract_layout
 from app.database import get_db
 from app.main import app
-from app.models import AuditLog, Base, Document, User
+from app.models import AuditLog, Base, ContractDocumentSource, Document, User
 from app.retrieval import search
 
 
@@ -585,6 +585,75 @@ def test_same_file_hash_gets_separate_contract_security_context(
             ("contract", "L4"),
         }
         assert documents[0].content_hash == documents[1].content_hash
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_same_contract_bytes_can_move_independently_across_l4_l5_archives(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db, users = _database()
+    knowledge_root = tmp_path / "knowledge"
+    _configure(monkeypatch, db, users["l5_admin"], knowledge_root)
+    client = TestClient(app)
+    payload = _word_payload("同一份股权协议分别保存在业务合同和总办合同。")
+    try:
+        business = client.post(
+            "/v1/contracts/uploads",
+            data={
+                "category": "business",
+                "relative_path": "合作方/股权转让协议.docx",
+            },
+            files={"file": ("股权转让协议.docx", payload, "application/octet-stream")},
+        )
+        executive = client.post(
+            "/v1/contracts/uploads",
+            data={"category": "executive_office"},
+            files={"file": ("股权转让协议.docx", payload, "application/octet-stream")},
+        )
+
+        assert business.status_code == 200
+        assert executive.status_code == 200
+        assert business.json()["document_id"] != executive.json()["document_id"]
+        business_document = db.get(Document, business.json()["document_id"])
+        executive_document = db.get(Document, executive.json()["document_id"])
+        assert business_document.content_hash == executive_document.content_hash
+        business_source = db.get(ContractDocumentSource, business_document.id)
+        executive_source = db.get(ContractDocumentSource, executive_document.id)
+        assert business_source is not None
+        assert executive_source is not None
+        business_path = Path(business_source.source_path)
+        assert business_path.is_file()
+        assert Path(executive_source.source_path).is_file()
+        # Simulate a production row created before per-document source paths
+        # existed.  The correct L5 copy remains on NAS and must be recovered.
+        db.delete(executive_source)
+        db.commit()
+        db.expire(executive_document, ["contract_source"])
+        assert db.get(ContractDocumentSource, executive_document.id) is None
+
+        moved = client.patch(
+            f"/v1/contracts/{executive_document.id}/folder",
+            json={"folder_path": "内部资料（密）"},
+        )
+
+        assert moved.status_code == 200
+        assert moved.json()["folder_path"] == "内部资料（密）"
+        db.expire_all()
+        executive_source = db.get(ContractDocumentSource, executive_document.id)
+        assert "内部资料（密）" in Path(executive_source.source_path).as_posix()
+        assert Path(executive_source.source_path).is_file()
+        assert business_path.is_file()
+        assert Path(business_source.source_path).resolve() == business_path.resolve()
+        mine = client.get("/v1/contracts/mine")
+        executive_item = next(
+            item
+            for item in mine.json()["items"]
+            if item["document_id"] == executive_document.id
+        )
+        assert executive_item["folder_path"] == "内部资料（密）"
     finally:
         app.dependency_overrides.clear()
         db.close()

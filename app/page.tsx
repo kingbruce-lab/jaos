@@ -1635,6 +1635,7 @@ export default function Home() {
   const [contractNewFolderCategory, setContractNewFolderCategory] = useState("");
   const [contractNewFolderPath, setContractNewFolderPath] = useState("");
   const [contractMoveTargets, setContractMoveTargets] = useState<Record<string, string>>({});
+  const [contractMoveErrors, setContractMoveErrors] = useState<Record<string, string>>({});
   const [contractManageBusy, setContractManageBusy] = useState("");
   const [contractPendingCount, setContractPendingCount] = useState(0);
   const [contractQuery, setContractQuery] = useState("");
@@ -3315,8 +3316,9 @@ export default function Home() {
     const folderPath = contractMoveTargets[item.document_id] ?? item.folder_path ?? "";
     setContractManageBusy(item.document_id);
     setError("");
+    setContractMoveErrors((current) => ({ ...current, [item.document_id]: "" }));
     try {
-      await kbFetch(
+      const moved = await kbFetch<{ folder_path: string }>(
         `v1/contracts/${encodeURIComponent(item.document_id)}/folder`,
         {
           method: "PATCH",
@@ -3324,6 +3326,10 @@ export default function Home() {
         },
         token,
       );
+      setContractMoveTargets((current) => ({
+        ...current,
+        [item.document_id]: moved.folder_path,
+      }));
       const mine = await kbFetch<OwnedContractResponse>("v1/contracts/mine", {}, token);
       setOwnedContractDocuments(mine.items);
       await refreshContractFolders(item.category);
@@ -3335,9 +3341,13 @@ export default function Home() {
         );
         setContractDocuments(archive.items);
       }
-      setContractMessage(`《${item.title}》已移动到${folderPath ? `“${folderPath}”` : "分类根目录"}。`);
+      setContractMessage(`《${item.title}》已移动到${moved.folder_path ? `“${moved.folder_path}”` : "分类根目录"}。`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "合同移动失败");
+      const message = cause instanceof Error ? cause.message : "合同移动失败";
+      setContractMoveErrors((current) => ({
+        ...current,
+        [item.document_id]: message,
+      }));
     } finally {
       setContractManageBusy("");
     }
@@ -5585,6 +5595,11 @@ export default function Home() {
                               {contractManageBusy === item.document_id ? "移动中…" : "移动"}
                             </button>
                           </>
+                        )}
+                        {contractMoveErrors[item.document_id] && (
+                          <small className="contractMoveError" role="alert">
+                            移动失败：{contractMoveErrors[item.document_id]}
+                          </small>
                         )}
                       </div>
                     </article>

@@ -669,6 +669,11 @@ class Document(Base):
 
     project: Mapped[Project] = relationship(back_populates="documents")
     file_blob: Mapped[FileBlob] = relationship(back_populates="documents")
+    contract_source: Mapped["ContractDocumentSource | None"] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
     chunks: Mapped[list["Chunk"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
@@ -706,6 +711,31 @@ class ContractDocumentOwner(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
     )
+
+
+class ContractDocumentSource(Base):
+    """Physical NAS copy assigned to one contract security context.
+
+    ``FileBlob`` remains content-addressed and can therefore be shared by
+    documents with identical bytes.  Contract copies still need an independent
+    location because the same bytes may legitimately exist in separate L4/L5
+    archives and must be movable without touching the other security context.
+    """
+
+    __tablename__ = "contract_document_sources"
+
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id"), primary_key=True
+    )
+    source_path: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    document: Mapped[Document] = relationship(back_populates="contract_source")
 
 
 class ReviewProposal(Base):

@@ -90,6 +90,7 @@ from .models import (
     Chunk,
     ChunkEmbedding,
     ContractDocumentOwner,
+    ContractDocumentSource,
     Document,
     InboxIssue,
     KnowledgeCategory,
@@ -327,6 +328,87 @@ def _contract_document_folder_path(source_path: str, category_key: str) -> str:
     except (KeyError, OSError, ValueError):
         return ""
     return "" if relative == Path(".") else relative.as_posix()
+
+
+def _path_inside_root(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _contract_document_source_path(
+    document: Document,
+    category_key: str,
+    *,
+    recover_legacy: bool = False,
+) -> Path | None:
+    """Resolve the NAS copy that belongs to this contract document.
+
+    Older rows only have the shared ``FileBlob.source_path``.  When identical
+    bytes were uploaded into another contract security category, that shared
+    path can point outside this document's category.  During an explicit move
+    we recover the legacy copy by exact filename, size and SHA-256 within the
+    correct category root.
+    """
+    try:
+        root = ensure_contract_layout(settings.knowledge_root)[category_key].resolve()
+    except (KeyError, OSError):
+        return None
+    contract_source = getattr(document, "contract_source", None)
+    if contract_source and contract_source.source_path:
+        assigned = Path(contract_source.source_path).resolve()
+        if _path_inside_root(assigned, root):
+            return assigned
+    canonical_path = (
+        Path(document.file_blob.source_path).resolve()
+        if document.file_blob and document.file_blob.source_path
+        else None
+    )
+    if canonical_path is not None and _path_inside_root(canonical_path, root):
+        return canonical_path
+    if not recover_legacy:
+        return None
+
+    filenames = {
+        Path(document.title).name,
+        canonical_path.name if canonical_path is not None else "",
+    }
+    expected_size = document.file_blob.size_bytes if document.file_blob else None
+    for filename in sorted(item for item in filenames if item):
+        for candidate in root.rglob(filename):
+            try:
+                relative = candidate.resolve().relative_to(root)
+                if any(part.startswith(".") for part in relative.parts):
+                    continue
+                if not candidate.is_file():
+                    continue
+                if expected_size is not None and candidate.stat().st_size != expected_size:
+                    continue
+                if file_sha256(candidate) == document.content_hash:
+                    return candidate.resolve()
+            except OSError:
+                continue
+    return None
+
+
+def _set_contract_document_source(
+    db: Session,
+    document: Document,
+    source: Path,
+) -> ContractDocumentSource:
+    assigned = db.get(ContractDocumentSource, document.id)
+    if assigned is None:
+        assigned = ContractDocumentSource(
+            document_id=document.id,
+            source_path=str(source.resolve()),
+        )
+        db.add(assigned)
+    else:
+        assigned.source_path = str(source.resolve())
+    document.contract_source = assigned
+    return assigned
 
 
 def _safe_contract_folder_path(value: str | None) -> Path:
@@ -740,7 +822,8 @@ def _contract_document_item(
     category: ContractCategory,
     can_move: bool,
 ) -> dict:
-    source_path = document.file_blob.source_path if document.file_blob else ""
+    source = _contract_document_source_path(document, category.key)
+    source_path = str(source) if source is not None else ""
     return {
         "document_id": document.id,
         "title": document.title,
@@ -778,7 +861,11 @@ def list_my_contract_documents(
     documents = db.scalars(
         select(Document)
         .join(Document.project)
-        .options(joinedload(Document.project), joinedload(Document.file_blob))
+        .options(
+            joinedload(Document.project),
+            joinedload(Document.file_blob),
+            joinedload(Document.contract_source),
+        )
         .where(
             Document.id.in_(owned_ids),
             Project.domain.in_(CONTRACT_DOMAINS),
@@ -874,7 +961,11 @@ def move_contract_document(
         raise HTTPException(status_code=403, detail="仅行政或最高管理账号可移动合同")
     document = db.scalar(
         select(Document)
-        .options(joinedload(Document.project), joinedload(Document.file_blob))
+        .options(
+            joinedload(Document.project),
+            joinedload(Document.file_blob),
+            joinedload(Document.contract_source),
+        )
         .where(Document.id == document_id)
     )
     if not document or not document.project or not document.file_blob:
@@ -884,23 +975,23 @@ def move_contract_document(
         raise HTTPException(status_code=404, detail="合同不存在")
     if (user.organization_role or "business") != "management" and document.id not in _owned_contract_document_ids(db, user):
         raise HTTPException(status_code=404, detail="合同不存在")
-    reference_count = db.scalar(
-        select(func.count(Document.id)).where(
-            Document.content_hash == document.content_hash
-        )
-    )
-    if int(reference_count or 0) != 1:
-        raise HTTPException(status_code=409, detail="该原件被多个资料引用，暂不能直接移动")
     relative = _safe_contract_folder_path(payload.folder_path)
     root = ensure_contract_layout(settings.knowledge_root)[category.key].resolve()
-    source = Path(document.file_blob.source_path).resolve()
-    try:
-        source.relative_to(root)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail="合同原件不在规范目录中") from exc
+    source = _contract_document_source_path(
+        document,
+        category.key,
+        recover_legacy=True,
+    )
+    if source is None or not source.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail="未找到该合同在当前密级目录中的原件，请联系管理员核对NAS文件",
+        )
     previous_folder = _contract_document_folder_path(str(source), category.key)
     moved = _move_nas_file_without_overwrite(source, root / relative)
-    document.file_blob.source_path = str(moved)
+    _set_contract_document_source(db, document, moved)
+    if Path(document.file_blob.source_path).resolve() == source.resolve():
+        document.file_blob.source_path = str(moved)
     db.add(
         AuditLog(
             user_id=user.id,
@@ -996,15 +1087,21 @@ async def upload_contract(
             entry,
             expected_stat=(stat.st_size, stat.st_mtime_ns),
         )
+        document = db.get(Document, result["document_id"])
         if result.get("duplicate_filtered"):
-            canonical_document = db.get(Document, result["document_id"])
             canonical_path = (
-                Path(canonical_document.file_blob.source_path).resolve()
-                if canonical_document and canonical_document.file_blob
+                Path(document.file_blob.source_path).resolve()
+                if document and document.file_blob
                 else None
             )
-            if canonical_path is not None and final_path.resolve() != canonical_path:
+            assigned_path = (
+                Path(document.contract_source.source_path).resolve()
+                if document and document.contract_source
+                else canonical_path
+            )
+            if assigned_path is not None and final_path.resolve() != assigned_path:
                 final_path.unlink(missing_ok=True)
+                final_path = assigned_path
         filing = {
             "mode": "preserved" if relative_parent.parts else "existing",
             "folder_path": relative_parent.as_posix() if relative_parent.parts else "",
@@ -1012,7 +1109,6 @@ async def upload_contract(
             "matched_keywords": [],
         }
         if not relative_parent.parts and not result.get("duplicate_filtered"):
-            document = db.get(Document, result["document_id"])
             reference_count = db.scalar(
                 select(func.count(Document.id)).where(
                     Document.content_hash == document.content_hash
@@ -1066,6 +1162,8 @@ async def upload_contract(
                         ),
                     )
                 )
+        if document is not None and final_path.is_file():
+            _set_contract_document_source(db, document, final_path)
         existing_owner = db.scalar(
             select(ContractDocumentOwner).where(
                 ContractDocumentOwner.document_id == result["document_id"],
@@ -1993,6 +2091,7 @@ def list_contract_documents(
             .options(
                 joinedload(Document.project),
                 joinedload(Document.file_blob),
+                joinedload(Document.contract_source),
             )
             .where(
                 Project.domain == contract_category.domain,
@@ -2006,10 +2105,6 @@ def list_contract_documents(
         if owned_document_ids is not None:
             statement = statement.where(Document.id.in_(owned_document_ids))
         documents = db.scalars(statement).all()
-    health = {
-        item.content_hash: item
-        for item in db.scalars(select(SourceHealth)).all()
-    }
     pending_statement = (
         select(Document)
         .join(Document.project)
@@ -2027,35 +2122,30 @@ def list_contract_documents(
         for document in pending_documents
         if access_scope == "own" or is_authorized(user, document, document.project)
     )
-    items = [
-        {
-            "document_id": document.id,
-            "title": document.title,
-            "version": document.version,
-            "page_count": document.page_count,
-            "citation_basis": document.citation_basis,
-            "knowledge_status": document.knowledge_status,
-            "confidentiality": document.confidentiality,
-            "created_at": document.ingested_at,
-            "folder_path": (
-                _contract_document_folder_path(
-                    document.file_blob.source_path,
-                    category,
-                )
-                if document.file_blob
-                else ""
-            ),
-        }
-        for document in documents
-        if (
-            access_scope == "own"
-            or is_authorized(user, document, document.project)
+    items: list[dict] = []
+    for document in documents:
+        if access_scope != "own" and not is_authorized(
+            user, document, document.project
+        ):
+            continue
+        source = _contract_document_source_path(document, category)
+        if source is None or not source.is_file():
+            continue
+        items.append(
+            {
+                "document_id": document.id,
+                "title": document.title,
+                "version": document.version,
+                "page_count": document.page_count,
+                "citation_basis": document.citation_basis,
+                "knowledge_status": document.knowledge_status,
+                "confidentiality": document.confidentiality,
+                "created_at": document.ingested_at,
+                "folder_path": _contract_document_folder_path(
+                    str(source), category
+                ),
+            }
         )
-        and source_is_available(
-            document.file_blob,
-            health.get(document.content_hash),
-        )
-    ]
     db.add(
         AuditLog(
             user_id=user.id,
