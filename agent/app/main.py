@@ -1062,6 +1062,7 @@ def move_contract_document(
             detail="降低合同密级仅限L5最高管理账号操作",
         )
     relative = _safe_contract_folder_path(payload.folder_path)
+    relative_folder = "" if relative == Path(".") else relative.as_posix()
     root = ensure_contract_layout(settings.knowledge_root)[target_category.key].resolve()
     source = _contract_document_source_path(
         document,
@@ -1126,7 +1127,7 @@ def move_contract_document(
                     "from_category": source_category.key,
                     "to_category": target_category.key,
                     "from_folder": previous_folder,
-                    "to_folder": relative.as_posix(),
+                    "to_folder": relative_folder,
                     "from_confidentiality": source_category.confidentiality,
                     "to_confidentiality": target_category.confidentiality,
                 },
@@ -1140,7 +1141,7 @@ def move_contract_document(
         "category": target_category.key,
         "category_name": target_category.name,
         "confidentiality": target_category.confidentiality,
-        "folder_path": relative.as_posix(),
+        "folder_path": relative_folder,
     }
 
 

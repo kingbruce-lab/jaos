@@ -334,7 +334,7 @@ def test_administrative_can_reclassify_own_business_contract_to_executive_office
             f"/v1/contracts/{document_id}/folder",
             json={
                 "target_category": "executive_office",
-                "folder_path": "内部资料（密）",
+                "folder_path": "",
             },
         )
 
@@ -344,7 +344,7 @@ def test_administrative_can_reclassify_own_business_contract_to_executive_office
             "category": "executive_office",
             "category_name": "总办合同",
             "confidentiality": "L5",
-            "folder_path": "内部资料（密）",
+            "folder_path": "",
         }
         db.expire_all()
         document = db.get(Document, document_id)
@@ -358,7 +358,7 @@ def test_administrative_can_reclassify_own_business_contract_to_executive_office
         assert document.project.confidentiality == "L5"
         assert source is not None
         assert Path(source.source_path).is_file()
-        assert "总办合同/L5/内部资料（密）" in Path(source.source_path).as_posix()
+        assert "总办合同/L5/业务承接协议.docx" in Path(source.source_path).as_posix()
         assert not old_path.exists()
         assert audit is not None
         details = json.loads(audit.details_json)
