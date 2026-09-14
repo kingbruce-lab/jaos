@@ -634,6 +634,24 @@ def test_same_contract_bytes_can_move_independently_across_l4_l5_archives(
         db.expire(executive_document, ["contract_source"])
         assert db.get(ContractDocumentSource, executive_document.id) is None
 
+        # Startup migration must recover the old L5 copy before anyone moves
+        # it, so an authorized CEO can see it in the archive immediately.
+        backfill = main.backfill_contract_document_sources(db)
+        assert backfill["mapped"] == 1
+        db.expire_all()
+        recovered_source = db.get(ContractDocumentSource, executive_document.id)
+        assert recovered_source is not None
+        assert Path(recovered_source.source_path).is_file()
+
+        executive_document.knowledge_status = "approved"
+        executive_document.project.knowledge_status = "approved"
+        db.commit()
+        visible = client.get("/v1/contracts", params={"category": "executive_office"})
+        assert visible.status_code == 200
+        assert executive_document.id in {
+            item["document_id"] for item in visible.json()["items"]
+        }
+
         moved = client.patch(
             f"/v1/contracts/{executive_document.id}/folder",
             json={"folder_path": "内部资料（密）"},

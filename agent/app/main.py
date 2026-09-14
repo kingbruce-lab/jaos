@@ -190,6 +190,7 @@ async def lifespan(_app: FastAPI):
         filter_exact_duplicate_documents(db)
         auto_approve_pending_assets(db)
         ensure_contract_layout(settings.knowledge_root)
+        backfill_contract_document_sources(db)
     yield
 
 
@@ -359,14 +360,20 @@ def _contract_document_source_path(
     contract_source = getattr(document, "contract_source", None)
     if contract_source and contract_source.source_path:
         assigned = Path(contract_source.source_path).resolve()
-        if _path_inside_root(assigned, root):
+        if _path_inside_root(assigned, root) and (
+            not recover_legacy or assigned.is_file()
+        ):
             return assigned
     canonical_path = (
         Path(document.file_blob.source_path).resolve()
         if document.file_blob and document.file_blob.source_path
         else None
     )
-    if canonical_path is not None and _path_inside_root(canonical_path, root):
+    if (
+        canonical_path is not None
+        and _path_inside_root(canonical_path, root)
+        and (not recover_legacy or canonical_path.is_file())
+    ):
         return canonical_path
     if not recover_legacy:
         return None
@@ -409,6 +416,67 @@ def _set_contract_document_source(
         assigned.source_path = str(source.resolve())
     document.contract_source = assigned
     return assigned
+
+
+def backfill_contract_document_sources(db: Session) -> dict[str, int]:
+    """Persist the correct NAS copy for contracts created before v1.3.2.
+
+    ``FileBlob`` is shared by content hash.  A byte-identical L4 and L5 upload
+    could therefore leave the L5 document pointing at the L4 physical copy.
+    Recovering and persisting each document's copy at startup makes historical
+    contracts visible to authorized users without requiring an administrator
+    to move every file first.
+    """
+    documents = db.scalars(
+        select(Document)
+        .join(Document.project)
+        .options(
+            joinedload(Document.project),
+            joinedload(Document.file_blob),
+            joinedload(Document.contract_source),
+        )
+        .where(
+            Project.domain.in_(CONTRACT_DOMAINS),
+            Document.knowledge_status.notin_(("deleted", "quarantined")),
+        )
+    ).all()
+    mapped = 0
+    missing = 0
+    for document in documents:
+        category = CONTRACT_CATEGORIES_BY_DOMAIN.get(document.project.domain)
+        if category is None or document.file_blob is None:
+            continue
+        source = _contract_document_source_path(
+            document,
+            category.key,
+            recover_legacy=True,
+        )
+        if source is None or not source.is_file():
+            missing += 1
+            continue
+        current = getattr(document, "contract_source", None)
+        if current and Path(current.source_path).resolve() == source.resolve():
+            continue
+        _set_contract_document_source(db, document, source)
+        mapped += 1
+    if mapped:
+        db.add(
+            AuditLog(
+                user_id=None,
+                action="contract_document_source_backfill",
+                document_ids_json="[]",
+                details_json=json.dumps(
+                    {
+                        "mapped_count": mapped,
+                        "missing_count": missing,
+                        "reason": "为旧合同补齐按合同记录独立保存的NAS原件位置",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        db.commit()
+    return {"mapped": mapped, "missing": missing}
 
 
 def _safe_contract_folder_path(value: str | None) -> Path:
