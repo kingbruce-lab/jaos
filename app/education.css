@@ -127,12 +127,15 @@
 .educationDayOpen small { color: #667b8f; font-size: 10px; }
 .educationDayMarks { display: flex; gap: 6px; padding: 0 10px 10px; }
 .educationDayMarks button { width: 30px; height: 28px; border: 1px solid #efc9cd; border-radius: 8px; color: #b4a0a3; background: #fff7f8; cursor: pointer; font-weight: 900; }
+.educationDayMarks button:disabled { cursor: not-allowed; opacity: .55; }
 .educationDayMarks button.active { border-color: #dc2637; color: #fff; background: #dc2637; box-shadow: 0 4px 10px rgba(220,38,55,.2); }
 .educationMonthlySummaryCard { min-height: 154px; display: grid; align-content: center; gap: 8px; padding: 14px; border: 2px dashed #c99430; border-radius: 11px; color: #76500e; background: #fff9e9; text-align: left; cursor: pointer; }
 .educationMonthlySummaryCard.complete { border-style: solid; border-color: #2b8c65; color: #22684d; background: #edf9f4; }
 .educationMonthlySummaryCard span, .educationMonthlySummaryCard small { font-size: 11px; }
 .educationMonthlySummaryCard small { color: #7c6b4d; }
 .educationDayEditor { margin-top: 18px; padding: 20px; border: 1px solid #9fc2df; border-radius: 16px; background: #fff; box-shadow: 0 14px 32px rgba(24,75,112,.11); }
+.educationReportOverlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(10,24,38,.62); backdrop-filter: blur(3px); }
+.educationReportDialog { width: min(1080px,100%); max-height: calc(100vh - 48px); margin: 0; overflow-y: auto; overscroll-behavior: contain; box-shadow: 0 28px 80px rgba(6,20,34,.32); }
 .educationDayEditor > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid #dbe8f1; }
 .educationDayEditor h4 { margin: 4px 0 0; color: #153b61; font-size: 21px; }
 .educationDayEditor header span { color: #2870a4; font-weight: 700; }
@@ -147,6 +150,8 @@
 .educationMonthlyEditor { border-color: #dfbd74; background: #fffdf7; }
 .educationPurposeNote { display: grid; gap: 6px; margin: 14px 0; padding: 14px 16px; border-left: 4px solid #2873a8; border-radius: 10px; background: #edf6fc; color: #536d82; line-height: 1.65; }
 .educationPurposeNote strong { color: #174f78; }
+.educationInlineStatus { margin: 12px 0; }
+.educationCostEntrySection > .educationSectionTitle { margin-bottom: 12px; }
 .educationCostDocuments, .educationDailyLogs { display: grid; gap: 10px; margin-top: 16px; }
 .educationCostDocuments article, .educationDailyLogs article { padding: 14px; border: 1px solid #dbe4ee; border-radius: 12px; background: #fff; }
 .educationCostDocuments article header, .educationDailyLogs article header { display: flex; justify-content: space-between; gap: 16px; }
@@ -171,4 +176,6 @@
   .educationCostDocuments article header, .educationDailyLogs article header { display: grid; gap: 5px; }
   .educationRosterPerson { grid-template-columns: 42px minmax(0,1fr); }
   .educationRosterPerson button { grid-column: 1 / -1; }
+  .educationReportOverlay { padding: 8px; }
+  .educationReportDialog { max-height: calc(100vh - 16px); padding: 14px; border-radius: 12px; }
 }

@@ -105,7 +105,7 @@ def test_monthly_cohorts_accumulate_and_corrections_replace_not_duplicate(setup)
     assert summary["has_more"]
     assert len(summary["items"]) == 1
     assert summary["summary"] == {"cohort_count": 2, "student_count": 20, "expected_income": "74006.00",
-        "income": "42000.25", "student_cost": "0.00", "operating_expense": "1234.56",
+        "income": "42000.25", "student_cost": "0.00", "cost": "0.00", "cash_expense": "1234.56", "operating_expense": "1234.56",
         "expense": "1234.56", "net": "40765.69"}
     assert not client.get("/v1/pm/education/cohorts?limit=1&offset=1").json()["has_more"]
     update = {key: value for key, value in first.items() if key != "request_id"}

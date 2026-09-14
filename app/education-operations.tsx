@@ -10,7 +10,7 @@ type CostAttachment = { id: string; filename: string; size_bytes: number; sha256
 type Cost = { id: string; occurred_on: string; ended_on: string; category: string; detail: string; amount: string; allocated_amount: string; vendor: string; document_no: string; source_ref: string; note: string; allocations: CostAllocation[]; attachments: CostAttachment[]; version: number };
 type CostDetail = Cost & { allocation_mode: "cohort" | "equal_students" | "custom"; allocation_month: string | null; can_edit: boolean; has_hidden_allocations: boolean };
 type DailyLog = { id: string; log_date: string; staff_id: string; staff_name: string; staff_role: string; log_type: string; summary: string; follow_up: string; student_ids: string[]; version: number };
-type MonthlySummary = { id?: string; month: string; summary: string; achievements: string; problems: string; next_month_plan: string; version: number };
+type MonthlySummary = { id?: string; period_start: string; summary: string; achievements: string; problems: string; next_month_plan: string; version: number };
 type Operations = { schedule: { generated: boolean; days: Day[]; monthly_summaries: MonthlySummary[]; summary: { teaching: number; practice: number; rest: number } }; costs: { items: Cost[]; source_total: string; allocated_to_cohort: string }; logs: DailyLog[]; missing_log_days: string[]; can_view_logs: boolean; can_edit: boolean };
 type Staff = { id: string; name: string; role: string; active: boolean };
 type Student = { id: string; name: string; student_no?: string | null };
@@ -99,16 +99,38 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
     finally { setBusy(""); }
   }
 
-  async function updateMonthlySummary(event: FormEvent<HTMLFormElement>, month: string) {
+  async function toggleDayFlag(day: Day, field: "special_achievement" | "problem_flag") {
+    if (busy || !canEdit) return;
+    setBusy(`flag-${day.id}-${field}`); setError(""); setMessage("");
+    try {
+      await api(`v1/pm/education/cohorts/${cohortId}/schedule/${day.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          day_type: day.day_type,
+          title: day.title,
+          notes: day.notes,
+          report: { ...day.report, [field]: !day.report[field] },
+          version: day.version,
+        }),
+      }, token);
+      setMessage(`${day.calendar_date} 已${day.report[field] ? "取消" : "标记"}${field === "special_achievement" ? "特殊成绩" : "问题"}。`);
+      setRevision((value) => value + 1);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "日期标记保存失败"); }
+    finally { setBusy(""); }
+  }
+
+  async function updateMonthlySummary(event: FormEvent<HTMLFormElement>, periodStart: string) {
     event.preventDefault();
     if (busy || !canEdit) return;
-    const current = data?.schedule.monthly_summaries.find((item) => item.month === month);
+    const current = data?.schedule.monthly_summaries.find((item) => item.period_start === periodStart);
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
-    setBusy(`month-${month}`); setError("");
+    const periodIndex = data?.schedule.days.findIndex((day) => day.calendar_date === periodStart) ?? 0;
+    const teachingMonth = Math.floor(Math.max(0, periodIndex) / 29) + 1;
+    setBusy(`month-${periodStart}`); setError("");
     try {
-      await api(`v1/pm/education/cohorts/${cohortId}/monthly-summaries/${month}`, { method: "PUT", body: JSON.stringify({ ...values, version: current?.version || 0 }) }, token);
-      setMessage(`${month} 月度总结已保存。`); setRevision((value) => value + 1); onChanged();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "月度总结保存失败"); }
+      await api(`v1/pm/education/cohorts/${cohortId}/teaching-month-summaries/${periodStart}`, { method: "PUT", body: JSON.stringify({ ...values, version: current?.version || 0 }) }, token);
+      setMessage(`第 ${teachingMonth} 教学月总结已保存。`); setRevision((value) => value + 1); onChanged();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "教学月总结保存失败"); }
     finally { setBusy(""); }
   }
 
@@ -244,12 +266,13 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
   const selectedDay = data?.schedule.days.find((day) => day.id === selectedDayId);
   const reportComplete = (day: Day) => Boolean(day.report?.lesson_content || day.report?.student_performance || day.report?.attendance);
   const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-  const monthGroups = Array.from((data?.schedule.days || []).reduce((groups, day) => {
-    const month = day.calendar_date.slice(0, 7);
-    groups.set(month, [...(groups.get(month) || []), day]);
-    return groups;
-  }, new Map<string, Day[]>()).entries());
-  const selectedSummary = data?.schedule.monthly_summaries.find((item) => item.month === selectedMonth);
+  const scheduleDays = data?.schedule.days || [];
+  const teachingMonths = Array.from({ length: Math.ceil(scheduleDays.length / 29) }, (_, index) => {
+    const days = scheduleDays.slice(index * 29, (index + 1) * 29);
+    return { index: index + 1, periodStart: days[0].calendar_date, periodEnd: days[days.length - 1].calendar_date, days };
+  });
+  const selectedTeachingMonth = teachingMonths.find((item) => item.periodStart === selectedMonth);
+  const selectedSummary = data?.schedule.monthly_summaries.find((item) => item.period_start === selectedMonth);
 
   return <section className="educationOperations">
     <header><div><p className="eyebrow">COHORT OPERATIONS</p><h3>班期运营台账</h3><p>原始成本只记一次；分摊用于明确班期、月份和学员归属，不重复增加总支出。</p></div></header>
@@ -261,15 +284,15 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
       <div className="educationOperationSummary"><span>授课 {data?.schedule.summary.teaching || 0} 天</span><span>自主练习 {data?.schedule.summary.practice || 0} 天</span><span>休息/调整 {data?.schedule.summary.rest || 0} 天</span></div>
       {canEdit && <button type="button" className="secondaryButton" disabled={!!busy} onClick={() => void generateSchedule()}>{data?.schedule.generated ? "补齐缺失日期（不覆盖调整）" : "按6＋1生成完整课表"}</button>}
       {!!data?.missing_log_days.length && <div className="educationMissingLogs" role="status"><strong>日报待填：{data.missing_log_days.length}天</strong><span>{data.missing_log_days.slice(0, 8).join("、")}{data.missing_log_days.length > 8 ? "…" : ""}</span></div>}
-      <p className="educationHint">点击任意日期，会在下方打开完整的每日报告。日历用于每天的主记录；临时异常或多位老师的补充事项可在页面末尾另行追加。</p>
-      <div className="educationCalendarMonths">{monthGroups.map(([month, days]) => {
+      <p className="educationHint">点击任意日期会立即弹出当天的完整报告，无需向下寻找；红色五角星和问号可直接在日期小格中开关。每29天为一个教学月，最后一格填写该教学月总结。</p>
+      <div className="educationCalendarMonths">{teachingMonths.map(({ index, periodStart, periodEnd, days }) => {
         const firstWeekday = new Date(`${days[0].calendar_date}T00:00:00`).getDay();
-        const summary = data?.schedule.monthly_summaries.find((item) => item.month === month);
+        const summary = data?.schedule.monthly_summaries.find((item) => item.period_start === periodStart);
         const completed = days.filter(reportComplete).length;
         const achievements = days.filter((day) => day.report.special_achievement).length;
         const problems = days.filter((day) => day.report.problem_flag).length;
-        return <section className="educationCalendarMonth" key={month}>
-          <header><h5>{month.slice(0, 4)} 年 {Number(month.slice(5))} 月</h5><span>已填日报 {completed}/{days.length}</span></header>
+        return <section className="educationCalendarMonth" key={periodStart}>
+          <header><h5>第 {index} 教学月 · {periodStart} 至 {periodEnd}</h5><span>已填日报 {completed}/{days.length}</span></header>
           <div className="educationCalendarScroller">
             <div className="educationWeekdayRow">{weekdays.map((weekday) => <b key={weekday}>{weekday}</b>)}</div>
             <div className="educationCalendarGrid">
@@ -282,20 +305,20 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
                   <small>{reportComplete(day) ? "日报已填写" : "点击填写日报"}</small>
                 </button>
                 <div className="educationDayMarks">
-                  <button type="button" className={day.report.special_achievement ? "active" : ""} title="特殊成绩日" aria-label="特殊成绩日" onClick={() => { setSelectedDayId(day.id); setSelectedMonth(""); }}>★</button>
-                  <button type="button" className={day.report.problem_flag ? "active" : ""} title="出现问题日" aria-label="出现问题日" onClick={() => { setSelectedDayId(day.id); setSelectedMonth(""); }}>?</button>
+                  <button type="button" disabled={!canEdit || !!busy} className={day.report.special_achievement ? "active" : ""} title="直接标记或取消特殊成绩日" aria-label="直接标记或取消特殊成绩日" onClick={() => void toggleDayFlag(day, "special_achievement")}>★</button>
+                  <button type="button" disabled={!canEdit || !!busy} className={day.report.problem_flag ? "active" : ""} title="直接标记或取消出现问题日" aria-label="直接标记或取消出现问题日" onClick={() => void toggleDayFlag(day, "problem_flag")}>?</button>
                 </div>
               </article>)}
-              <button type="button" className={`educationMonthlySummaryCard ${summary?.summary ? "complete" : ""}`} onClick={() => { setSelectedMonth(month); setSelectedDayId(""); }}>
-                <strong>{Number(month.slice(5))} 月月度总结</strong>
+              <button type="button" className={`educationMonthlySummaryCard ${summary?.summary ? "complete" : ""}`} onClick={() => { setSelectedMonth(periodStart); setSelectedDayId(""); }}>
+                <strong>第 {index} 教学月总结</strong>
                 <span>红星 {achievements} 天 · 问题 {problems} 天</span>
-                <small>{summary?.summary ? "已填写 · 点击查看或修正" : "本月最后一格 · 点击填写"}</small>
+                <small>{summary?.summary ? "已填写 · 点击查看或修正" : "第29天后总结 · 点击填写"}</small>
               </button>
             </div>
           </div>
         </section>;
       })}</div>
-      {selectedDay && <form key={`${selectedDay.id}-${selectedDay.version}`} onSubmit={(event) => void updateDay(event, selectedDay)} className="educationDayEditor">
+      {selectedDay && <div className="educationReportOverlay" role="dialog" aria-modal="true" aria-label={`${selectedDay.calendar_date} 教学日报`} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedDayId(""); }}><form key={`${selectedDay.id}-${selectedDay.version}`} onSubmit={(event) => void updateDay(event, selectedDay)} className="educationDayEditor educationReportDialog">
         <header><div><span>第 {selectedDay.day_number} 天</span><h4>{selectedDay.calendar_date} 教学日报</h4></div><button type="button" onClick={() => setSelectedDayId("")}>关闭</button></header>
         <div className="educationForm">
           <label>日期类型<select name="day_type" defaultValue={selectedDay.day_type} disabled={!canEdit}><option value="teaching">授课日</option><option value="practice">自主练习日</option><option value="rest">休息/调整</option></select></label>
@@ -317,22 +340,25 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
           <label className="educationWide">日程调整说明<textarea name="notes" defaultValue={selectedDay.notes} maxLength={2000} disabled={!canEdit} placeholder="临时调课、休息或其他日程说明" /></label>
           {canEdit && <button className="primaryButton" disabled={!!busy}>{busy === `day-${selectedDay.id}` ? "保存中…" : "保存本日完整报告"}</button>}
         </div>
-      </form>}
-      {selectedMonth && <form key={`${selectedMonth}-${selectedSummary?.version || 0}`} onSubmit={(event) => void updateMonthlySummary(event, selectedMonth)} className="educationDayEditor educationMonthlyEditor">
-        <header><div><span>MONTHLY REVIEW</span><h4>{selectedMonth.slice(0, 4)} 年 {Number(selectedMonth.slice(5))} 月月度总结</h4></div><button type="button" onClick={() => setSelectedMonth("")}>关闭</button></header>
+      </form></div>}
+      {selectedMonth && <div className="educationReportOverlay" role="dialog" aria-modal="true" aria-label={`第 ${selectedTeachingMonth?.index || ""} 教学月总结`} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelectedMonth(""); }}><form key={`${selectedMonth}-${selectedSummary?.version || 0}`} onSubmit={(event) => void updateMonthlySummary(event, selectedMonth)} className="educationDayEditor educationMonthlyEditor educationReportDialog">
+        <header><div><span>TEACHING MONTH REVIEW · 29 DAYS</span><h4>第 {selectedTeachingMonth?.index} 教学月总结</h4><small>{selectedTeachingMonth?.periodStart} 至 {selectedTeachingMonth?.periodEnd}</small></div><button type="button" onClick={() => setSelectedMonth("")}>关闭</button></header>
         <div className="educationForm">
-          <label className="educationWide">本月教学与运营总结<textarea name="summary" defaultValue={selectedSummary?.summary || ""} maxLength={8000} disabled={!canEdit} placeholder="总结授课执行、学员状态、招生收费和班期运营情况" /></label>
-          <label className="educationWide">本月成绩与亮点<textarea name="achievements" defaultValue={selectedSummary?.achievements || ""} maxLength={5000} disabled={!canEdit} placeholder="汇总红星日期的关键成果、数据和典型案例" /></label>
-          <label className="educationWide">本月问题与纠偏<textarea name="problems" defaultValue={selectedSummary?.problems || ""} maxLength={5000} disabled={!canEdit} placeholder="汇总问题日期、原因、已采取措施和遗留风险" /></label>
-          <label className="educationWide">下月计划<textarea name="next_month_plan" defaultValue={selectedSummary?.next_month_plan || ""} maxLength={5000} disabled={!canEdit} placeholder="下月课程、人员、招生、成本和家长沟通计划" /></label>
-          {canEdit && <button className="primaryButton" disabled={!!busy}>{busy === `month-${selectedMonth}` ? "保存中…" : "保存月度总结"}</button>}
+          <label className="educationWide">本教学月教学与运营总结<textarea name="summary" defaultValue={selectedSummary?.summary || ""} maxLength={8000} disabled={!canEdit} placeholder="总结本29天教学周期内的授课执行、学员状态、招生收费和班期运营情况" /></label>
+          <label className="educationWide">本教学月成绩与亮点<textarea name="achievements" defaultValue={selectedSummary?.achievements || ""} maxLength={5000} disabled={!canEdit} placeholder="汇总红星日期的关键成果、数据和典型案例" /></label>
+          <label className="educationWide">本教学月问题与纠偏<textarea name="problems" defaultValue={selectedSummary?.problems || ""} maxLength={5000} disabled={!canEdit} placeholder="汇总问题日期、原因、已采取措施和遗留风险" /></label>
+          <label className="educationWide">下一教学月计划<textarea name="next_month_plan" defaultValue={selectedSummary?.next_month_plan || ""} maxLength={5000} disabled={!canEdit} placeholder="下一教学月课程、人员、招生、成本和家长沟通计划" /></label>
+          {canEdit && <button className="primaryButton" disabled={!!busy}>{busy === `month-${selectedMonth}` ? "保存中…" : "保存教学月总结"}</button>}
         </div>
-      </form>}
+      </form></div>}
       {!data?.schedule.days.length && <p className="educationHint">尚未生成课表。系统会以开班日为第1天，循环安排6天授课、1天自主练习。</p>}
     </section>
 
-    <details className="educationOperationSection" open>
-      <summary>分段费用、凭证与成本分摊</summary>
+    <section className="educationOperationSection educationCostEntrySection">
+      <h4 className="educationSectionTitle">逐项登记费用支出、凭证与成本分摊</h4>
+      <div className="educationPurposeNote"><strong>每项费用都可持续增加</strong><span>饭费、住宿费、训练室房间费、零食费、活动经费和教师费用，请按实际发生时段逐项保存；保存一项后表单会清空，可立即继续增加下一项。</span></div>
+      {error && <div className="educationError educationInlineStatus" role="alert">{error}</div>}
+      {message && <div className="noticeBar educationInlineStatus" role="status">{message}</div>}
       <div className="educationOperationSummary"><span>原始单据合计 {money(data?.costs.source_total || "0")}</span><span>分摊到本期 {money(data?.costs.allocated_to_cohort || "0")}</span></div>
       {canEdit && <form className="educationForm" onSubmit={(event) => void createCost(event)}>
         <label>发生日期<input name="occurred_on" type="date" defaultValue={cohortStart} required /></label>
@@ -391,8 +417,8 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
           <button type="button" disabled={!!busy} onClick={() => setEditingCost(null)}>取消</button>
         </form>
       </section>}
-      {!data?.costs.items.length && <p className="educationHint">尚未登记结构化成本单据。原有“公共收支”仍保留，不会被自动重复迁移。</p>}
-    </details>
+      {!data?.costs.items.length && <p className="educationHint">尚未登记结构化成本单据。请在上方选择费用分类、填写金额后点击“保存并继续增加下一段费用”。</p>}
+    </section>
 
     {data?.can_view_logs && <details className="educationOperationSection">
       <summary>补充记录与异常事项（可选）</summary>

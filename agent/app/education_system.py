@@ -237,6 +237,7 @@ def list_cohorts(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=1
                        "net": _money((income or 0) - (expense or 0))} for row, owner, income, expense, count, due in rows],
             "summary": {"cohort_count": summary[0], "student_count": summary[1], "expected_income": _money(summary[2]),
                         "income": _money(summary[3]), "student_cost": _money(student_cost),
+                        "cost": _money(student_cost + allocated_cost), "cash_expense": _money(cash_expense),
                         "operating_expense": _money(cash_expense + allocated_cost),
                         "expense": _money(summary[4]), "net": _money(summary[3] - summary[4])},
             "enrollment_summary": {"receivable": _money(summary[5]), "received": _money(summary[6]), "arrears": _money(summary[7])},

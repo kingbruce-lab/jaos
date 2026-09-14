@@ -28,8 +28,9 @@ test("education starts the cross-cohort ledger and uses confirmed course duratio
 test("education separates expected and actual income and protects repeated writes", () => {
   assert.match(education, /预计收入/);
   assert.match(education, /总收入/);
-  assert.match(education, /学员直接成本/);
-  assert.match(education, /其他支出/);
+  assert.match(education, /总成本/);
+  assert.match(education, /逐项登记收入 \/ 费用支出/);
+  assert.match(education, /保存本项并继续添加/);
   assert.match(education, /实时结余/);
   assert.match(education, /educationStickyMetrics/);
   assert.match(education, /request_id = createId.current/);
@@ -47,7 +48,10 @@ test("education phase two provides 6+1 calendar, source costs, daily logs and fi
   assert.match(operations, /课程目标/);
   assert.match(operations, /学员表现与进步/);
   assert.match(operations, /周日/);
-  assert.match(operations, /月月度总结/);
+  assert.match(operations, /每29天为一个教学月/);
+  assert.match(operations, /teaching-month-summaries/);
+  assert.match(operations, /educationReportOverlay/);
+  assert.match(operations, /toggleDayFlag/);
   assert.match(operations, /特殊成绩日/);
   assert.match(operations, /出现问题日/);
   assert.match(operations, /name="attachments"/);
@@ -55,6 +59,7 @@ test("education phase two provides 6+1 calendar, source costs, daily logs and fi
   assert.match(operations, /补充记录与异常事项（可选）/);
   assert.match(operations, /这里只用于同一天由不同老师追加/);
   assert.match(operations, /name="ended_on"/);
+  assert.match(operations, /逐项登记费用支出/);
   assert.match(education, /name="ended_on"/);
   assert.match(page, /星曜教培同步/);
 });

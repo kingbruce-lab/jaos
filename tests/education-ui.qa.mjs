@@ -21,11 +21,11 @@ try {
   assert.equal(await page.locator('[name="confidentiality_ceiling"]').inputValue(), "L1");
   assert.equal(await page.locator('[name="confidentiality_ceiling"] option:disabled').count(), 4);
   await page.getByRole("button", { name: /2026年10月托管教培班/ }).click();
-  await page.getByRole("heading", { name: "追加收入 / 支出" }).waitFor();
+  await page.getByRole("heading", { name: "逐项登记收入 / 费用支出" }).waitFor();
   assert.equal(await page.locator('.educationCohortDelete').count(), 0);
   await page.getByLabel("金额（元）", { exact: true }).fill("2500.50");
   await page.getByLabel("收支用途", { exact: true }).fill("补缴学费");
-  await page.getByRole("button", { name: "追加收支", exact: true }).click();
+  await page.getByRole("button", { name: "保存本项并继续添加", exact: true }).click();
   await page.getByText("本期公共收支明细（3）").waitFor();
   assert.match(await page.locator('.educationMetrics').first().innerText(), /12,500.50/);
   const added = page.locator('.educationEntries article').filter({ hasText: "补缴学费" });

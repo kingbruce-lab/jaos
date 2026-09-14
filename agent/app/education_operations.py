@@ -268,7 +268,7 @@ def _validate_schedule_report(db: Session, cohort_id: str, report: ScheduleRepor
 def _monthly_summary_data(row: EducationMonthlySummary) -> dict:
     return {
         "id": row.id,
-        "month": row.month.strftime("%Y-%m"),
+        "period_start": row.month.isoformat(),
         "summary": row.summary,
         "achievements": row.achievements,
         "problems": row.problems,
@@ -545,16 +545,20 @@ def update_schedule_day(cohort_id: str, day_id: str, payload: ScheduleDayUpdate,
     return {"id": row.id}
 
 
-@router.put("/cohorts/{cohort_id}/monthly-summaries/{month_value}")
-def update_monthly_summary(cohort_id: str, month_value: str, payload: MonthlySummaryUpdate,
+@router.put("/cohorts/{cohort_id}/teaching-month-summaries/{period_start}")
+def update_monthly_summary(cohort_id: str, period_start: str, payload: MonthlySummaryUpdate,
                            user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     cohort = _cohort(db, user, cohort_id, write=True)
     try:
-        month = date.fromisoformat(f"{month_value}-01")
+        month = date.fromisoformat(period_start)
     except ValueError:
-        raise HTTPException(422, "月份格式无效") from None
-    if month < cohort.start_date.replace(day=1) or month > cohort.end_date.replace(day=1):
-        raise HTTPException(422, "月度总结月份必须在本班期内")
+        raise HTTPException(422, "教学月开始日期格式无效") from None
+    teaching_month_starts = {
+        cohort.start_date + timedelta(days=index * 29)
+        for index in range(((cohort.end_date - cohort.start_date).days // 29) + 1)
+    }
+    if month not in teaching_month_starts:
+        raise HTTPException(422, "教学月必须按开班日起每29天划分")
     row = db.scalar(select(EducationMonthlySummary).where(
         EducationMonthlySummary.cohort_id == cohort.id,
         EducationMonthlySummary.month == month,
@@ -562,14 +566,14 @@ def update_monthly_summary(cohort_id: str, month_value: str, payload: MonthlySum
     before = _monthly_summary_data(row) if row else None
     if row is None:
         if payload.version != 0:
-            raise HTTPException(409, "月度总结已更新，请刷新后重试")
+            raise HTTPException(409, "教学月总结已更新，请刷新后重试")
         row = EducationMonthlySummary(
             cohort_id=cohort.id, month=month, updated_by_user_id=user.id, version=1,
         )
         db.add(row)
     else:
         if row.version != payload.version:
-            raise HTTPException(409, "月度总结已更新，请刷新后重试")
+            raise HTTPException(409, "教学月总结已更新，请刷新后重试")
         row.version += 1
     row.summary = payload.summary
     row.achievements = payload.achievements

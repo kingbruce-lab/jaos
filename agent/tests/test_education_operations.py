@@ -62,17 +62,20 @@ def test_schedule_generation_is_idempotent_and_manual_changes_survive(setup):
     assert refreshed["days"][0]["report"]["problem_note"] == "设备延迟已处理"
     assert db.scalar(select(func.count(EducationScheduleDay.id))) == 29
 
-    monthly = client.put(path + "/monthly-summaries/2026-10", json={
-        "summary": "本月完成入学基线与六加一课程安排。", "achievements": "操作明显进步。",
+    monthly = client.put(path + "/teaching-month-summaries/2026-10-01", json={
+        "summary": "本教学月完成入学基线与六加一课程安排。", "achievements": "操作明显进步。",
         "problems": "设备延迟已解决。", "next_month_plan": "加强团队配合。", "version": 0,
     })
     assert monthly.status_code == 200, monthly.text
-    assert client.put(path + "/monthly-summaries/2026-10", json={
+    assert client.put(path + "/teaching-month-summaries/2026-10-01", json={
         "summary": "并发旧版本", "achievements": "", "problems": "", "next_month_plan": "", "version": 0,
     }).status_code == 409
+    assert client.put(path + "/teaching-month-summaries/2026-10-02", json={
+        "summary": "错误周期", "achievements": "", "problems": "", "next_month_plan": "", "version": 0,
+    }).status_code == 422
     monthly_view = client.get(path + "/operations").json()["schedule"]["monthly_summaries"]
-    assert monthly_view[0]["month"] == "2026-10"
-    assert monthly_view[0]["summary"].startswith("本月完成")
+    assert monthly_view[0]["period_start"] == "2026-10-01"
+    assert monthly_view[0]["summary"].startswith("本教学月完成")
     assert db.scalar(select(func.count(EducationMonthlySummary.id))) == 1
 
 
@@ -108,6 +111,9 @@ def test_cost_document_allocates_exact_cents_without_double_counting(setup):
     assert operations["costs"]["allocated_to_cohort"] == "100.01"
     assert sorted(item["amount"] for item in operations["costs"]["items"][0]["allocations"]) == ["50.00", "50.01"]
     assert client.get(path).json()["expense"] == "1920.51"
+    cohort_summary = client.get("/v1/pm/education/cohorts").json()["summary"]
+    assert cohort_summary["cost"] == "1920.51"
+    assert cohort_summary["cash_expense"] == "0.00"
     ledger = client.get("/v1/pm/education/ledger?limit=100").json()
     assert ledger["summary"]["cost"] == "1920.51"
     assert sorted(item["allocated_cost"] for item in ledger["items"]) == ["50.00", "50.01"]

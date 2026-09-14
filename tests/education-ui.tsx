@@ -52,7 +52,7 @@ const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   cohort.expense = entries.filter((item) => item.direction === "expense").reduce((sum, item) => sum + Number(item.amount), 0).toFixed(2);
   cohort.net = (Number(cohort.income) - Number(cohort.expense)).toFixed(2);
   if (options.method) return { id: cohort.id } as T;
-  if (path === "v1/pm/education/cohorts") return structuredClone({ items: cohortDeleted ? [] : [cohort], summary: { ...cohort, cohort_count: cohortDeleted ? 0 : 1 }, has_more: false, can_edit: true, can_delete: new URLSearchParams(location.search).has("founder"), scope: "mine" }) as T;
+  if (path === "v1/pm/education/cohorts") return structuredClone({ items: cohortDeleted ? [] : [cohort], summary: { ...cohort, cohort_count: cohortDeleted ? 0 : 1, student_cost: "0.00", cost: "0.00", cash_expense: cohort.expense, operating_expense: cohort.expense }, has_more: false, can_edit: true, can_delete: new URLSearchParams(location.search).has("founder"), scope: "mine" }) as T;
   return structuredClone({ ...cohort, entries }) as T;
 };
 createRoot(document.getElementById("root")!).render(<>

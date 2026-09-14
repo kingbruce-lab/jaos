@@ -8,7 +8,7 @@ import { EducationLedgerOverview } from "./education-ledger";
 import { EducationOperations } from "./education-operations";
 
 type Api = <T>(path: string, options?: RequestInit, token?: string) => Promise<T>;
-type Summary = { cohort_count: number; student_count: number; expected_income: string; income: string; student_cost: string; operating_expense: string; expense: string; net: string };
+type Summary = { cohort_count: number; student_count: number; expected_income: string; income: string; student_cost: string; cost: string; cash_expense: string; operating_expense: string; expense: string; net: string };
 type Cohort = { id: string; name: string; start_date: string; end_date: string; course_period?: string; enrollment_count?: number; effective_student_count?: number; student_count: number; unit_price: string; notes: string; version: number; owner_name: string; expected_income: string; income: string; expense: string; net: string };
 type Entry = { id: string; direction: "income" | "expense"; amount: string; occurred_on: string; ended_on: string; purpose: string; version: number; category?: string; detail?: string; staff_id?: string | null };
 type Registry = { items: Cohort[]; summary: Summary; enrollment_summary?: { receivable: string; received: string; arrears: string }; has_more: boolean; can_edit: boolean; can_delete?: boolean; scope: string };
@@ -110,7 +110,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
       if (action === "create") { createId.current = null; setSelectedId(result.id); }
       entryId.current = null;
       setEditing(null); setFormKey((key) => key + 1); setRevision((value) => value + 1);
-      setMessage("已保存，班期及累计统计已更新。");
+      setMessage(action === "entry" ? "本项已保存并计入顶部实时统计，可继续添加下一项。" : "已保存，班期及累计统计已更新。");
     } catch (cause) {
       setError(cause instanceof Error ? `${cause.message}。若提示已更新或请求超时，请先刷新核对记录。` : "保存失败，请重试");
     } finally { setBusy(""); }
@@ -144,8 +144,8 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
       {module === "cohorts" && <>
       <section className="educationMetrics educationStickyMetrics" aria-label="教培实时经营统计">
         <article><span>总收入</span><strong>{money(registry.summary.income)}</strong></article>
-        <article><span>学员直接成本</span><strong>{money(registry.summary.student_cost)}</strong></article>
-        <article><span>其他支出</span><strong>{money(registry.summary.operating_expense)}</strong></article>
+        <article><span>总成本</span><strong>{money(registry.summary.cost)}</strong></article>
+        <article><span>支出</span><strong>{money(registry.summary.cash_expense)}</strong></article>
         <article><span>实时结余</span><strong>{money(registry.summary.net)}</strong></article>
       </section>
       <section className="educationMetrics educationSecondaryMetrics" aria-label="教培累计业务统计">
@@ -192,11 +192,13 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
           <details key={`${detail.id}-${detail.version}`}><summary>编辑班期、招生人数和客单价</summary>
             <form className="educationForm" onSubmit={(event) => void submit(event, "cohort")}><CohortFields cohort={detail} /><button className="primaryButton" disabled={!!busy}>保存班期</button></form>
           </details>
-          <h4>{editing ? "修正收支记录" : "追加收入 / 支出"}</h4>
-          <p className="educationHint">此处登记班期公共收支（如公共教师成本）。学员费用已在报名表自动计入，请勿重复添加。</p>
+          <h4>{editing ? "修正收支记录" : "逐项登记收入 / 费用支出"}</h4>
+          <p className="educationHint">此处可持续逐项登记班期公共收支，包括每个人的饭费、住宿费、训练室房间费、零食费、活动经费和教师费用。学员档案中已登记的个人成本请勿重复添加。</p>
+          {error && <div role="alert" className="educationError educationInlineStatus">{error}</div>}
+          {message && <div role="status" className="noticeBar educationInlineStatus">{message}</div>}
           <form className="educationForm" key={`${detail.id}-${editing?.id || "new"}-${formKey}`} onSubmit={(event) => void submit(event, editing ? "correct" : "entry")}>
             <EducationCostClassification key={`${revision}-${editing?.id || "new"}`} api={api} token={token} cohortId={detail.id} entry={editing || undefined} />
-            <EntryFields entry={editing || undefined} start={detail.start_date} end={detail.end_date} /><button className="primaryButton" disabled={!!busy}>{editing ? "保存修正" : "追加收支"}</button>
+            <EntryFields entry={editing || undefined} start={detail.start_date} end={detail.end_date} /><button className="primaryButton" disabled={!!busy}>{editing ? "保存修正" : busy === "entry" ? "保存中…" : "保存本项并继续添加"}</button>
             {editing && <button type="button" disabled={!!busy} onClick={() => setEditing(null)}>取消修正</button>}
           </form>
         </>}
