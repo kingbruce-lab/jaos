@@ -106,6 +106,44 @@ def test_existing_founder_is_migrated_to_l5_with_audit() -> None:
         db.close()
 
 
+def test_named_ceo_is_migrated_to_management_l5_contract_access_once() -> None:
+    db, _founder, _employee = account_db()
+    ceo = User(
+        username="jaanliyuan",
+        display_name="安利园",
+        password_hash=hash_password("Ceo-Test-Password-2026"),
+        role="employee",
+        organization_role="business",
+        confidentiality_ceiling="L3",
+        departments_json='["training"]',
+    )
+    db.add(ceo)
+    db.commit()
+    try:
+        bootstrap_admin(db)
+        db.refresh(ceo)
+        first_audits = db.scalar(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.action == "ceo_l5_contract_access_v1"
+            )
+        )
+
+        assert ceo.organization_role == "management"
+        assert ceo.confidentiality_ceiling == "L5"
+        assert ceo.departments_json == '["*"]'
+        assert first_audits == 1
+
+        bootstrap_admin(db)
+        second_audits = db.scalar(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.action == "ceo_l5_contract_access_v1"
+            )
+        )
+        assert second_audits == 1
+    finally:
+        db.close()
+
+
 def test_founder_creates_account_without_exposing_password_hash() -> None:
     db, founder, _employee = account_db()
     configure_overrides(db, founder)

@@ -34,6 +34,9 @@ LEGACY_ORGANIZATION_ROLE_MAP = {
     "employee": "business",
     "planner": "business",
 }
+CEO_CONTRACT_ACCESS_MIGRATION = "ceo_l5_contract_access_v1"
+CEO_ACCOUNT_USERNAME = "jaanliyuan"
+CEO_ACCOUNT_DISPLAY_NAME = "安利园"
 
 
 def hash_password(password: str) -> str:
@@ -169,6 +172,47 @@ def bootstrap_admin(db: Session) -> None:
                     ),
                 )
             )
+        ceo_access_updated = False
+        ceo_access_migrated = db.scalar(
+            select(AuditLog.id).where(
+                AuditLog.action == CEO_CONTRACT_ACCESS_MIGRATION
+            )
+        )
+        if ceo_access_migrated is None:
+            ceo = db.scalar(
+                select(User).where(
+                    (User.username == CEO_ACCOUNT_USERNAME)
+                    | (User.display_name == CEO_ACCOUNT_DISPLAY_NAME)
+                )
+            )
+            if ceo is not None:
+                before = {
+                    "organization_role": ceo.organization_role,
+                    "confidentiality_ceiling": ceo.confidentiality_ceiling,
+                    "departments_json": ceo.departments_json,
+                }
+                ceo.organization_role = "management"
+                ceo.confidentiality_ceiling = "L5"
+                ceo.departments_json = '["*"]'
+                ceo_access_updated = True
+                db.add(
+                    AuditLog(
+                        user_id=ceo.id,
+                        action=CEO_CONTRACT_ACCESS_MIGRATION,
+                        details_json=json.dumps(
+                            {
+                                "before": before,
+                                "after": {
+                                    "organization_role": "management",
+                                    "confidentiality_ceiling": "L5",
+                                    "departments": ["*"],
+                                },
+                                "reason": "CEO需查看全部L5及以下合同档案",
+                            },
+                            ensure_ascii=False,
+                        ),
+                    )
+                )
         if migrated_roles:
             db.add(
                 AuditLog(
@@ -180,7 +224,7 @@ def bootstrap_admin(db: Session) -> None:
                     ),
                 )
             )
-        if upgraded or migrated_roles:
+        if upgraded or migrated_roles or ceo_access_updated:
             db.commit()
         return
     if not settings.bootstrap_password:
