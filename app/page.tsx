@@ -3709,6 +3709,37 @@ export default function Home() {
     }
   }
 
+  async function handleDeleteStatement(batch: FinanceBatch) {
+    if (!token || !selectedFinanceEntityId) return;
+    const confirmed = batch.status === "confirmed";
+    const prompt = confirmed
+      ? `确认永久删除已确认批次“${batch.filename}”？这会删除 ${batch.row_count} 条流水，并同步从财务分析及项目收支中移除。此操作不可撤销。`
+      : `确认永久删除待确认批次“${batch.filename}”？原始文件及 ${batch.row_count} 条解析记录都会删除。此操作不可撤销。`;
+    if (!window.confirm(prompt)) return;
+    setFinanceBusy(`delete-${batch.id}`);
+    setFinanceMessage("");
+    setError("");
+    try {
+      await kbFetch(
+        `v1/finance/statements/${encodeURIComponent(batch.id)}?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`,
+        { method: "DELETE" },
+        token,
+      );
+      if (selectedFinanceBatch === batch.id) {
+        setSelectedFinanceBatch("");
+        setFinanceTransactions([]);
+      }
+      setFinanceMessage(confirmed
+        ? "已确认流水批次已由创始人永久删除，财务分析和项目收支已同步更新。"
+        : "待确认流水批次及原始文件已永久删除。");
+      await refreshFinance();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "流水批次删除失败");
+    } finally {
+      setFinanceBusy("");
+    }
+  }
+
   async function handleCashEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!token || !selectedFinanceEntityId) return;
@@ -5165,6 +5196,7 @@ export default function Home() {
             message={financeMessage}
             uploadError={financeUploadError}
             canEditBank={canEditBankStatements}
+            canDeleteConfirmedBatch={canReviewManagedProject}
             canReviewPurposeCorrections={canReviewManagedProject}
             canEditCash={canEditCash && selectedFinanceEntity.show_cash}
             projects={selectedFinanceProjects}
@@ -5178,6 +5210,7 @@ export default function Home() {
             onCashEntry={handleCashEntry}
             onSelectBatch={handleFinanceBatchSelect}
             onConfirmBatch={handleConfirmStatement}
+            onDeleteBatch={handleDeleteStatement}
             onUpdateTransaction={handleTransactionUpdate}
             onPurposeCorrectionRequest={handlePurposeCorrectionRequest}
             onPurposeCorrectionReview={handlePurposeCorrectionReview}
@@ -7807,6 +7840,7 @@ function FinanceWorkspace({
   message,
   uploadError,
   canEditBank,
+  canDeleteConfirmedBatch,
   canReviewPurposeCorrections,
   canEditCash,
   projects,
@@ -7820,6 +7854,7 @@ function FinanceWorkspace({
   onCashEntry,
   onSelectBatch,
   onConfirmBatch,
+  onDeleteBatch,
   onUpdateTransaction,
   onPurposeCorrectionRequest,
   onPurposeCorrectionReview,
@@ -7843,6 +7878,7 @@ function FinanceWorkspace({
   message: string;
   uploadError: string;
   canEditBank: boolean;
+  canDeleteConfirmedBatch: boolean;
   canReviewPurposeCorrections: boolean;
   canEditCash: boolean;
   projects: ManagedProject[];
@@ -7856,6 +7892,7 @@ function FinanceWorkspace({
   onCashEntry: (event: FormEvent<HTMLFormElement>) => Promise<void>;
   onSelectBatch: (batchId: string) => Promise<void>;
   onConfirmBatch: (batchId: string) => Promise<void>;
+  onDeleteBatch: (batch: FinanceBatch) => Promise<void>;
   onUpdateTransaction: (event: FormEvent<HTMLFormElement>, transactionId: string) => Promise<void>;
   onPurposeCorrectionRequest: (event: FormEvent<HTMLFormElement>, transactionId: string) => Promise<void>;
   onPurposeCorrectionReview: (correctionId: string, decision: "approve" | "reject") => Promise<void>;
@@ -8452,11 +8489,13 @@ function FinanceWorkspace({
       <section className="panel financeLedgerPanel">
         <PanelTitle eyebrow="RECONCILIATION" title="银行流水批次" />
         <div className="noticeBar financeConfirmationNotice">
-          <strong>{canEditBank ? "财务核对确认" : "确认责任说明"}</strong>
+          <strong>{canEditBank ? "财务核对确认" : canDeleteConfirmedBatch ? "创始人删除权限" : "确认责任说明"}</strong>
           <span>
             {canEditBank
-              ? "请在逐条核对日期、对方、收支金额和余额后确认；确认后流水进入财务分析。"
-              : "银行流水由财务负责人上传、修正并确认；管理账号查看确认结果和审计记录。"}
+              ? "请在逐条核对日期、对方、收支金额和余额后确认；未确认批次可由财务删除，确认后只有创始人可以删除。"
+              : canDeleteConfirmedBatch
+                ? "财务负责上传和确认；已确认批次如需删除，仅创始人可操作，删除会同步影响财务分析和项目收支。"
+                : "银行流水由财务负责人上传、修正并确认；管理账号查看确认结果和审计记录。"}
           </span>
         </div>
         <div className="financeBatchList">
@@ -8474,9 +8513,21 @@ function FinanceWorkspace({
                 )}
               </button>
               <b className={`statusPill ${item.status}`}>{item.status === "confirmed" ? "财务已确认" : "待财务确认"}</b>
-              {canEditBank && item.status !== "confirmed" && (
-                <button type="button" className="secondaryButton" disabled={busy === `confirm-${item.id}`} onClick={() => void onConfirmBatch(item.id)}>确认流水</button>
-              )}
+              <div className="financeBatchActions">
+                {canEditBank && item.status !== "confirmed" && (
+                  <button type="button" className="secondaryButton" disabled={Boolean(busy)} onClick={() => void onConfirmBatch(item.id)}>确认流水</button>
+                )}
+                {((canEditBank && item.status !== "confirmed") || (canDeleteConfirmedBatch && item.status === "confirmed")) && (
+                  <button
+                    type="button"
+                    className="dangerButton financeBatchDelete"
+                    disabled={Boolean(busy)}
+                    onClick={() => void onDeleteBatch(item)}
+                  >
+                    {busy === `delete-${item.id}` ? "删除中…" : item.status === "confirmed" ? "删除已确认批次" : "删除批次"}
+                  </button>
+                )}
+              </div>
             </article>
           ))}
           {!batches.length && <p className="mutedText">尚未上传银行流水。</p>}

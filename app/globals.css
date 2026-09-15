@@ -429,6 +429,10 @@
 .financeConfirmationNotice { margin-top: 16px; margin-bottom: 0; }
 .financeBatchList article { display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid #e6e9ee; border-radius: 10px; }
 .financeBatchList article.active { border-color: #6a9ac5; box-shadow: 0 0 0 3px rgba(31,104,166,.08); }
+.financeBatchActions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.financeBatchDelete { border: 1px solid #efcfd3; border-radius: 8px; padding: 9px 13px; color: #a1323d; background: var(--red-soft); font-weight: 750; white-space: nowrap; }
+.financeBatchDelete:hover:not(:disabled) { border-color: #d7a9af; background: #fdebed; }
+.financeBatchDelete:disabled { cursor: not-allowed; opacity: .55; }
 .batchMain { min-width: 0; padding: 0; border: 0; text-align: left; background: transparent; }
 .batchMain strong, .batchMain span, .batchMain small { display: block; }
 .batchMain span { margin: 4px 0; color: #687387; font-size: 11px; }
@@ -914,7 +918,8 @@
   .formGrid.twoColumns, .formGrid.threeColumns { grid-template-columns: 1fr; }
   .formGrid .spanTwo { grid-column: auto; }
   .financeBatchList article { grid-template-columns: 1fr auto; }
-  .financeBatchList article .secondaryButton { grid-column: 1 / -1; }
+  .financeBatchActions { grid-column: 1 / -1; justify-content: stretch; }
+  .financeBatchActions button { flex: 1; }
   .financeAccountList article { align-items: flex-start; flex-direction: column; }
   .financeAccountList article > div:last-child { text-align: left; }
   .pmPortfolioHeader { padding: 26px 22px; }

@@ -5,6 +5,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -310,6 +311,113 @@ def _configure(monkeypatch, tmp_path, db: Session, user: User) -> TestClient:
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[current_user] = lambda: user
     return TestClient(app)
+
+
+def test_statement_batch_delete_permissions_and_hard_delete(tmp_path, monkeypatch) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    form = {
+        "company_name": "京奥电竞（北京）科技有限公司",
+        "bank_name": "测试银行",
+        "account_name": "基本户",
+        "account_number": "6222000011117777",
+    }
+    try:
+        pending = client.post(
+            "/v1/finance/statements/upload",
+            data=form,
+            files={"file": ("待确认流水.xlsx", _xlsx(), "application/octet-stream")},
+        ).json()
+        pending_batch = db.get(BankStatementBatch, pending["id"])
+        assert pending_batch is not None
+        pending_source = Path(pending_batch.source_path)
+        assert pending_source.is_file()
+
+        for role in ("business", "manager", "founder"):
+            app.dependency_overrides[current_user] = lambda role=role: users[role]
+            forbidden = client.delete(
+                f"/v1/finance/statements/{pending['id']}",
+                params={"entity_id": pending["entity_id"]},
+            )
+            assert forbidden.status_code == 403
+            assert forbidden.json()["detail"] == "待确认流水仅限财务删除"
+
+        app.dependency_overrides[current_user] = lambda: users["finance"]
+        wrong_entity = client.delete(
+            f"/v1/finance/statements/{pending['id']}",
+            params={"entity_id": "another-entity"},
+        )
+        assert wrong_entity.status_code == 404
+        deleted_pending = client.delete(
+            f"/v1/finance/statements/{pending['id']}",
+            params={"entity_id": pending["entity_id"]},
+        )
+        assert deleted_pending.status_code == 200
+        assert deleted_pending.json() == {
+            "status": "deleted",
+            "batch_id": pending["id"],
+            "previous_status": "pending",
+            "row_count": 2,
+            "source_removed": True,
+        }
+        assert not pending_source.exists()
+        assert db.get(BankStatementBatch, pending["id"]) is None
+        assert db.scalar(select(func.count(BankTransaction.id))) == 0
+
+        # A hard-deleted file can be uploaded again because its fingerprints
+        # and batch uniqueness record have also been removed.
+        confirmed = client.post(
+            "/v1/finance/statements/upload",
+            data=form,
+            files={"file": ("待确认流水.xlsx", _xlsx(), "application/octet-stream")},
+        ).json()
+        assert confirmed["duplicate_file"] is False
+        assert client.post(
+            f"/v1/finance/statements/{confirmed['id']}/confirm",
+            params={"entity_id": confirmed["entity_id"]},
+        ).status_code == 200
+        transaction = client.get(
+            f"/v1/finance/statements/{confirmed['id']}/transactions",
+            params={"entity_id": confirmed["entity_id"]},
+        ).json()[0]
+        correction = client.post(
+            f"/v1/finance/transactions/{transaction['id']}/purpose-corrections",
+            params={"entity_id": confirmed["entity_id"]},
+            json={"proposed_purpose": "待创始人复核的用途"},
+        )
+        assert correction.status_code == 200
+
+        for role in ("finance", "manager", "business"):
+            app.dependency_overrides[current_user] = lambda role=role: users[role]
+            forbidden = client.delete(
+                f"/v1/finance/statements/{confirmed['id']}",
+                params={"entity_id": confirmed["entity_id"]},
+            )
+            assert forbidden.status_code == 403
+            assert forbidden.json()["detail"] == "已确认流水仅限创始人删除"
+
+        confirmed_source = Path(db.get(BankStatementBatch, confirmed["id"]).source_path)
+        app.dependency_overrides[current_user] = lambda: users["founder"]
+        deleted_confirmed = client.delete(
+            f"/v1/finance/statements/{confirmed['id']}",
+            params={"entity_id": confirmed["entity_id"]},
+        )
+        assert deleted_confirmed.status_code == 200
+        assert deleted_confirmed.json()["previous_status"] == "confirmed"
+        assert not confirmed_source.exists()
+        assert db.scalar(select(func.count(BankStatementBatch.id))) == 0
+        assert db.scalar(select(func.count(BankTransaction.id))) == 0
+        assert db.scalar(select(func.count(BankTransactionPurposeCorrection.id))) == 0
+
+        delete_audits = db.scalars(
+            select(AuditLog).where(AuditLog.action == "finance_statement_delete")
+        ).all()
+        assert len(delete_audits) == 2
+        assert json.loads(delete_audits[-1].details_json)["previous_status"] == "confirmed"
+        assert json.loads(delete_audits[-1].details_json)["purpose_correction_count"] == 1
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
 
 
 def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypatch) -> None:

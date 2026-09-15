@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from openpyxl import load_workbook
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -191,6 +191,31 @@ def _require_finance_edit(user: User) -> None:
 def _require_founder_review(user: User) -> None:
     if not _founder_review_allowed(user):
         raise HTTPException(status_code=403, detail="仅创始人可以复核流水用途修正")
+
+
+def _stage_statement_source_for_delete(
+    source_path: str,
+    batch_id: str,
+) -> tuple[Path | None, Path | None]:
+    """Move a managed statement aside so DB and file deletion can be coordinated."""
+    managed_root = (settings.knowledge_root / "财务系统" / "银行流水").resolve()
+    source = Path(source_path).resolve()
+    try:
+        source.relative_to(managed_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="流水原始文件不在受管目录，已停止删除") from exc
+    if not source.exists():
+        return None, None
+    if not source.is_file():
+        raise HTTPException(status_code=409, detail="流水原始文件路径异常，已停止删除")
+    staged = source.with_name(
+        f".{source.name}.deleting-{batch_id[:8]}-{secrets.token_hex(4)}"
+    )
+    try:
+        source.replace(staged)
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail="流水原始文件正在使用或不可删除，请稍后重试") from exc
+    return source, staged
 
 
 def _safe_part(value: str, fallback: str) -> str:
@@ -2619,6 +2644,88 @@ def confirm_statement_batch(
     ))
     db.commit()
     return {"status": "confirmed", "batch_id": batch.id, "row_count": len(transactions)}
+
+
+@router.delete("/statements/{batch_id}")
+def delete_statement_batch(
+    batch_id: str,
+    entity_id: str | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    batch = db.get(BankStatementBatch, batch_id)
+    if batch is None or (entity_id and batch.entity_id != entity_id):
+        raise HTTPException(status_code=404, detail="流水批次不存在")
+
+    previous_status = batch.status
+    if previous_status == "confirmed":
+        if not _founder_review_allowed(user):
+            raise HTTPException(status_code=403, detail="已确认流水仅限创始人删除")
+    elif not _finance_edit_allowed(user):
+        raise HTTPException(status_code=403, detail="待确认流水仅限财务删除")
+
+    transaction_ids = list(db.scalars(
+        select(BankTransaction.id).where(BankTransaction.batch_id == batch.id)
+    ).all())
+    source, staged_source = _stage_statement_source_for_delete(
+        batch.source_path,
+        batch.id,
+    )
+    try:
+        correction_count = 0
+        if transaction_ids:
+            correction_count = int(db.scalar(
+                select(func.count(BankTransactionPurposeCorrection.id)).where(
+                    BankTransactionPurposeCorrection.transaction_id.in_(transaction_ids)
+                )
+            ) or 0)
+            db.execute(
+                delete(BankTransactionPurposeCorrection).where(
+                    BankTransactionPurposeCorrection.transaction_id.in_(transaction_ids)
+                )
+            )
+        db.execute(
+            delete(BankTransaction).where(BankTransaction.batch_id == batch.id)
+        )
+        db.delete(batch)
+        db.add(AuditLog(
+            user_id=user.id,
+            action="finance_statement_delete",
+            details_json=json.dumps({
+                "batch_id": batch_id,
+                "entity_id": batch.entity_id,
+                "account_id": batch.account_id,
+                "filename": batch.original_filename,
+                "previous_status": previous_status,
+                "row_count": len(transaction_ids),
+                "purpose_correction_count": correction_count,
+                "file_hash": batch.file_hash,
+                "source_file_present": source is not None,
+            }, ensure_ascii=False),
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+        if source is not None and staged_source is not None and staged_source.exists():
+            try:
+                staged_source.replace(source)
+            except OSError:
+                pass
+        raise
+
+    source_removed = True
+    if staged_source is not None:
+        try:
+            staged_source.unlink()
+        except OSError:
+            source_removed = False
+    return {
+        "status": "deleted",
+        "batch_id": batch_id,
+        "previous_status": previous_status,
+        "row_count": len(transaction_ids),
+        "source_removed": source_removed,
+    }
 
 
 @router.post("/cash")

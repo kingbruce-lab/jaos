@@ -129,6 +129,15 @@ test("finance purpose corrections require founder review and preserve bank evide
   assert.match(styles, /\.transactionPurposeWorkflow/);
 });
 
+test("bank statement deletion follows confirmation-sensitive permissions", () => {
+  assert.match(page, /v1\/finance\/statements\/\$\{encodeURIComponent\(batch\.id\)\}/);
+  assert.match(page, /\{ method: "DELETE" \}/);
+  assert.match(page, /未确认批次可由财务删除，确认后只有创始人可以删除/);
+  assert.match(page, /删除已确认批次/);
+  assert.match(page, /同步从财务分析及项目收支中移除/);
+  assert.match(styles, /\.financeBatchDelete/);
+});
+
 test("finance trend distinguishes net inflow from net outflow using Chinese finance colors", () => {
   assert.match(page, /近 26 周收支与净流入趋势/);
   assert.match(page, /右侧显示当周净流入或净流出，不是收入金额/);
