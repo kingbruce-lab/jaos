@@ -40,8 +40,23 @@ def test_ledger_search_installments_receipts_refunds_and_scope(setup):
     assert client.post(student_path + "/payments", json=refund).status_code == 200
     assert client.get(student_path).json()["received"] == "2500.00"
     assert client.post(student_path + "/payments", json={**refund, "request_id": str(uuid4()), "amount": "3000"}).status_code == 422
+    structured_cost = client.post(path + "/cost-documents", json={
+        "request_id": str(uuid4()), "occurred_on": "2026-10-01", "ended_on": "2026-10-02",
+        "category": "饭费", "detail": "餐费套餐", "unit_price": "100.00",
+    })
+    assert structured_cost.status_code == 200, structured_cost.text
+    cash_expense = client.post(path + "/entries", json={
+        "request_id": str(uuid4()), "direction": "expense", "amount": "50.00",
+        "occurred_on": "2026-10-03", "ended_on": "2026-10-03", "purpose": "临时交通费",
+        "category": "活动经费", "detail": "交通费",
+    })
+    assert cash_expense.status_code == 200, cash_expense.text
     result = client.get("/v1/pm/education/ledger?keyword=张三&payment_status=arrears").json()
-    assert result["summary"]["receivable"] == "10000.00" and result["summary"]["cost"] == "3000.00"
+    assert result["summary"]["receivable"] == "10000.00"
+    assert result["summary"]["student_cost"] == "3000.00"
+    assert result["summary"]["recorded_cost"] == "200.00"
+    assert result["summary"]["cash_expense"] == "50.00"
+    assert result["summary"]["cost"] == "3250.00"
     assert result["items"][0]["cohort_name"] == "十月托管教培"
     actor[0] = users["other"]
     assert client.get("/v1/pm/education/ledger?keyword=张三").json()["summary"]["student_count"] == 0

@@ -62,6 +62,7 @@ ADDITIVE_COLUMNS = {
     },
     "education_cost_documents": {
         "ended_on": "DATE",
+        "unit_price": "NUMERIC(18, 2) NOT NULL DEFAULT 0",
     },
     "education_schedule_days": {
         "report_json": "TEXT NOT NULL DEFAULT '{}'",

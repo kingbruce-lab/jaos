@@ -187,7 +187,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
         </div>
         {detail.notes && <p className="educationNotes">{detail.notes}</p>}
         <EducationEnrollment key={`${detail.id}-${revision}`} api={api} token={token} cohortId={detail.id} start={detail.start_date} period={detail.course_period || "1_month"} canEdit={registry.can_edit} onSaved={() => { setMessage("已保存，报名与班期汇总已更新。"); setRevision((value) => value + 1); }} />
-        <EducationOperations key={`operations-${detail.id}`} api={api} token={token} cohortId={detail.id} cohortStart={detail.start_date} cohortEnd={detail.end_date} canEdit={registry.can_edit} cohorts={registry.items.map((item) => ({ id: item.id, name: item.name }))} onChanged={() => setRevision((value) => value + 1)} />
+        <EducationOperations key={`operations-${detail.id}`} api={api} token={token} cohortId={detail.id} cohortStart={detail.start_date} cohortEnd={detail.end_date} canEdit={registry.can_edit} onChanged={() => setRevision((value) => value + 1)} />
         {registry.can_edit && <>
           <details key={`${detail.id}-${detail.version}`}><summary>编辑班期、招生人数和客单价</summary>
             <form className="educationForm" onSubmit={(event) => void submit(event, "cohort")}><CohortFields cohort={detail} /><button className="primaryButton" disabled={!!busy}>保存班期</button></form>

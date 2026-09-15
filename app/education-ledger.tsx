@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 
 type Api = <T>(path: string, options?: RequestInit, token?: string) => Promise<T>;
 type LedgerRow = { id: string; cohort_id: string; cohort_name: string; name: string; registration_date: string; referrer_name: string; referral_channel: string; staff_assignments: { staff_id: string; name: string; role: string; start_date: string; end_date: string; note: string }[]; game: string; course_period: string; study_start: string; study_end: string; receivable: string; received: string; arrears: string; overpayment: string };
-type Ledger = { items: LedgerRow[]; summary: { student_count: number; receivable: string; received: string; cost: string; arrears: string; overpayment: string }; has_more: boolean; scope: string };
+type Ledger = { items: LedgerRow[]; summary: { student_count: number; receivable: string; received: string; student_cost: string; recorded_cost: string; cash_expense: string; cost: string; arrears: string; overpayment: string }; has_more: boolean; scope: string };
 type Installment = { id: string; label: string; due_on: string; amount: string; paid: string; remaining: string; note: string; active: boolean; version: number };
 type Payment = { id: string; direction: "receipt" | "refund"; amount: string; occurred_on: string; method: string; account: string; note: string; installment_id: string | null; creator_name: string; version: number };
 type PaymentLedger = { installments: Installment[]; payments: Payment[]; methods: string[]; summary: { receivable: string; net_received: string; arrears: string; overpayment: string; plan_total: string; plan_difference: string } };
@@ -43,7 +43,7 @@ export function EducationLedgerOverview({ api, token, cohorts, onOpenCohort }: {
   function search(event: FormEvent) { event.preventDefault(); setApplied({ ...query, keyword: query.keyword.trim() }); }
   return <section className="educationLedger">
     <section className="panel educationLedgerIntro">
-      <div><p className="eyebrow">EDUCATION LEDGER</p><h3>星曜教培综合台账</h3><p>跨班期统一查看学员、套餐应收、实收、欠费和成本。学费是一口价套餐，已包含住宿与餐饮。</p></div>
+      <div><p className="eyebrow">EDUCATION LEDGER</p><h3>星曜教培综合台账</h3><p>跨班期统一查看学员、套餐应收、实收、欠费和总成本支出。学费是一口价套餐，已包含住宿与餐饮。</p></div>
       <div className="educationRule"><strong>课程口径</strong><span>一个月 29天 · 三个月 87天</span><span>每周 6天课程 + 1天自主练习</span></div>
     </section>
     <form className="educationLedgerFilters" onSubmit={search}>
@@ -60,7 +60,7 @@ export function EducationLedgerOverview({ api, token, cohorts, onOpenCohort }: {
         <article><span>净实收</span><strong>{money(data.summary.received)}</strong></article>
         <article><span>欠费</span><strong>{money(data.summary.arrears)}</strong></article>
         <article><span>超收或预收</span><strong>{money(data.summary.overpayment)}</strong></article>
-        <article><span>已归集成本</span><strong>{money(data.summary.cost)}</strong></article>
+        <article><span>总成本与支出</span><strong>{money(data.summary.cost)}</strong><small>学员成本 {money(data.summary.student_cost)} · 费用项目 {money(data.summary.recorded_cost)} · 其他支出 {money(data.summary.cash_expense)}</small></article>
       </section>
       <div className="educationLedgerTable" role="region" aria-label="综合台账学员明细" tabIndex={0}>
         <table><thead><tr><th>学员及班期</th><th>课程与师资</th><th>推荐来源</th><th>套餐应收</th><th>净实收</th><th>欠费</th><th>操作</th></tr></thead><tbody>

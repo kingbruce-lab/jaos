@@ -39,11 +39,15 @@ test("education separates expected and actual income and protects repeated write
   assert.match(education, /body.version = detail.version/);
 });
 
-test("education phase two provides 6+1 calendar, source costs, daily logs and finance sync", () => {
+test("education phase two provides 6+1 calendar, direct daily-price costs, daily logs and finance sync", () => {
   assert.match(education, /EducationOperations/);
   assert.match(operations, /6＋1 教学日历/);
-  assert.match(operations, /原始成本只记一次/);
-  assert.match(operations, /均摊至本期在册学员/);
+  assert.match(operations, /单价（元\/天）/);
+  assert.match(operations, /自动总价/);
+  assert.match(operations, /总价＝每日单价 × 天数/);
+  assert.match(operations, /已直接计入班期总账/);
+  assert.doesNotMatch(operations, /分摊方式/);
+  assert.doesNotMatch(operations, /allocation_mode/);
   assert.match(operations, /点击填写日报/);
   assert.match(operations, /课程目标/);
   assert.match(operations, /学员表现与进步/);

@@ -1196,7 +1196,7 @@ class EducationPayment(Base):
 
 
 class EducationCostDocument(Base):
-    """One source cost document; allocations never create a second expense."""
+    """One dated cost item whose total is derived from its daily unit price."""
 
     __tablename__ = "education_cost_documents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -1205,6 +1205,9 @@ class EducationCostDocument(Base):
     ended_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     category: Mapped[str] = mapped_column(String(40), index=True)
     detail: Mapped[str] = mapped_column(String(80), default="其他")
+    unit_price: Mapped[Decimal] = mapped_column(
+        Numeric(18, 2), default=Decimal("0"), server_default="0"
+    )
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
     vendor: Mapped[str] = mapped_column(String(240), default="")
     document_no: Mapped[str] = mapped_column(String(120), default="")

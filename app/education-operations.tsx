@@ -5,17 +5,14 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 type Api = <T>(path: string, options?: RequestInit, token?: string) => Promise<T>;
 type DayReport = { instructor_ids: string[]; student_ids: string[]; attendance: string; lesson_objectives: string; lesson_content: string; student_performance: string; issues_and_adjustments: string; homework_or_practice: string; parent_communication: string; next_plan: string; special_achievement: boolean; special_achievement_note: string; problem_flag: boolean; problem_note: string };
 type Day = { id: string; calendar_date: string; day_number: number; day_type: "teaching" | "practice" | "rest"; title: string; notes: string; report: DayReport; version: number };
-type CostAllocation = { id: string; cohort_id: string; cohort_name?: string; student_id: string | null; student_name: string | null; allocation_month: string; amount: string; note?: string };
 type CostAttachment = { id: string; filename: string; size_bytes: number; sha256: string; created_at: string };
-type Cost = { id: string; occurred_on: string; ended_on: string; category: string; detail: string; amount: string; allocated_amount: string; vendor: string; document_no: string; source_ref: string; note: string; allocations: CostAllocation[]; attachments: CostAttachment[]; version: number };
-type CostDetail = Cost & { allocation_mode: "cohort" | "equal_students" | "custom"; allocation_month: string | null; can_edit: boolean; has_hidden_allocations: boolean };
+type Cost = { id: string; occurred_on: string; ended_on: string; category: string; detail: string; unit_price: string; quantity_days: number; amount: string; vendor: string; document_no: string; source_ref: string; note: string; attachments: CostAttachment[]; version: number };
+type CostDetail = Cost & { ledger_mode: "direct"; can_edit: boolean; has_hidden_allocations: boolean };
 type DailyLog = { id: string; log_date: string; staff_id: string; staff_name: string; staff_role: string; log_type: string; summary: string; follow_up: string; student_ids: string[]; version: number };
 type MonthlySummary = { id?: string; period_start: string; summary: string; achievements: string; problems: string; next_month_plan: string; version: number };
-type Operations = { schedule: { generated: boolean; days: Day[]; monthly_summaries: MonthlySummary[]; summary: { teaching: number; practice: number; rest: number } }; costs: { items: Cost[]; source_total: string; allocated_to_cohort: string }; logs: DailyLog[]; missing_log_days: string[]; can_view_logs: boolean; can_edit: boolean };
+type Operations = { schedule: { generated: boolean; days: Day[]; monthly_summaries: MonthlySummary[]; summary: { teaching: number; practice: number; rest: number } }; costs: { items: Cost[]; ledger_total: string }; logs: DailyLog[]; missing_log_days: string[]; can_view_logs: boolean; can_edit: boolean };
 type Staff = { id: string; name: string; role: string; active: boolean };
 type Student = { id: string; name: string; student_no?: string | null };
-type CohortOption = { id: string; name: string };
-type CustomAllocation = { cohort_id: string; amount: string; note: string };
 
 const costDetails: Record<string, string[]> = {
   "住宿费": ["一人间", "两人间", "其他"],
@@ -29,21 +26,39 @@ const costDetails: Record<string, string[]> = {
 const money = (value: string) => Number(value).toLocaleString("zh-CN", { style: "currency", currency: "CNY" });
 const today = () => new Date().toLocaleDateString("sv-SE");
 
-export function EducationOperations({ api, token, cohortId, cohortStart, cohortEnd, canEdit, cohorts, onChanged }: { api: Api; token: string; cohortId: string; cohortStart: string; cohortEnd: string; canEdit: boolean; cohorts: CohortOption[]; onChanged: () => void }) {
+function pricingDays(start: string, end: string) {
+  if (!start || !end || end < start) return 0;
+  const startDate = new Date(`${start}T00:00:00Z`);
+  const endDate = new Date(`${end}T00:00:00Z`);
+  return Math.round((endDate.getTime() - startDate.getTime()) / 86400000) + 1;
+}
+
+function CostPricingFields({ start, end, unitPrice = "", disabled = false }: { start: string; end: string; unitPrice?: string; disabled?: boolean }) {
+  const [occurredOn, setOccurredOn] = useState(start);
+  const [endedOn, setEndedOn] = useState(end || start);
+  const [price, setPrice] = useState(unitPrice);
+  const days = pricingDays(occurredOn, endedOn);
+  const total = days * Number(price || 0);
+  return <>
+    <label>发生日期<input name="occurred_on" type="date" value={occurredOn} onChange={(event) => { const next = event.target.value; setOccurredOn(next); if (endedOn < next) setEndedOn(next); }} required disabled={disabled} /></label>
+    <label>结束日期<input name="ended_on" type="date" value={endedOn} min={occurredOn} onChange={(event) => setEndedOn(event.target.value)} required disabled={disabled} /></label>
+    <label>单价（元/天）<input name="unit_price" type="number" min="0.01" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} required disabled={disabled} /></label>
+    <label className="educationComputedTotal">自动总价<output>{days > 0 && Number(price) > 0 ? money(total.toFixed(2)) : "填写单价后自动计算"}</output><small>{days > 0 ? `共 ${days} 天（含发生日和结束日）` : "请核对起止日期"}</small></label>
+  </>;
+}
+
+export function EducationOperations({ api, token, cohortId, cohortStart, cohortEnd, canEdit, onChanged }: { api: Api; token: string; cohortId: string; cohortStart: string; cohortEnd: string; canEdit: boolean; onChanged: () => void }) {
   const [data, setData] = useState<Operations | null>(null);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [category, setCategory] = useState("住宿费");
-  const [allocationMode, setAllocationMode] = useState<"cohort" | "equal_students" | "custom">("cohort");
-  const [customAllocations, setCustomAllocations] = useState<CustomAllocation[]>([{ cohort_id: cohortId, amount: "", note: "" }]);
   const [logTypeFilter, setLogTypeFilter] = useState("");
   const [staffFilter, setStaffFilter] = useState("");
   const [editingCost, setEditingCost] = useState<CostDetail | null>(null);
   const [selectedDayId, setSelectedDayId] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
   const [editCategory, setEditCategory] = useState("住宿费");
-  const [editAllocationMode, setEditAllocationMode] = useState<"cohort" | "equal_students" | "custom">("cohort");
-  const [editAllocations, setEditAllocations] = useState<CustomAllocation[]>([]);
+  const [costFormKey, setCostFormKey] = useState(0);
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -173,22 +188,12 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
     const attachments = formData.getAll("attachments").filter((item): item is File => item instanceof File && item.size > 0);
     delete values.attachments;
     costId.current ||= crypto.randomUUID();
-    const occurredOn = String(values.occurred_on || cohortStart);
-    const body = {
-      ...values,
-      request_id: costId.current,
-      allocation_mode: allocationMode,
-      allocation_month: null,
-      allocations: allocationMode === "custom" ? customAllocations.map((item) => ({
-        ...item, allocation_month: `${occurredOn.slice(0, 7)}-01`,
-      })) : [],
-    };
+    const body = { ...values, request_id: costId.current };
     setBusy("cost"); setError("");
     try {
       const result = await api<{ id: string }>(`v1/pm/education/cohorts/${cohortId}/cost-documents`, { method: "POST", body: JSON.stringify(body) }, token);
       for (const attachment of attachments) await uploadAttachment(result.id, attachment);
-      costId.current = null; form.reset(); setCategory("住宿费"); setAllocationMode("cohort");
-      setCustomAllocations([{ cohort_id: cohortId, amount: "", note: "" }]);
+      costId.current = null; form.reset(); setCategory("住宿费"); setCostFormKey((value) => value + 1);
       setMessage(`费用时段已保存${attachments.length ? `，并上传 ${attachments.length} 个凭证附件` : ""}，顶部汇总已刷新。`); setRevision((value) => value + 1); onChanged();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "成本单据保存失败"); }
     finally { setBusy(""); }
@@ -199,12 +204,7 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
     setBusy(`cost-load-${documentId}`); setError("");
     try {
       const item = await api<CostDetail>(`v1/pm/education/cohorts/${cohortId}/cost-documents/${documentId}`, {}, token);
-      setEditingCost(item); setEditCategory(item.category); setEditAllocationMode(item.allocation_mode);
-      setEditAllocations(item.allocations.map((allocation) => ({
-        cohort_id: allocation.cohort_id,
-        amount: allocation.amount,
-        note: allocation.note || "",
-      })));
+      setEditingCost(item); setEditCategory(item.category);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "成本单据加载失败"); }
     finally { setBusy(""); }
   }
@@ -216,16 +216,7 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
     const values = Object.fromEntries(formData.entries());
     const attachments = formData.getAll("attachments").filter((item): item is File => item instanceof File && item.size > 0);
     delete values.attachments;
-    const occurredOn = String(values.occurred_on || editingCost.occurred_on);
-    const body = {
-      ...values,
-      version: editingCost.version,
-      allocation_mode: editAllocationMode,
-      allocation_month: null,
-      allocations: editAllocationMode === "custom" ? editAllocations.map((item) => ({
-        ...item, allocation_month: `${occurredOn.slice(0, 7)}-01`,
-      })) : [],
-    };
+    const body = { ...values, version: editingCost.version };
     setBusy(`cost-update-${editingCost.id}`); setError("");
     try {
       await api(`v1/pm/education/cohorts/${cohortId}/cost-documents/${editingCost.id}`, { method: "PATCH", body: JSON.stringify(body) }, token);
@@ -275,7 +266,7 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
   const selectedSummary = data?.schedule.monthly_summaries.find((item) => item.period_start === selectedMonth);
 
   return <section className="educationOperations">
-    <header><div><p className="eyebrow">COHORT OPERATIONS</p><h3>班期运营台账</h3><p>原始成本只记一次；分摊用于明确班期、月份和学员归属，不重复增加总支出。</p></div></header>
+    <header><div><p className="eyebrow">COHORT OPERATIONS</p><h3>班期运营台账</h3><p>费用按实际日期和每日单价登记，自动计算总价并直接进入班期总账。</p></div></header>
     {error && <div className="educationError" role="alert">{error}</div>}
     {message && <div className="noticeBar" role="status">{message}</div>}
 
@@ -355,69 +346,47 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
     </section>
 
     <section className="educationOperationSection educationCostEntrySection">
-      <h4 className="educationSectionTitle">逐项登记费用支出、凭证与成本分摊</h4>
-      <div className="educationPurposeNote"><strong>每项费用都可持续增加</strong><span>饭费、住宿费、训练室房间费、零食费、活动经费和教师费用，请按实际发生时段逐项保存；保存一项后表单会清空，可立即继续增加下一项。</span></div>
+      <h4 className="educationSectionTitle">逐项登记费用支出与凭证</h4>
+      <div className="educationPurposeNote"><strong>按每日单价直接记入总账</strong><span>饭费、住宿费、训练室房间费、零食费、活动经费和教师费用，请按实际发生时段填写每日单价；系统按起止日期自动计算总价，保存后直接汇入本班期总账。</span></div>
       {error && <div className="educationError educationInlineStatus" role="alert">{error}</div>}
       {message && <div className="noticeBar educationInlineStatus" role="status">{message}</div>}
-      <div className="educationOperationSummary"><span>原始单据合计 {money(data?.costs.source_total || "0")}</span><span>分摊到本期 {money(data?.costs.allocated_to_cohort || "0")}</span></div>
+      <div className="educationOperationSummary"><span>已进入本期总账 {money(data?.costs.ledger_total || "0")}</span></div>
       {canEdit && <form className="educationForm" onSubmit={(event) => void createCost(event)}>
-        <label>发生日期<input name="occurred_on" type="date" defaultValue={cohortStart} required /></label>
-        <label>结束日期<input name="ended_on" type="date" defaultValue={cohortEnd} required /></label>
+        <CostPricingFields key={costFormKey} start={cohortStart} end={cohortEnd} />
         <label>成本分类<select name="category" value={category} onChange={(event) => setCategory(event.target.value)}>{Object.keys(costDetails).map((item) => <option key={item}>{item}</option>)}</select></label>
         <label>成本明细<select name="detail" key={category}>{costDetails[category].map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>金额<input name="amount" type="number" min="0.01" step="0.01" required /></label>
-        <label>分摊方式<select name="allocation_mode" value={allocationMode} onChange={(event) => setAllocationMode(event.target.value as typeof allocationMode)}><option value="cohort">本班期公共成本</option><option value="equal_students">均摊至本期在册学员</option><option value="custom">跨班期自定义分摊</option></select></label>
         <label>供应商/收款方<input name="vendor" maxLength={240} /></label>
         <label>单据编号<input name="document_no" maxLength={120} /></label>
         <label className="educationWide educationFileField">凭证与附件<input name="attachments" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.zip" /><small>文件直接保存到公司 NAS 的台账附件目录；单个文件最大 200MB，可多选。</small></label>
         <label className="educationWide">备注<textarea name="note" maxLength={2000} /></label>
-        {allocationMode === "custom" && <div className="educationWide educationCustomAllocations">
-          <strong>跨班期分摊明细（合计必须等于单据金额）</strong>
-          {customAllocations.map((item, index) => <div key={index} className="educationCustomAllocationRow">
-            <select value={item.cohort_id} onChange={(event) => setCustomAllocations((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, cohort_id: event.target.value } : row))}>{cohorts.map((cohort) => <option key={cohort.id} value={cohort.id}>{cohort.name}</option>)}</select>
-            <input type="number" min="0.01" step="0.01" placeholder="分摊金额" value={item.amount} onChange={(event) => setCustomAllocations((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, amount: event.target.value } : row))} required />
-            <input placeholder="分摊说明" value={item.note} onChange={(event) => setCustomAllocations((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, note: event.target.value } : row))} />
-            <button type="button" disabled={customAllocations.length === 1} onClick={() => setCustomAllocations((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}>移除</button>
-          </div>)}
-          <button type="button" onClick={() => setCustomAllocations((rows) => [...rows, { cohort_id: cohortId, amount: "", note: "" }])}>＋增加分摊行</button>
-        </div>}
-        <p className="educationWide educationHint">价格发生变化时，按不同起止日期分别保存一条费用时段，即可持续增加并保留每段价格。</p>
+        <p className="educationWide educationHint">总价＝每日单价 × 天数，天数包含发生日和结束日。价格发生变化时，请按不同起止日期分别保存一条费用。</p>
         <button className="primaryButton" disabled={!!busy}>{busy === "cost" ? "保存中…" : "保存并继续增加下一段费用"}</button>
       </form>}
       <div className="educationCostDocuments">{data?.costs.items.map((item) => <article key={item.id}>
         <header><strong>{item.category} / {item.detail}</strong><b>{money(item.amount)}</b></header>
         <p>发生 {item.occurred_on} · 结束 {item.ended_on || item.occurred_on}{item.vendor ? ` · ${item.vendor}` : ""}{item.document_no ? ` · 单据 ${item.document_no}` : ""}</p>
-        <p>本期已分摊 {money(item.allocated_amount)} · {item.allocations.some((allocation) => allocation.student_id) ? `${item.allocations.length}名学员` : "班期公共成本"}</p>
+        <p>每日单价 {money(item.unit_price)} × {item.quantity_days} 天 · 已直接计入班期总账</p>
         {item.source_ref && <p className="educationHint">凭证：{item.source_ref}</p>}
         {!!item.attachments.length && <div className="educationAttachments">{item.attachments.map((attachment) => <span key={attachment.id}><button type="button" disabled={!!busy} onClick={() => void downloadAttachment(item.id, attachment)}>{attachment.filename}</button><small>{Math.max(1, Math.ceil(attachment.size_bytes / 1024))} KB</small>{canEdit && <button type="button" className="educationAttachmentDelete" disabled={!!busy} onClick={() => void deleteAttachment(item.id, attachment)}>移除</button>}</span>)}</div>}
-        {canEdit && <button type="button" disabled={!!busy} onClick={() => void loadCostForEdit(item.id)}>{busy === `cost-load-${item.id}` ? "加载中…" : "修正单据与分摊"}</button>}
+        {canEdit && <button type="button" disabled={!!busy} onClick={() => void loadCostForEdit(item.id)}>{busy === `cost-load-${item.id}` ? "加载中…" : "修正费用"}</button>}
       </article>)}</div>
       {editingCost && <section className="educationCostCorrection">
-        <h4>修正成本单据</h4>
-        {!editingCost.can_edit && <p className="educationError">该单据包含当前账号不可管理的班期分摊，请由L5管理修正。</p>}
+        <h4>修正费用项目</h4>
+        {!editingCost.can_edit && <p className="educationError">当前账号无权修正这条历史费用，请由L5管理处理。</p>}
         <form className="educationForm" onSubmit={(event) => void updateCost(event)}>
-          <label>发生日期<input name="occurred_on" type="date" defaultValue={editingCost.occurred_on} required disabled={!editingCost.can_edit} /></label>
-          <label>结束日期<input name="ended_on" type="date" defaultValue={editingCost.ended_on || editingCost.occurred_on} required disabled={!editingCost.can_edit} /></label>
+          <CostPricingFields key={editingCost.id} start={editingCost.occurred_on} end={editingCost.ended_on || editingCost.occurred_on} unitPrice={editingCost.unit_price} disabled={!editingCost.can_edit} />
           <label>成本分类<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value)} disabled={!editingCost.can_edit}>{Object.keys(costDetails).map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>成本明细<select name="detail" key={editCategory} defaultValue={editingCost.category === editCategory ? editingCost.detail : costDetails[editCategory][0]} disabled={!editingCost.can_edit}>{costDetails[editCategory].map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>金额<input name="amount" type="number" min="0.01" step="0.01" defaultValue={editingCost.amount} required disabled={!editingCost.can_edit} /></label>
-          <label>分摊方式<select name="allocation_mode" value={editAllocationMode} onChange={(event) => { const mode = event.target.value as typeof editAllocationMode; setEditAllocationMode(mode); if (mode === "custom" && editAllocationMode !== "custom") setEditAllocations([{ cohort_id: cohortId, amount: editingCost.amount, note: editingCost.note }]); }} disabled={!editingCost.can_edit}><option value="cohort">本班期公共成本</option><option value="equal_students">均摊至本期在册学员</option><option value="custom">跨班期自定义分摊</option></select></label>
           <label>供应商/收款方<input name="vendor" defaultValue={editingCost.vendor} maxLength={240} disabled={!editingCost.can_edit} /></label>
           <label>单据编号<input name="document_no" defaultValue={editingCost.document_no} maxLength={120} disabled={!editingCost.can_edit} /></label>
           <label className="educationWide educationFileField">继续添加凭证与附件<input name="attachments" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.zip" disabled={!editingCost.can_edit} /><small>新选择的文件将追加保存，原附件不会被覆盖。</small></label>
           <label className="educationWide">备注<textarea name="note" defaultValue={editingCost.note} maxLength={2000} disabled={!editingCost.can_edit} /></label>
-          {editAllocationMode === "custom" && <div className="educationWide educationCustomAllocations">{editAllocations.map((item, index) => <div key={index} className="educationCustomAllocationRow">
-            <select value={item.cohort_id} onChange={(event) => setEditAllocations((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, cohort_id: event.target.value } : row))}>{cohorts.map((cohort) => <option key={cohort.id} value={cohort.id}>{cohort.name}</option>)}</select>
-            <input type="number" min="0.01" step="0.01" value={item.amount} onChange={(event) => setEditAllocations((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, amount: event.target.value } : row))} required />
-            <input value={item.note} placeholder="分摊说明" onChange={(event) => setEditAllocations((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, note: event.target.value } : row))} />
-            <button type="button" disabled={editAllocations.length === 1} onClick={() => setEditAllocations((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}>移除</button>
-          </div>)}<button type="button" onClick={() => setEditAllocations((rows) => [...rows, { cohort_id: cohortId, amount: "", note: "" }])}>＋增加分摊行</button></div>}
           {!!editingCost.attachments.length && <div className="educationWide educationAttachments">{editingCost.attachments.map((attachment) => <span key={attachment.id}><button type="button" onClick={() => void downloadAttachment(editingCost.id, attachment)}>{attachment.filename}</button><small>{Math.max(1, Math.ceil(attachment.size_bytes / 1024))} KB</small>{editingCost.can_edit && <button type="button" className="educationAttachmentDelete" onClick={() => void deleteAttachment(editingCost.id, attachment)}>移除</button>}</span>)}</div>}
           <button className="primaryButton" disabled={!!busy || !editingCost.can_edit}>{busy === `cost-update-${editingCost.id}` ? "保存中…" : "保存修正"}</button>
           <button type="button" disabled={!!busy} onClick={() => setEditingCost(null)}>取消</button>
         </form>
       </section>}
-      {!data?.costs.items.length && <p className="educationHint">尚未登记结构化成本单据。请在上方选择费用分类、填写金额后点击“保存并继续增加下一段费用”。</p>}
+      {!data?.costs.items.length && <p className="educationHint">尚未登记费用项目。请在上方选择费用分类、填写日期和每日单价后保存。</p>}
     </section>
 
     {data?.can_view_logs && <details className="educationOperationSection">

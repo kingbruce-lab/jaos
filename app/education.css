@@ -17,6 +17,9 @@
 .educationForm label { display: grid; gap: 7px; color: #52667a; font-size: 13px; min-width: 0; }
 .educationForm input, .educationForm select, .educationForm textarea { width: 100%; box-sizing: border-box; padding: 11px; border: 1px solid #d9e3eb; border-radius: 8px; background: #fff; color: #172c3e; font: inherit; }
 .educationForm textarea { min-height: 75px; resize: vertical; }
+.educationComputedTotal { align-content: start; padding: 10px 12px; border: 1px solid #b8d9cb; border-radius: 10px; background: #f0faf5; }
+.educationComputedTotal output { min-height: 25px; color: #176147; font-size: 20px; font-weight: 800; overflow-wrap: anywhere; }
+.educationComputedTotal small { color: #5a786d; font-size: 12px; line-height: 1.45; }
 .educationWorkspace input[type="date"], .educationWorkspace input[type="month"] { min-height: 54px; font-size: 16px; padding: 12px 14px; }
 .educationWorkspace input[type="date"]::-webkit-calendar-picker-indicator, .educationWorkspace input[type="month"]::-webkit-calendar-picker-indicator { width: 25px; height: 25px; padding: 5px; cursor: pointer; }
 .educationWide { grid-column: 1 / -1; }

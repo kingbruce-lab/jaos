@@ -1,4 +1,4 @@
-"""Education cost allocation, 6+1 calendars and auditable daily operations logs."""
+"""Direct-to-ledger education costs, 6+1 calendars and auditable daily logs."""
 from __future__ import annotations
 
 import hashlib
@@ -6,7 +6,7 @@ import json
 import re
 import secrets
 from datetime import date, timedelta
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -50,43 +50,17 @@ class CostDocumentCreate(BaseModel):
     ended_on: date | None = None
     category: str = Field(min_length=1, max_length=40)
     detail: str = Field(min_length=1, max_length=80)
-    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    unit_price: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     vendor: str = Field(default="", max_length=240)
     document_no: str = Field(default="", max_length=120)
     source_ref: str = Field(default="", max_length=2000)
     note: str = Field(default="", max_length=2000)
-    allocation_mode: Literal["cohort", "equal_students", "custom"] = "cohort"
-    allocation_month: date | None = None
-    allocations: list["CostAllocationInput"] = Field(default_factory=list, max_length=500)
-
-    @field_validator("allocation_month")
-    @classmethod
-    def month_must_be_first(cls, value: date | None) -> date | None:
-        if value is not None and value.day != 1:
-            raise ValueError("分摊月份必须选择当月第一天")
-        return value
 
     @model_validator(mode="after")
     def valid_period(self):
         if self.ended_on and self.ended_on < self.occurred_on:
             raise ValueError("结束日期不能早于发生日期")
         return self
-
-
-class CostAllocationInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    cohort_id: UUID
-    student_id: UUID | None = None
-    allocation_month: date
-    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
-    note: str = Field(default="", max_length=1000)
-
-    @field_validator("allocation_month")
-    @classmethod
-    def month_must_be_first(cls, value: date) -> date:
-        if value.day != 1:
-            raise ValueError("分摊月份必须选择当月第一天")
-        return value
 
 
 class CostDocumentUpdate(CostDocumentCreate):
@@ -168,12 +142,21 @@ def _attachment_data(row: EducationCostAttachment) -> dict:
 
 def _cost_data(row: EducationCostDocument, allocations: list[dict], attachments: list[EducationCostAttachment] | None = None) -> dict:
     allocated = sum((Decimal(item["amount"]) for item in allocations), Decimal("0"))
+    ended_on = row.ended_on or row.occurred_on
+    quantity_days = (ended_on - row.occurred_on).days + 1
+    unit_price = row.unit_price
+    if unit_price <= 0:
+        unit_price = (row.amount / quantity_days).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
     return {
         "id": row.id,
         "occurred_on": row.occurred_on.isoformat(),
-        "ended_on": (row.ended_on or row.occurred_on).isoformat(),
+        "ended_on": ended_on.isoformat(),
         "category": row.category,
         "detail": row.detail,
+        "unit_price": _money(unit_price),
+        "quantity_days": quantity_days,
         "amount": _money(row.amount),
         "allocated_amount": _money(allocated),
         "unallocated_amount": _money(max(row.amount - allocated, Decimal("0"))),
@@ -326,12 +309,6 @@ def _log_data(row: EducationDailyLog, staff_name: str, staff_role: str) -> dict:
     }
 
 
-def _split_evenly(amount: Decimal, count: int) -> list[Decimal]:
-    cents = int((amount * 100).to_integral_value(rounding=ROUND_DOWN))
-    quotient, remainder = divmod(cents, count)
-    return [Decimal(quotient + (1 if index < remainder else 0)) / 100 for index in range(count)]
-
-
 def _validate_log_targets(db: Session, cohort, payload: DailyLogCreate | DailyLogUpdate) -> tuple[EducationStaff, list[str], str | None]:
     if not cohort.start_date <= payload.log_date <= cohort.end_date:
         raise HTTPException(422, "记录日期必须在本班期内")
@@ -350,44 +327,18 @@ def _validate_log_targets(db: Session, cohort, payload: DailyLogCreate | DailyLo
     return staff, student_ids, schedule_day_id
 
 
-def _allocation_targets(db: Session, user: User, base_cohort, payload: CostDocumentCreate | CostDocumentUpdate) -> list[tuple[str, str | None, date, Decimal, str]]:
-    default_month = payload.allocation_month or _month(payload.occurred_on)
-    if payload.allocation_mode == "cohort":
-        return [(base_cohort.id, None, default_month, payload.amount, payload.note)]
-    if payload.allocation_mode == "equal_students":
-        students = db.scalars(
-            select(EducationStudent)
-            .where(EducationStudent.cohort_id == base_cohort.id, EducationStudent.learning_status != "已退营")
-            .order_by(EducationStudent.student_no, EducationStudent.id)
-        ).all()
-        if not students:
-            raise HTTPException(409, "本班期尚无可分摊学员，请先登记学员或改为班期公共成本")
-        return [
-            (base_cohort.id, student.id, default_month, part, payload.note)
-            for student, part in zip(students, _split_evenly(payload.amount, len(students)), strict=True)
-        ]
-    if not payload.allocations:
-        raise HTTPException(422, "自定义分摊至少需要一条分摊明细")
-    if sum((item.amount for item in payload.allocations), Decimal("0")) != payload.amount:
-        raise HTTPException(422, "自定义分摊金额合计必须等于原始单据金额")
-    seen: set[tuple[str, str | None, date]] = set()
-    targets: list[tuple[str, str | None, date, Decimal, str]] = []
-    for item in payload.allocations:
-        cohort_id = str(item.cohort_id)
-        target_cohort = _cohort(db, user, cohort_id, write=True)
-        if target_cohort.entity_id != base_cohort.entity_id:
-            raise HTTPException(422, "成本只能在同一公司主体的班期之间分摊")
-        student_id = str(item.student_id) if item.student_id else None
-        if student_id:
-            student = db.get(EducationStudent, student_id)
-            if student is None or student.cohort_id != target_cohort.id:
-                raise HTTPException(422, "分摊学员不属于所选班期")
-        key = (target_cohort.id, student_id, item.allocation_month)
-        if key in seen:
-            raise HTTPException(422, "同一班期、学员和月份不能重复分摊")
-        seen.add(key)
-        targets.append((target_cohort.id, student_id, item.allocation_month, item.amount, item.note))
-    return targets
+def _cost_pricing(payload: CostDocumentCreate | CostDocumentUpdate) -> tuple[int, Decimal]:
+    ended_on = payload.ended_on or payload.occurred_on
+    quantity_days = (ended_on - payload.occurred_on).days + 1
+    total = (payload.unit_price * quantity_days).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    return quantity_days, total
+
+
+def _ledger_target(base_cohort, payload: CostDocumentCreate | CostDocumentUpdate) -> tuple[str, str | None, date, Decimal, str]:
+    _, total = _cost_pricing(payload)
+    return (base_cohort.id, None, _month(payload.occurred_on), total, payload.note)
 
 
 @router.get("/cohorts/{cohort_id}/operations")
@@ -488,6 +439,7 @@ def operations(
             "items": costs,
             "source_total": _money(sum((document.amount for document, _ in grouped.values()), Decimal("0"))),
             "allocated_to_cohort": _money(sum((allocation.amount for allocation, _, _ in allocation_rows), Decimal("0"))),
+            "ledger_total": _money(sum((allocation.amount for allocation, _, _ in allocation_rows), Decimal("0"))),
         },
         "logs": logs,
         "missing_log_days": missing_log_days,
@@ -649,7 +601,8 @@ def create_cost_document(cohort_id: str, payload: CostDocumentCreate,
     cohort = _cohort(db, user, cohort_id, write=True)
     if payload.category not in COST_CATEGORIES or payload.detail not in FEE_DETAILS[payload.category]:
         raise HTTPException(422, "请选择有效的成本分类和明细；学费属于收入，不能作为成本单据")
-    targets = _allocation_targets(db, user, cohort, payload)
+    quantity_days, total = _cost_pricing(payload)
+    target = _ledger_target(cohort, payload)
     existing = db.get(EducationCostDocument, str(payload.request_id))
     if existing:
         existing_allocations = db.scalars(select(EducationCostAllocation).where(
@@ -662,40 +615,43 @@ def create_cost_document(cohort_id: str, payload: CostDocumentCreate,
             and (existing.ended_on or existing.occurred_on) == (payload.ended_on or payload.occurred_on)
             and existing.category == payload.category
             and existing.detail == payload.detail
-            and existing.amount == payload.amount
+            and existing.unit_price == payload.unit_price
+            and existing.amount == total
             and existing.vendor == payload.vendor
             and existing.document_no == payload.document_no
             and existing.source_ref == payload.source_ref
             and existing.note == payload.note
         )
-        sort_key = lambda item: (item[0], item[1] or "", item[2], item[3], item[4])
-        existing_values = sorted(
-            ((item.cohort_id, item.student_id, item.allocation_month, item.amount, item.note) for item in existing_allocations),
-            key=sort_key,
-        )
-        allocation_matches = existing_values == sorted(targets, key=sort_key)
-        if not source_matches or not allocation_matches:
+        ledger_matches = len(existing_allocations) == 1 and (
+            existing_allocations[0].cohort_id,
+            existing_allocations[0].student_id,
+            existing_allocations[0].allocation_month,
+            existing_allocations[0].amount,
+            existing_allocations[0].note,
+        ) == target
+        if not source_matches or not ledger_matches:
             raise HTTPException(409, "提交标识冲突，请刷新后重试")
         return {"id": existing.id}
 
     document = EducationCostDocument(
         id=str(payload.request_id), entity_id=cohort.entity_id, occurred_on=payload.occurred_on,
         ended_on=payload.ended_on or payload.occurred_on,
-        category=payload.category, detail=payload.detail, amount=payload.amount,
+        category=payload.category, detail=payload.detail,
+        unit_price=payload.unit_price, amount=total,
         vendor=payload.vendor, document_no=payload.document_no, source_ref=payload.source_ref,
         note=payload.note, created_by_user_id=user.id, version=1, active=True,
     )
     db.add(document)
-    for target_cohort_id, student_id, allocation_month, amount, note in targets:
-        db.add(EducationCostAllocation(
-            cost_document_id=document.id, cohort_id=target_cohort_id, student_id=student_id,
-            allocation_month=allocation_month, amount=amount, note=note,
-            created_by_user_id=user.id,
-        ))
+    target_cohort_id, student_id, ledger_month, amount, note = target
+    db.add(EducationCostAllocation(
+        cost_document_id=document.id, cohort_id=target_cohort_id, student_id=student_id,
+        allocation_month=ledger_month, amount=amount, note=note,
+        created_by_user_id=user.id,
+    ))
     _audit(db, user, "education_cost_document_created", None, {
         "id": document.id, "cohort_id": cohort.id, "category": document.category,
-        "amount": _money(document.amount), "allocation_mode": payload.allocation_mode,
-        "allocation_count": len(targets),
+        "unit_price": _money(document.unit_price), "quantity_days": quantity_days,
+        "amount": _money(document.amount), "ledger_mode": "direct",
     })
     _commit(db)
     return {"id": document.id}
@@ -722,14 +678,8 @@ def cost_document_detail(cohort_id: str, document_id: str,
         EducationCostAttachment.cost_document_id == document.id,
     ).order_by(EducationCostAttachment.created_at, EducationCostAttachment.id)).all()
     result = _cost_data(document, allocations, attachments)
-    same_month = {item["allocation_month"] for item in allocations}
     result.update({
-        "allocation_mode": (
-            "cohort" if len(allocations) == 1 and allocations[0]["student_id"] is None
-            else "equal_students" if len(all_cohort_ids) == 1 and all(item["student_id"] for item in allocations)
-            else "custom"
-        ),
-        "allocation_month": next(iter(same_month)) if len(same_month) == 1 else None,
+        "ledger_mode": "direct",
         "can_edit": user.organization_role != "finance" and all_cohort_ids <= allowed_ids,
         "has_hidden_allocations": visible_ids != all_cohort_ids,
     })
@@ -759,10 +709,12 @@ def update_cost_document(cohort_id: str, document_id: str, payload: CostDocument
         raise HTTPException(409, "成本单据已更新，请刷新后重试")
     if payload.category not in COST_CATEGORIES or payload.detail not in FEE_DETAILS[payload.category]:
         raise HTTPException(422, "请选择有效的成本分类和明细；学费属于收入，不能作为成本单据")
-    targets = _allocation_targets(db, user, cohort, payload)
+    quantity_days, total = _cost_pricing(payload)
+    target = _ledger_target(cohort, payload)
     before = {
         "id": document.id, "category": document.category, "detail": document.detail,
-        "amount": _money(document.amount), "version": document.version,
+        "unit_price": _money(document.unit_price), "amount": _money(document.amount),
+        "version": document.version,
         "allocation_count": db.scalar(select(func.count(EducationCostAllocation.id)).where(
             EducationCostAllocation.cost_document_id == document.id,
         )),
@@ -771,22 +723,24 @@ def update_cost_document(cohort_id: str, document_id: str, payload: CostDocument
     document.ended_on = payload.ended_on or payload.occurred_on
     document.category = payload.category
     document.detail = payload.detail
-    document.amount = payload.amount
+    document.unit_price = payload.unit_price
+    document.amount = total
     document.vendor = payload.vendor
     document.document_no = payload.document_no
     document.source_ref = payload.source_ref
     document.note = payload.note
     document.version += 1
     db.execute(delete(EducationCostAllocation).where(EducationCostAllocation.cost_document_id == document.id))
-    for target_cohort_id, student_id, allocation_month, amount, note in targets:
-        db.add(EducationCostAllocation(
-            cost_document_id=document.id, cohort_id=target_cohort_id, student_id=student_id,
-            allocation_month=allocation_month, amount=amount, note=note, created_by_user_id=user.id,
-        ))
+    target_cohort_id, student_id, ledger_month, amount, note = target
+    db.add(EducationCostAllocation(
+        cost_document_id=document.id, cohort_id=target_cohort_id, student_id=student_id,
+        allocation_month=ledger_month, amount=amount, note=note, created_by_user_id=user.id,
+    ))
     _audit(db, user, "education_cost_document_updated", before, {
         "id": document.id, "category": document.category, "detail": document.detail,
+        "unit_price": _money(document.unit_price), "quantity_days": quantity_days,
         "amount": _money(document.amount), "version": document.version,
-        "allocation_count": len(targets),
+        "ledger_mode": "direct",
     })
     _commit(db)
     return {"id": document.id}

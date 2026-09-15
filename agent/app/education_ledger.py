@@ -16,7 +16,7 @@ from .auth import current_user
 from .database import get_db
 from .education_system import _audit, _cohort, _commit, _money, _require_access, _scope
 from .models import (
-    EducationCohort, EducationCostAllocation, EducationCostDocument,
+    EducationCashEntry, EducationCohort, EducationCostAllocation, EducationCostDocument,
     EducationInstallment, EducationPayment, EducationStudent, User,
 )
 
@@ -167,12 +167,21 @@ def ledger_overview(
             EducationStudent.received - EducationStudent.receivable), else_=0)), 0),
     ).select_from(EducationStudent).join(EducationCohort, EducationCohort.id == EducationStudent.cohort_id)
       .where(*where)).one()
-    allocated_total = db.scalar(select(func.coalesce(func.sum(EducationCostAllocation.amount), 0))
+    ledger_cohort_filters = [EducationCohort.id.in_(select(scoped.c.id))]
+    if cohort_id:
+        ledger_cohort_filters.append(EducationCohort.id == cohort_id)
+    ledger_cohort_ids = select(EducationCohort.id).where(*ledger_cohort_filters)
+    recorded_cost_total = db.scalar(select(func.coalesce(func.sum(EducationCostAllocation.amount), 0))
         .select_from(EducationCostAllocation)
         .join(EducationCostDocument, EducationCostDocument.id == EducationCostAllocation.cost_document_id)
-        .join(EducationStudent, EducationStudent.id == EducationCostAllocation.student_id)
-        .join(EducationCohort, EducationCohort.id == EducationStudent.cohort_id)
-        .where(EducationCostDocument.active.is_(True), *where)) or Decimal(0)
+        .where(
+            EducationCostAllocation.cohort_id.in_(ledger_cohort_ids),
+            EducationCostDocument.active.is_(True),
+        )) or Decimal(0)
+    cash_expense_total = db.scalar(select(func.coalesce(func.sum(EducationCashEntry.amount), 0)).where(
+        EducationCashEntry.cohort_id.in_(ledger_cohort_ids),
+        EducationCashEntry.direction == "expense",
+    )) or Decimal(0)
     return {
         "items": [{
             "id": row.id, "cohort_id": row.cohort_id, "cohort_name": cohort_name,
@@ -188,7 +197,11 @@ def ledger_overview(
             "allocated_cost": _money(allocated_by_student.get(row.id, Decimal(0))),
         } for row, cohort_name in rows],
         "summary": {"student_count": totals[0], "receivable": _money(totals[1]),
-                    "received": _money(totals[2]), "cost": _money(totals[3] + allocated_total),
+                    "received": _money(totals[2]),
+                    "student_cost": _money(totals[3]),
+                    "recorded_cost": _money(recorded_cost_total),
+                    "cash_expense": _money(cash_expense_total),
+                    "cost": _money(totals[3] + recorded_cost_total + cash_expense_total),
                     "arrears": _money(totals[4]), "overpayment": _money(totals[5])},
         "has_more": offset + len(rows) < totals[0],
         "scope": "mine" if user.organization_role == "education" else "all",

@@ -79,7 +79,7 @@ def test_schedule_generation_is_idempotent_and_manual_changes_survive(setup):
     assert db.scalar(select(func.count(EducationMonthlySummary.id))) == 1
 
 
-def test_cost_document_allocates_exact_cents_without_double_counting(setup):
+def test_cost_document_calculates_total_and_posts_directly_to_ledger(setup):
     client, db, _, _ = setup
     cohort_id = _cohort(client)
     _student(client, cohort_id, name="学员甲")
@@ -92,33 +92,35 @@ def test_cost_document_allocates_exact_cents_without_double_counting(setup):
         "ended_on": "2026-10-09",
         "category": "饭费",
         "detail": "餐费套餐",
-        "amount": "100.01",
+        "unit_price": "14.29",
         "vendor": "食堂",
         "document_no": "FP-001",
         "source_ref": "NAS/星曜/2026-10/FP-001.pdf",
-        "note": "两名学员均摊",
-        "allocation_mode": "equal_students",
-        "allocation_month": "2026-10-01",
+        "note": "七天餐费",
     }
     created = client.post(path + "/cost-documents", json=payload)
     assert created.status_code == 200, created.text
     assert client.post(path + "/cost-documents", json=payload).json() == created.json()
-    assert client.post(path + "/cost-documents", json={**payload, "amount": "99"}).status_code == 409
+    assert client.post(path + "/cost-documents", json={**payload, "unit_price": "14.00"}).status_code == 409
 
     operations = client.get(path + "/operations").json()
-    assert operations["costs"]["source_total"] == "100.01"
+    assert operations["costs"]["source_total"] == "100.03"
     assert operations["costs"]["items"][0]["ended_on"] == "2026-10-09"
-    assert operations["costs"]["allocated_to_cohort"] == "100.01"
-    assert sorted(item["amount"] for item in operations["costs"]["items"][0]["allocations"]) == ["50.00", "50.01"]
-    assert client.get(path).json()["expense"] == "1920.51"
+    assert operations["costs"]["items"][0]["unit_price"] == "14.29"
+    assert operations["costs"]["items"][0]["quantity_days"] == 7
+    assert operations["costs"]["ledger_total"] == "100.03"
+    assert operations["costs"]["items"][0]["allocations"][0]["student_id"] is None
+    assert client.get(path).json()["expense"] == "1920.53"
     cohort_summary = client.get("/v1/pm/education/cohorts").json()["summary"]
-    assert cohort_summary["cost"] == "1920.51"
+    assert cohort_summary["cost"] == "1920.53"
     assert cohort_summary["cash_expense"] == "0.00"
     ledger = client.get("/v1/pm/education/ledger?limit=100").json()
-    assert ledger["summary"]["cost"] == "1920.51"
-    assert sorted(item["allocated_cost"] for item in ledger["items"]) == ["50.00", "50.01"]
+    assert ledger["summary"]["student_cost"] == "1820.50"
+    assert ledger["summary"]["recorded_cost"] == "100.03"
+    assert ledger["summary"]["cost"] == "1920.53"
+    assert sorted(item["allocated_cost"] for item in ledger["items"]) == ["0.00", "0.00"]
     assert db.scalar(select(func.count(EducationCostDocument.id))) == 1
-    assert db.scalar(select(func.count(EducationCostAllocation.id))) == 2
+    assert db.scalar(select(func.count(EducationCostAllocation.id))) == 1
 
 
 def test_cost_voucher_is_saved_downloaded_and_deleted_as_a_file(setup, tmp_path, monkeypatch):
@@ -128,7 +130,7 @@ def test_cost_voucher_is_saved_downloaded_and_deleted_as_a_file(setup, tmp_path,
     path = f"/v1/pm/education/cohorts/{cohort_id}"
     created = client.post(path + "/cost-documents", json={
         "request_id": str(uuid4()), "occurred_on": "2026-10-01", "ended_on": "2026-10-08",
-        "category": "住宿费", "detail": "一人间", "amount": "800.00", "allocation_mode": "cohort",
+        "category": "住宿费", "detail": "一人间", "unit_price": "100.00",
     })
     assert created.status_code == 200, created.text
     document_id = created.json()["id"]
@@ -223,7 +225,7 @@ def test_cost_and_log_validation(setup):
     path = f"/v1/pm/education/cohorts/{cohort_id}"
     invalid_cost = {
         "request_id": str(uuid4()), "occurred_on": "2026-10-01", "category": "学费",
-        "detail": "课程学费", "amount": "100", "allocation_mode": "cohort",
+        "detail": "课程学费", "unit_price": "100",
     }
     assert client.post(path + "/cost-documents", json=invalid_cost).status_code == 422
     invalid_period = {**invalid_cost, "request_id": str(uuid4()), "category": "饭费", "detail": "餐费套餐",
@@ -235,7 +237,7 @@ def test_cost_and_log_validation(setup):
     }).status_code == 422
 
 
-def test_cross_cohort_custom_cost_can_be_corrected_without_duplicate_expense(setup):
+def test_cost_correction_recalculates_total_without_cross_cohort_allocation(setup):
     client, db, _, _ = setup
     first_id = _cohort(client)
     second = client.post("/v1/pm/education/cohorts", json=cohort_payload(
@@ -245,12 +247,8 @@ def test_cross_cohort_custom_cost_can_be_corrected_without_duplicate_expense(set
     second_id = second.json()["id"]
     request_id = str(uuid4())
     payload = {
-        "request_id": request_id, "occurred_on": "2026-10-20", "category": "活动经费",
-        "detail": "活动物料", "amount": "100.00", "vendor": "物料商",
-        "allocation_mode": "custom", "allocations": [
-            {"cohort_id": first_id, "allocation_month": "2026-10-01", "amount": "60.00", "note": "十月"},
-            {"cohort_id": second_id, "allocation_month": "2026-11-01", "amount": "40.00", "note": "十一月"},
-        ],
+        "request_id": request_id, "occurred_on": "2026-10-20", "ended_on": "2026-10-21",
+        "category": "活动经费", "detail": "活动物料", "unit_price": "50.00", "vendor": "物料商",
     }
     first_path = f"/v1/pm/education/cohorts/{first_id}"
     created = client.post(first_path + "/cost-documents", json=payload)
@@ -258,18 +256,16 @@ def test_cross_cohort_custom_cost_can_be_corrected_without_duplicate_expense(set
     detail_path = first_path + f"/cost-documents/{created.json()['id']}"
     detail = client.get(detail_path)
     assert detail.status_code == 200
-    assert detail.json()["allocation_mode"] == "custom"
-    assert len(detail.json()["allocations"]) == 2
-    assert client.get(first_path).json()["expense"] == "60.00"
-    assert client.get(f"/v1/pm/education/cohorts/{second_id}").json()["expense"] == "40.00"
+    assert detail.json()["ledger_mode"] == "direct"
+    assert detail.json()["quantity_days"] == 2
+    assert len(detail.json()["allocations"]) == 1
+    assert client.get(first_path).json()["expense"] == "100.00"
+    assert client.get(f"/v1/pm/education/cohorts/{second_id}").json()["expense"] == "0.00"
 
     correction = {key: value for key, value in payload.items() if key != "request_id"}
-    correction.update(version=1, allocations=[
-        {"cohort_id": first_id, "allocation_month": "2026-10-01", "amount": "50.00", "note": "修正"},
-        {"cohort_id": second_id, "allocation_month": "2026-11-01", "amount": "50.00", "note": "修正"},
-    ])
+    correction.update(version=1, unit_price="60.00")
     assert client.patch(detail_path, json=correction).status_code == 200
     assert client.patch(detail_path, json=correction).status_code == 409
-    assert client.get(first_path).json()["expense"] == "50.00"
-    assert client.get(f"/v1/pm/education/cohorts/{second_id}").json()["expense"] == "50.00"
-    assert db.scalar(select(func.sum(EducationCostAllocation.amount))) == 100
+    assert client.get(first_path).json()["expense"] == "120.00"
+    assert client.get(f"/v1/pm/education/cohorts/{second_id}").json()["expense"] == "0.00"
+    assert db.scalar(select(func.sum(EducationCostAllocation.amount))) == 120
