@@ -222,6 +222,49 @@
 .financePeriodSwitcherButtons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .financePeriodSwitcherButtons button { min-height: 44px; padding: 0 18px; border: 1px solid #dce3eb; border-radius: 12px; color: #59677a; background: #f7f9fb; font-size: 14px; font-weight: 800; cursor: pointer; }
 .financePeriodSwitcherButtons button.active { border-color: #d91e2b; color: #fff; background: #d91e2b; box-shadow: 0 8px 18px rgba(217,30,43,.18); }
+.financePeriodSwitcherButtons .costCenterMenuButton { border-color: #1d5f91; color: #174d75; background: #eef7fd; }
+.financeCostCenterWorkspace { gap: 22px; }
+.financeCostCenterHero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 30px 34px; border-radius: 18px; color: #fff; background: linear-gradient(135deg,#10233d 0%,#173b59 62%,#225f78 100%); box-shadow: 0 18px 40px rgba(16,35,61,.16); }
+.financeCostCenterHero > div:first-child { display: grid; gap: 7px; }
+.financeCostCenterHero p { margin: 0; color: #8fc5e7; font-size: 11px; font-weight: 900; letter-spacing: 2px; }
+.financeCostCenterHero span { color: #d5e8f3; font-size: 14px; }
+.financeCostCenterHero strong { font-size: 27px; }
+.financeCostCenterHero small { color: #b8cfdd; }
+.financeCostCenterHeroActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; }
+.financeCostCenterHeroActions button { min-height: 42px; padding: 0 15px; border: 1px solid rgba(255,255,255,.28); border-radius: 10px; color: #fff; background: rgba(255,255,255,.08); font-weight: 800; cursor: pointer; }
+.financeCostCenterHeroActions button.active { border-color: #f5ad3b; color: #fff4d7; background: rgba(245,173,59,.18); }
+.financeCostCenterGroups { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
+.financeCostCenterGroup { padding: 20px; }
+.financeCostCenterGroup > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.financeCostCenterGroup > header h2 { margin: 0; color: #17243a; font-size: 17px; }
+.financeCostCenterGroup > header span { color: #7b8796; font-size: 12px; }
+.financeCostCenterGroup > div { display: grid; gap: 8px; }
+.financeCostCenterGroup button { display: grid; gap: 5px; width: 100%; padding: 12px 13px; border: 1px solid #dfe6ed; border-radius: 11px; color: #35445a; background: #f9fbfc; text-align: left; cursor: pointer; }
+.financeCostCenterGroup button > span { display: flex; align-items: baseline; gap: 9px; }
+.financeCostCenterGroup button b { color: #185b88; font-size: 13px; }
+.financeCostCenterGroup button strong { font-size: 14px; }
+.financeCostCenterGroup button small { color: #7a8797; font-size: 11px; line-height: 1.45; }
+.financeCostCenterGroup button.active { border-color: #2678af; background: #eaf5fc; box-shadow: 0 0 0 2px rgba(38,120,175,.09); }
+.financeCostCenterLedgerPanel { padding: 26px 28px; }
+.financeCostCenterLedgerPanel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.financeCostCenterLedgerPanel > header span { color: #397baa; font-size: 11px; font-weight: 900; letter-spacing: 1.8px; }
+.financeCostCenterLedgerPanel > header h2 { margin: 6px 0; color: #17243a; font-size: 24px; }
+.financeCostCenterLedgerPanel > header p { margin: 0; color: #6c7888; }
+.financeCostCenterLedgerPanel > header > b { padding: 7px 11px; border-radius: 999px; color: #1d648f; background: #edf7fd; font-size: 12px; }
+.financeCostCenterMetrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin: 20px 0; }
+.financeCostCenterMetrics article { display: grid; gap: 7px; padding: 15px; border: 1px solid #e1e7ed; border-radius: 12px; background: #fafcfd; }
+.financeCostCenterMetrics span { color: #738095; font-size: 12px; }
+.financeCostCenterMetrics strong { font-size: 21px; }
+.financeCostCenterTransactions { display: grid; }
+.financeCostCenterTransactions > article { display: grid; grid-template-columns: 150px minmax(0,1fr) auto; align-items: center; gap: 18px; padding: 15px 3px; border-top: 1px solid #e7ecf1; }
+.financeCostCenterTransactions time { color: #5f6f83; font-size: 12px; }
+.financeCostCenterTransactions article > div { min-width: 0; }
+.financeCostCenterTransactions article strong { color: #1b2d45; }
+.financeCostCenterTransactions article p { margin: 5px 0; color: #4e5d70; line-height: 1.45; }
+.financeCostCenterTransactions article small { color: #8993a0; }
+.financeCostCenterTransactions article > b { font-size: 16px; white-space: nowrap; }
+.invalidFinanceField select { border-color: #d91e2b !important; background: #fff5f5 !important; }
+.invalidFinanceField small { color: #b31724 !important; }
 .financeAnnualLoading { display: grid; place-items: center; min-height: 260px; gap: 8px; text-align: center; }
 .financeAnnualLoading strong { font-size: 22px; }
 .financeAnnualLoading span { color: #7e8998; font-size: 14px; }
@@ -335,6 +378,12 @@
   .financePeriodSwitcher { align-items: stretch; flex-direction: column; padding: 18px; }
   .financePeriodSwitcherButtons { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; padding-bottom: 3px; }
   .financePeriodSwitcherButtons button { flex: 0 0 auto; min-height: 46px; font-size: 15px; }
+  .financeCostCenterHero { align-items: stretch; flex-direction: column; padding: 22px 18px; }
+  .financeCostCenterHeroActions { justify-content: flex-start; }
+  .financeCostCenterGroups { grid-template-columns: 1fr; }
+  .financeCostCenterLedgerPanel { padding: 20px 16px; }
+  .financeCostCenterMetrics { grid-template-columns: 1fr; }
+  .financeCostCenterTransactions > article { grid-template-columns: 1fr; gap: 7px; }
   .financeAnnualHero { min-height: 0; padding: 25px 20px; }
   .financeAnnualHero p { margin-bottom: 18px; }
   .financeAnnualHero span { font-size: 16px; }

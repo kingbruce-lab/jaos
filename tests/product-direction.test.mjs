@@ -7,6 +7,7 @@ const page = fs.readFileSync(path.join(process.cwd(), "app", "page.tsx"), "utf8"
 const styles = fs.readFileSync(path.join(process.cwd(), "app", "globals.css"), "utf8");
 const layout = fs.readFileSync(path.join(process.cwd(), "app", "layout.tsx"), "utf8");
 const agent = fs.readFileSync(path.join(process.cwd(), "agent", "app", "main.py"), "utf8");
+const financeAgent = fs.readFileSync(path.join(process.cwd(), "agent", "app", "finance_system.py"), "utf8");
 const skill = fs.readFileSync(path.join(process.cwd(), "skill", "jingao-esports-knowledge", "SKILL.md"), "utf8");
 const compose = fs.readFileSync(path.join(process.cwd(), "compose.yaml"), "utf8");
 
@@ -144,6 +145,21 @@ test("finance trend distinguishes net inflow from net outflow using Chinese fina
   assert.match(page, /formatMoney\(Math\.abs\(net\)\)/);
   assert.match(styles, /\.trendNetValue\.inflow b \{ color: #c83b45; \}/);
   assert.match(styles, /\.trendNetValue\.outflow b \{ color: #128159; \}/);
+});
+
+test("finance provides a company code ledger and requires coded 2026 headquarters rows", () => {
+  assert.match(page, /编码账簿/);
+  assert.match(page, /v1\/finance\/cost-centers\?/);
+  assert.match(page, /cost-centers\/\$\{encodeURIComponent\(selectedCostCenter\)\}\/transactions/);
+  assert.match(page, /2026 年起京奥流水必须选择有效公司编码后才能确认/);
+  assert.match(page, /CC26B07/);
+  assert.match(page, /德玛西亚杯/);
+  assert.match(page, /CC26B08/);
+  assert.match(page, /CC26B09/);
+  assert.match(page, /CC26C03/);
+  assert.match(styles, /\.financeCostCenterGroups/);
+  assert.match(financeAgent, /项目中心号/);
+  assert.match(financeAgent, /未使用有效编码/);
 });
 
 test("approved documents have local AI confidentiality governance with manual control", () => {

@@ -72,9 +72,9 @@ def _database() -> tuple[Session, dict[str, User]]:
 def _xlsx() -> bytes:
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["交易日期", "贷方发生额", "借方发生额", "交易后余额", "对方户名", "摘要", "流水号"])
-    sheet.append(["2026-08-01", 10000, None, 50000, "客户A", "项目回款", "S001"])
-    sheet.append(["2026-08-02", None, 3000, 47000, "供应商B", "场地费用", "S002"])
+    sheet.append(["交易日期", "项目中心号", "贷方发生额", "借方发生额", "交易后余额", "对方户名", "摘要", "流水号"])
+    sheet.append(["2026-08-01", "CC26B09", 10000, None, 50000, "客户A", "项目回款", "S001"])
+    sheet.append(["2026-08-02", "Cc26A07", None, 3000, 47000, "供应商B", "场地费用", "S002"])
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -86,6 +86,28 @@ def _project_code_xlsx() -> bytes:
     sheet.append(["交易日期", "贷方发生额", "借方发生额", "交易后余额", "对方户名", "摘要", "流水号"])
     sheet.append(["2026-08-01", 12000, None, 52000, "赛事客户", "CC26B05 项目回款", "CC-IN"])
     sheet.append(["2026-08-02", None, 3500, 48500, "执行供应商", "执行费，项目代码 cc26-b05", "CC-OUT"])
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _official_project_center_xlsx(*, invalid_code: bool = False) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "SheetJS"
+    sheet.append([
+        "序号", "交易时间", "项目中心号", None, "借方发生额",
+        "贷方发生额", "余额", "对手方", "摘要",
+    ])
+    sheet.append([
+        "1", "2026-09-01 15:46:33",
+        "CC2619" if invalid_code else "CC26B07",
+        None, "300,000.00", "-", "700,000.00", "赛事酒店", "酒店预付款",
+    ])
+    sheet.append([
+        "2", "2026-09-03 16:31:54", "Cc26C03",
+        None, "-", "20,000.00", "720,000.00", "项目经办人", "备用金归还",
+    ])
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -103,11 +125,12 @@ def _company_xlsx(
     """Build a small, distinguishable statement for company-isolation tests."""
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["交易日期", "贷方发生额", "借方发生额", "交易后余额", "对方户名", "摘要", "流水号"])
+    sheet.append(["交易日期", "项目中心号", "贷方发生额", "借方发生额", "交易后余额", "对方户名", "摘要", "流水号"])
     after_income = opening_balance + income
     closing_balance = after_income - expense
     sheet.append([
         "2026-08-01",
+        "CC26B09",
         income,
         None,
         after_income,
@@ -117,6 +140,7 @@ def _company_xlsx(
     ])
     sheet.append([
         "2026-08-02",
+        "CC26A07",
         None,
         expense,
         closing_balance,
@@ -636,6 +660,103 @@ def test_cost_center_in_statement_auto_links_confirmed_project_cash(
         assert project_payload["bank_received"] == "12000.00"
         assert project_payload["bank_spent"] == "3500.00"
         assert project_payload["bank_transaction_count"] == 2
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_official_project_center_column_and_code_ledger(tmp_path, monkeypatch) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        entity = client.get("/v1/finance/entities").json()[0]
+        uploaded = client.post(
+            "/v1/finance/statements/upload",
+            data={
+                "entity_id": entity["id"],
+                "bank_name": "北京银行成寿寺支行",
+                "account_name": "基本户",
+                "account_number": "20000100355200177786862",
+            },
+            files={"file": ("标准范式.xlsx", _official_project_center_xlsx(), "application/octet-stream")},
+        )
+        assert uploaded.status_code == 200
+        transactions = client.get(
+            f"/v1/finance/statements/{uploaded.json()['id']}/transactions",
+            params={"entity_id": entity["id"]},
+        )
+        assert transactions.status_code == 200
+        assert {item["project_reference"] for item in transactions.json()} == {
+            "CC26B07", "CC26C03",
+        }
+        assert all(item["project_reference_valid"] for item in transactions.json())
+        assert client.post(
+            f"/v1/finance/statements/{uploaded.json()['id']}/confirm",
+            params={"entity_id": entity["id"]},
+        ).status_code == 200
+
+        registry = client.get(
+            "/v1/finance/cost-centers",
+            params={"entity_id": entity["id"]},
+        )
+        assert registry.status_code == 200
+        by_code = {item["code"]: item for item in registry.json()["items"]}
+        assert by_code["CC26B07"]["label"] == "德玛西亚杯"
+        assert by_code["CC26B07"]["expense"] == "300000.00"
+        assert by_code["CC26C03"]["income"] == "20000.00"
+
+        ledger = client.get(
+            "/v1/finance/cost-centers/cc26-b07/transactions",
+            params={"entity_id": entity["id"]},
+        )
+        assert ledger.status_code == 200
+        assert ledger.json()["transaction_count"] == 1
+        assert ledger.json()["items"][0]["counterparty"] == "赛事酒店"
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_headquarters_2026_batch_requires_registered_code_before_confirm(
+    tmp_path, monkeypatch
+) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        entity = client.get("/v1/finance/entities").json()[0]
+        uploaded = client.post(
+            "/v1/finance/statements/upload",
+            data={
+                "entity_id": entity["id"],
+                "bank_name": "北京银行成寿寺支行",
+                "account_name": "基本户",
+                "account_number": "20000100355200177786862",
+            },
+            files={"file": ("待修正编码.xlsx", _official_project_center_xlsx(invalid_code=True), "application/octet-stream")},
+        ).json()
+        blocked = client.post(
+            f"/v1/finance/statements/{uploaded['id']}/confirm",
+            params={"entity_id": entity["id"]},
+        )
+        assert blocked.status_code == 409
+        assert "未使用有效编码" in blocked.json()["detail"]
+
+        rows = client.get(
+            f"/v1/finance/statements/{uploaded['id']}/transactions",
+            params={"entity_id": entity["id"]},
+        ).json()
+        invalid = next(item for item in rows if item["project_reference"] == "CC2619")
+        assert invalid["project_reference_valid"] is False
+        corrected = client.patch(
+            f"/v1/finance/transactions/{invalid['id']}",
+            params={"entity_id": entity["id"]},
+            json={"project_reference": "Cc26B09"},
+        )
+        assert corrected.status_code == 200
+        assert client.post(
+            f"/v1/finance/statements/{uploaded['id']}/confirm",
+            params={"entity_id": entity["id"]},
+        ).status_code == 200
     finally:
         app.dependency_overrides.clear()
         db.close()

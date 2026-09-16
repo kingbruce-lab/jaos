@@ -23,9 +23,41 @@ COST_CENTER_LABELS: dict[str, str] = {
     "CC26B04": "LPL青训",
     "CC26B05": "三角洲国际战队培训",
     "CC26B06": "后勤保障项目",
+    "CC26B07": "德玛西亚杯",
+    "CC26B08": "杭州童雅",
+    "CC26B09": "上海业务",
     "CC26C01": "智子费用",
     "CC26C02": "商演项目",
+    "CC26C03": "备用金",
 }
+
+COST_CENTER_GROUP_LABELS = {
+    "A": "总部费用",
+    "B": "业务项目",
+    "C": "其他项目",
+}
+
+
+def cost_center_catalog(year: int | None = None) -> list[dict[str, str]]:
+    """Return the registered cost centres, optionally scoped to one year."""
+
+    year_key = f"{year % 100:02d}" if year is not None else None
+    return [
+        {
+            "code": code,
+            "label": label,
+            "group": COST_CENTER_GROUP_LABELS.get(code[4], "其他项目"),
+        }
+        for code, label in COST_CENTER_LABELS.items()
+        if year_key is None or code[2:4] == year_key
+    ]
+
+
+def registered_cost_center_code(value: str | None) -> str | None:
+    """Return the canonical code only when it exists in the company registry."""
+
+    code = normalize_cost_center_code(value)
+    return code if code in COST_CENTER_LABELS else None
 
 COST_CENTER_CODE_RE = re.compile(r"^CC\d{2}[A-C]\d{2}$")
 _FLEXIBLE_COST_CENTER_RE = re.compile(

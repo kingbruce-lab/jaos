@@ -29,7 +29,13 @@ from .business_entities import (
     LEGACY_HEADQUARTERS_ENTITY_NAMES,
 )
 from .config import settings
-from .cost_centers import extract_cost_center_code, normalize_cost_center_code
+from .cost_centers import (
+    COST_CENTER_LABELS,
+    cost_center_catalog,
+    extract_cost_center_code,
+    normalize_cost_center_code,
+    registered_cost_center_code,
+)
 from .database import get_db
 from .models import (
     AuditLog,
@@ -301,6 +307,11 @@ HEADER_ALIASES = {
     "direction": {
         "收付标志", "借贷标志", "借贷标识", "借贷方向", "收支方向", "收付方向",
         "交易方向", "资金方向", "收入支出", "direction",
+    },
+    "project_reference": {
+        "项目中心号", "项目中心编号", "成本中心", "成本中心号", "成本中心编号",
+        "成本中心编码", "项目代码", "项目编码", "项目段", "项目编号",
+        "projectcode", "costcenter", "costcentercode",
     },
     "balance": {
         "交易后余额", "账户余额", "可用余额", "联机余额", "账面余额", "余额",
@@ -1293,6 +1304,24 @@ def _project_reference_from_text(value: str | None) -> str | None:
     return f"Cc{match.group(1)}" if match else None
 
 
+def _project_reference_from_row(
+    explicit_value: object,
+    combined_summary: str | None,
+) -> str | None:
+    """Prefer the statement's project-centre column over memo inference.
+
+    Historical spreadsheets were adjusted by hand and used several header
+    names and mixed letter casing.  Preserve an unregistered explicit value so
+    finance can see and correct it before confirmation instead of silently
+    losing the source annotation.
+    """
+
+    explicit = unicodedata.normalize("NFKC", str(explicit_value or "")).strip()
+    if explicit and explicit not in {"-", "--"}:
+        return normalize_cost_center_code(explicit) or explicit[:80]
+    return _project_reference_from_text(combined_summary)
+
+
 def _project_ids_by_reference(
     db: Session,
     references: list[str | None],
@@ -1312,6 +1341,29 @@ def _project_ids_by_reference(
         for project in projects
         if project.project_no.casefold() in wanted
     }
+
+
+def _requires_registered_cost_center(
+    entity: BusinessEntity | None,
+    item: BankTransaction,
+) -> bool:
+    return bool(
+        entity is not None
+        and entity.name == HEADQUARTERS_ENTITY_NAME
+        and _business_date(item.transacted_at).year >= 2026
+    )
+
+
+def _invalid_cost_center_transactions(
+    entity: BusinessEntity,
+    transactions: list[BankTransaction],
+) -> list[BankTransaction]:
+    return [
+        item
+        for item in transactions
+        if _requires_registered_cost_center(entity, item)
+        and registered_cost_center_code(item.project_reference) is None
+    ]
 
 
 def _refresh_cost_center_project_links(
@@ -1434,7 +1486,9 @@ def _parse_statement_rows(
             ).strip() or None,
             "summary": combined_summary,
             "business_note": business_note,
-            "project_reference": _project_reference_from_text(combined_summary),
+            "project_reference": _project_reference_from_row(
+                value("project_reference"), combined_summary
+            ),
             "serial": str(value("serial") or "").strip() or None,
         })
     return parsed, errors
@@ -2179,6 +2233,15 @@ def statement_transactions(
         "note": item.note,
         "pm_project_id": item.pm_project_id,
         "project_reference": item.project_reference,
+        "project_reference_label": COST_CENTER_LABELS.get(
+            registered_cost_center_code(item.project_reference) or ""
+        ),
+        "project_reference_valid": (
+            not _requires_registered_cost_center(
+                db.get(BusinessEntity, item.entity_id), item
+            )
+            or registered_cost_center_code(item.project_reference) is not None
+        ),
         "status": item.status,
         "purpose_correction": latest_corrections.get(item.id),
         **{
@@ -2632,6 +2695,22 @@ def confirm_statement_batch(
     ).all()
     if not transactions:
         raise HTTPException(status_code=409, detail="本批次没有可确认流水")
+    entity = _entity_by_id(db, batch.entity_id)
+    invalid_cost_centers = _invalid_cost_center_transactions(entity, transactions)
+    if invalid_cost_centers:
+        examples = "、".join(
+            dict.fromkeys(
+                (item.project_reference or "未填写")
+                for item in invalid_cost_centers[:5]
+            )
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"本批次有 {len(invalid_cost_centers)} 笔2026年起的京奥流水未使用有效编码"
+                f"（{examples}）。请在流水明细中选择公司编码后再确认。"
+            ),
+        )
     for item in transactions:
         item.status = "confirmed"
     batch.status = "confirmed"
@@ -2982,6 +3061,139 @@ def search_annual_transactions(
         "total": len(matched),
         "limit": limit,
         "items": results,
+    }
+
+
+@router.get("/cost-centers")
+def finance_cost_centers(
+    entity_id: str,
+    include_internal_transfers: bool = Query(default=False),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return the company code menu with confirmed cash totals per code."""
+
+    _require_finance_view(user)
+    entity = _entity_by_id(db, entity_id)
+    if entity.name != HEADQUARTERS_ENTITY_NAME:
+        raise HTTPException(status_code=404, detail="该公司未启用京奥编码账簿")
+    transactions = db.scalars(
+        select(BankTransaction).where(
+            BankTransaction.entity_id == entity_id,
+            BankTransaction.status == "confirmed",
+        )
+    ).all()
+    if not include_internal_transfers:
+        transactions = [item for item in transactions if not _is_internal_transfer(item)]
+
+    totals: dict[str, dict[str, Decimal | int]] = defaultdict(
+        lambda: {
+            "income": Decimal("0"),
+            "expense": Decimal("0"),
+            "transaction_count": 0,
+        }
+    )
+    for item in transactions:
+        code = registered_cost_center_code(item.project_reference)
+        if not code:
+            continue
+        totals[code]["income"] += item.income
+        totals[code]["expense"] += item.expense
+        totals[code]["transaction_count"] += 1
+
+    items = []
+    for definition in cost_center_catalog():
+        summary = totals[definition["code"]]
+        items.append({
+            **definition,
+            "income": summary["income"],
+            "expense": summary["expense"],
+            "net": summary["income"] - summary["expense"],
+            "transaction_count": summary["transaction_count"],
+        })
+    return {
+        "confidentiality": "L4",
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "confirmed_only": True,
+        "include_internal_transfers": include_internal_transfers,
+        "items": items,
+    }
+
+
+@router.get("/cost-centers/{code}/transactions")
+def finance_cost_center_transactions(
+    code: str,
+    entity_id: str,
+    include_internal_transfers: bool = Query(default=False),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Show every confirmed receipt and payment assigned to one code."""
+
+    _require_finance_view(user)
+    entity = _entity_by_id(db, entity_id)
+    if entity.name != HEADQUARTERS_ENTITY_NAME:
+        raise HTTPException(status_code=404, detail="该公司未启用京奥编码账簿")
+    canonical_code = registered_cost_center_code(code)
+    if not canonical_code:
+        raise HTTPException(status_code=404, detail="公司编码不存在")
+    transactions = db.scalars(
+        select(BankTransaction).where(
+            BankTransaction.entity_id == entity_id,
+            BankTransaction.status == "confirmed",
+        )
+    ).all()
+    transactions = [
+        item
+        for item in transactions
+        if registered_cost_center_code(item.project_reference) == canonical_code
+        and (include_internal_transfers or not _is_internal_transfer(item))
+    ]
+    transactions.sort(key=_transaction_order_key, reverse=True)
+    batch_ids = {item.batch_id for item in transactions}
+    batches = {
+        item.id: item
+        for item in db.scalars(
+            select(BankStatementBatch).where(BankStatementBatch.id.in_(batch_ids))
+        ).all()
+    } if batch_ids else {}
+    account_ids = {item.account_id for item in transactions}
+    accounts = {
+        item.id: item
+        for item in db.scalars(
+            select(FinancialAccount).where(FinancialAccount.id.in_(account_ids))
+        ).all()
+    } if account_ids else {}
+    return {
+        "confidentiality": "L4",
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "code": canonical_code,
+        "label": COST_CENTER_LABELS[canonical_code],
+        "confirmed_only": True,
+        "include_internal_transfers": include_internal_transfers,
+        "income": sum((item.income for item in transactions), Decimal("0")),
+        "expense": sum((item.expense for item in transactions), Decimal("0")),
+        "net": sum((item.income - item.expense for item in transactions), Decimal("0")),
+        "transaction_count": len(transactions),
+        "items": [{
+            "id": item.id,
+            "batch_id": item.batch_id,
+            "batch_filename": batches[item.batch_id].original_filename if item.batch_id in batches else "",
+            "transacted_at": item.transacted_at,
+            "income": item.income,
+            "expense": item.expense,
+            "balance": item.balance,
+            "counterparty": item.counterparty,
+            "summary": item.summary,
+            "note": item.note,
+            "category": item.category,
+            "project_reference": canonical_code,
+            "bank_serial": item.bank_serial,
+            "bank_name": accounts[item.account_id].bank_name if item.account_id in accounts else "",
+            "account": accounts[item.account_id].account_number_masked if item.account_id in accounts else "",
+        } for item in transactions],
     }
 
 

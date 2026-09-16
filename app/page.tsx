@@ -505,6 +505,8 @@ type FinanceTransaction = {
   note: string | null;
   pm_project_id: string | null;
   project_reference: string | null;
+  project_reference_label?: string | null;
+  project_reference_valid?: boolean;
   status: string;
   purpose_correction: FinancePurposeCorrection | null;
 };
@@ -539,6 +541,40 @@ type FinanceAnnualTransactionSearchItem = {
   bank_name: string;
   account: string;
   matched_fields: string[];
+};
+
+type FinanceCostCenterSummary = {
+  code: string;
+  label: string;
+  group: string;
+  income: MoneyValue;
+  expense: MoneyValue;
+  net: MoneyValue;
+  transaction_count: number;
+};
+
+type FinanceCostCenterRegistry = {
+  confidentiality: "L4";
+  entity_id: string;
+  entity_name: string;
+  confirmed_only: boolean;
+  include_internal_transfers: boolean;
+  items: FinanceCostCenterSummary[];
+};
+
+type FinanceCostCenterLedger = {
+  confidentiality: "L4";
+  entity_id: string;
+  entity_name: string;
+  code: string;
+  label: string;
+  confirmed_only: boolean;
+  include_internal_transfers: boolean;
+  income: MoneyValue;
+  expense: MoneyValue;
+  net: MoneyValue;
+  transaction_count: number;
+  items: Omit<FinanceAnnualTransactionSearchItem, "matched_fields">[];
 };
 
 type FinancePurposeCorrection = {
@@ -1184,8 +1220,12 @@ const COST_CENTER_OPTIONS = [
   ["CC26B04", "LPL青训"],
   ["CC26B05", "三角洲国际战队培训"],
   ["CC26B06", "后勤保障项目"],
+  ["CC26B07", "德玛西亚杯"],
+  ["CC26B08", "杭州童雅"],
+  ["CC26B09", "上海业务"],
   ["CC26C01", "智子费用"],
   ["CC26C02", "商演项目"],
+  ["CC26C03", "备用金"],
 ] as const;
 
 const COST_CENTER_CODE_PATTERN = "CC[0-9]{2}[A-C][0-9]{2}";
@@ -7910,7 +7950,12 @@ function FinanceWorkspace({
     : "统计周期加载中";
   const financeHeroEntityName = entity.is_headquarters ? entity.display_name : entity.name;
   const [editingTransactionId, setEditingTransactionId] = useState("");
-  const [financeView, setFinanceView] = useState<"bank" | "cash">("bank");
+  const [financeView, setFinanceView] = useState<"bank" | "cash" | "cost-centers">("bank");
+  const [costCenterRegistry, setCostCenterRegistry] = useState<FinanceCostCenterRegistry | null>(null);
+  const [selectedCostCenter, setSelectedCostCenter] = useState("CC26A01");
+  const [costCenterLedger, setCostCenterLedger] = useState<FinanceCostCenterLedger | null>(null);
+  const [costCenterBusy, setCostCenterBusy] = useState(false);
+  const [costCenterError, setCostCenterError] = useState("");
   const [annualSearchQuery, setAnnualSearchQuery] = useState("");
   const [annualSearchResult, setAnnualSearchResult] = useState<FinanceAnnualTransactionSearch | null>(null);
   const [annualSearchBusy, setAnnualSearchBusy] = useState(false);
@@ -7920,6 +7965,59 @@ function FinanceWorkspace({
     setAnnualSearchResult(null);
     setAnnualSearchError("");
   }, [entity.id, periodView, includeInternalTransfers]);
+  useEffect(() => {
+    if (financeView === "cost-centers" && !entity.is_headquarters) setFinanceView("bank");
+    if (financeView === "cash" && !entity.show_cash) setFinanceView("bank");
+  }, [entity.is_headquarters, entity.show_cash, financeView]);
+  useEffect(() => {
+    if (financeView !== "cost-centers" || !entity.is_headquarters) return;
+    let cancelled = false;
+    setCostCenterBusy(true);
+    setCostCenterError("");
+    const params = new URLSearchParams({
+      entity_id: entity.id,
+      include_internal_transfers: includeInternalTransfers ? "true" : "false",
+    });
+    kbFetch<FinanceCostCenterRegistry>(`v1/finance/cost-centers?${params.toString()}`, {}, token)
+      .then((payload) => {
+        if (cancelled) return;
+        setCostCenterRegistry(payload);
+        setSelectedCostCenter((current) => (
+          payload.items.some((item) => item.code === current)
+            ? current
+            : payload.items[0]?.code || "CC26A01"
+        ));
+      })
+      .catch((cause) => {
+        if (!cancelled) setCostCenterError(cause instanceof Error ? cause.message : "公司编码加载失败");
+      })
+      .finally(() => {
+        if (!cancelled) setCostCenterBusy(false);
+      });
+    return () => { cancelled = true; };
+  }, [entity.id, entity.is_headquarters, financeView, includeInternalTransfers, token]);
+  useEffect(() => {
+    if (financeView !== "cost-centers" || !entity.is_headquarters || !selectedCostCenter) return;
+    let cancelled = false;
+    setCostCenterBusy(true);
+    setCostCenterError("");
+    setCostCenterLedger(null);
+    const params = new URLSearchParams({
+      entity_id: entity.id,
+      include_internal_transfers: includeInternalTransfers ? "true" : "false",
+    });
+    kbFetch<FinanceCostCenterLedger>(
+      `v1/finance/cost-centers/${encodeURIComponent(selectedCostCenter)}/transactions?${params.toString()}`,
+      {},
+      token,
+    )
+      .then((payload) => { if (!cancelled) setCostCenterLedger(payload); })
+      .catch((cause) => {
+        if (!cancelled) setCostCenterError(cause instanceof Error ? cause.message : "编码流水加载失败");
+      })
+      .finally(() => { if (!cancelled) setCostCenterBusy(false); });
+    return () => { cancelled = true; };
+  }, [entity.id, entity.is_headquarters, financeView, includeInternalTransfers, selectedCostCenter, token]);
   const handleAnnualTransactionSearch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (periodView === "realtime") return;
@@ -8034,6 +8132,7 @@ function FinanceWorkspace({
         {annualYears.map((year) => (
           <button type="button" role="tab" aria-selected={periodView === year} className={periodView === year ? "active" : ""} onClick={() => onPeriodViewChange(year)} key={year}>{year} 年度</button>
         ))}
+        {entity.is_headquarters && <button type="button" className="costCenterMenuButton" onClick={() => setFinanceView("cost-centers")}>编码账簿</button>}
       </div>
     </section>
   );
@@ -8085,6 +8184,81 @@ function FinanceWorkspace({
               {!cashEntries.length && <p className="mutedText">暂无账外现金记录。</p>}
             </div>
           </section>
+        </section>
+      </section>
+    );
+  }
+  if (financeView === "cost-centers" && entity.is_headquarters) {
+    const groupedCostCenters = (costCenterRegistry?.items || []).reduce<Record<string, FinanceCostCenterSummary[]>>((groups, item) => {
+      (groups[item.group] ||= []).push(item);
+      return groups;
+    }, {});
+    return (
+      <section className="financeWorkspace financeCostCenterWorkspace">
+        {entitySwitcher}
+        <section className="financeCostCenterHero">
+          <div>
+            <p>COST CENTRE LEDGER</p>
+            <span>京奥电竞公司编码账簿</span>
+            <strong>2026 年起按编码归集全部收支</strong>
+            <small>选择编码即可查看该项目段的全部已确认银行收入与支出。</small>
+          </div>
+          <div className="financeCostCenterHeroActions">
+            <button type="button" className={includeInternalTransfers ? "active" : ""} onClick={() => onTransferScopeChange(!includeInternalTransfers)}>{includeInternalTransfers ? "包含内部划转" : "剔除内部划转"}</button>
+            <button type="button" onClick={() => setFinanceView("bank")}>返回财务总览</button>
+          </div>
+        </section>
+
+        {costCenterError && <div className="noticeBar warningNotice"><strong>编码账簿暂不可用</strong><span>{costCenterError}</span></div>}
+        <section className="financeCostCenterGroups" aria-label="公司编码菜单">
+          {Object.entries(groupedCostCenters).map(([group, items]) => (
+            <section className="panel financeCostCenterGroup" key={group}>
+              <header><h2>{group}</h2><span>{items.length} 个编码</span></header>
+              <div>
+                {items.map((item) => (
+                  <button
+                    type="button"
+                    className={selectedCostCenter === item.code ? "active" : ""}
+                    onClick={() => setSelectedCostCenter(item.code)}
+                    key={item.code}
+                  >
+                    <span><b>{item.code}</b><strong>{item.label}</strong></span>
+                    <small>{item.transaction_count} 笔 · 收 {formatMoney(item.income)} · 支 {formatMoney(item.expense)}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </section>
+
+        <section className="panel financeCostCenterLedgerPanel">
+          <header>
+            <div><span>CODE LEDGER</span><h2>{costCenterLedger ? `${costCenterLedger.code} · ${costCenterLedger.label}` : selectedCostCenter}</h2><p>当前公司编码下的全部已确认银行流水。</p></div>
+            {costCenterLedger && <b>{costCenterLedger.transaction_count} 笔</b>}
+          </header>
+          {costCenterLedger && (
+            <>
+              <section className="financeCostCenterMetrics">
+                <article><span>收入</span><strong className="financeIncomeAmount">{formatMoney(costCenterLedger.income)}</strong></article>
+                <article><span>支出</span><strong className="financeExpenseAmount">{formatMoney(costCenterLedger.expense)}</strong></article>
+                <article><span>净额</span><strong className={Number(costCenterLedger.net) >= 0 ? "positive" : "negative"}>{formatMoney(costCenterLedger.net)}</strong></article>
+              </section>
+              <div className="financeCostCenterTransactions">
+                {costCenterLedger.items.map((item) => {
+                  const isIncome = Number(item.income) > 0;
+                  return (
+                    <article key={item.id}>
+                      <time>{formatShanghaiDateTime(item.transacted_at)}</time>
+                      <div><strong>{item.counterparty || "未识别往来单位"}</strong><p>{item.note || item.summary || "暂无用途说明"}</p><small>{item.batch_filename}{item.bank_serial ? ` · 流水号 ${item.bank_serial}` : ""}</small></div>
+                      <b className={isIncome ? "financeIncomeAmount" : "financeExpenseAmount"}>{isIncome ? "+" : "−"}{formatMoney(isIncome ? item.income : item.expense)}</b>
+                    </article>
+                  );
+                })}
+                {!costCenterLedger.items.length && <div className="emptyState compact"><b>¥</b><h3>该编码暂无已确认流水</h3><p>上传、补齐编码并确认后会自动显示在这里。</p></div>}
+              </div>
+            </>
+          )}
+          {costCenterBusy && !costCenterLedger && <p className="mutedText">正在加载编码流水…</p>}
         </section>
       </section>
     );
@@ -8463,7 +8637,7 @@ function FinanceWorkspace({
           {canEditBank && (
             <section className="panel financeOperationCard">
               <PanelTitle eyebrow="BANK STATEMENT" title="导入银行流水" />
-              <p>支持 XLSX / CSV，可连续导入公司过去一年以上的历史流水；完全重复的文件与交易会自动过滤。</p>
+              <p>支持 XLSX / CSV。京奥 2026 年起优先识别“项目中心号”列，也兼容手工表中的“成本中心、项目代码、项目段”等表头；每笔流水必须选择有效公司编码后才能确认。</p>
               <form className="businessForm" onSubmit={onUpload}>
                 <input name="entity_id" type="hidden" value={entity.id} readOnly />
                 <div className="formGrid twoColumns">
@@ -8664,7 +8838,17 @@ function FinanceWorkspace({
                               {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
                               {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认；金额、日期、收付款人及银行原始附言不会被改动。实际用途修正须走下方创始人复核。</p>}
                               <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
-                              <label><span>成本中心 / 项目代码</span><input name="project_reference" list={`finance-cost-centers-${item.id}`} defaultValue={item.project_reference || ""} placeholder="例如：CC26B01" /><datalist id={`finance-cost-centers-${item.id}`}>{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist></label>
+                              <label className={item.project_reference_valid === false ? "invalidFinanceField" : ""}>
+                                <span>公司编码 / 项目段</span>
+                                {entity.is_headquarters ? (
+                                  <select name="project_reference" defaultValue={item.project_reference || ""} required>
+                                    <option value="">请选择公司编码</option>
+                                    {item.project_reference && !COST_CENTER_OPTIONS.some(([code]) => code === item.project_reference?.toUpperCase()) && <option value={item.project_reference}>{item.project_reference}（需修正）</option>}
+                                    {COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{code} · {label}</option>)}
+                                  </select>
+                                ) : <input name="project_reference" defaultValue={item.project_reference || ""} placeholder="项目代码" />}
+                                {item.project_reference_valid === false && <small>2026 年起京奥流水必须选择有效公司编码后才能确认。</small>}
+                              </label>
                               <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
                               {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
                               <div className="transactionEditActions">
@@ -8735,7 +8919,17 @@ function FinanceWorkspace({
                       {selected.status !== "confirmed" && <label><span>收 / 付款人</span><input name="counterparty" defaultValue={item.counterparty || ""} placeholder="填写银行实际收/付款人" /></label>}
                       {selected.status === "confirmed" && <p className="transactionAnnotationNotice">该流水已经确认；银行原始数据不会被改动。实际用途修正须经创始人复核。</p>}
                       <label><span>财务分类</span><input name="category" defaultValue={item.category || "未分类"} required /></label>
-                      <label><span>成本中心 / 项目代码</span><input name="project_reference" list={`mobile-finance-cost-centers-${item.id}`} defaultValue={item.project_reference || ""} placeholder="例如：CC26B01" /><datalist id={`mobile-finance-cost-centers-${item.id}`}>{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist></label>
+                      <label className={item.project_reference_valid === false ? "invalidFinanceField" : ""}>
+                        <span>公司编码 / 项目段</span>
+                        {entity.is_headquarters ? (
+                          <select name="project_reference" defaultValue={item.project_reference || ""} required>
+                            <option value="">请选择公司编码</option>
+                            {item.project_reference && !COST_CENTER_OPTIONS.some(([code]) => code === item.project_reference?.toUpperCase()) && <option value={item.project_reference}>{item.project_reference}（需修正）</option>}
+                            {COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{code} · {label}</option>)}
+                          </select>
+                        ) : <input name="project_reference" defaultValue={item.project_reference || ""} placeholder="项目代码" />}
+                        {item.project_reference_valid === false && <small>2026 年起京奥流水必须选择有效公司编码后才能确认。</small>}
+                      </label>
                       <label><span>关联 JAOS 项目（可选）</span><select name="pm_project_id" defaultValue={item.pm_project_id || ""}><option value="">暂不关联</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.project_no} · {project.name}</option>)}</select></label>
                       {item.summary && <details className="bankRawSummary editorRawSummary"><summary>查看银行原始附言（不可修改）</summary><p>{item.summary}</p></details>}
                       <div className="transactionEditActions">
