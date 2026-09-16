@@ -2640,20 +2640,32 @@ def update_transaction(
             if payload.project_reference
             else ""
         )
-        item.project_reference = (
+        normalized_reference = (
             normalize_cost_center_code(raw_reference)
             or _project_reference_from_text(raw_reference)
             or raw_reference
             or None
         )
+        if (
+            batch and batch.status == "confirmed"
+            and _requires_registered_cost_center(
+                db.get(BusinessEntity, item.entity_id), item
+            )
+            and registered_cost_center_code(normalized_reference) is None
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="2026年起京奥已确认流水必须使用公司编码表中的有效编码",
+            )
+        item.project_reference = normalized_reference
         if item.project_reference:
             matched_project = _project_ids_by_reference(
                 db, [item.project_reference]
             ).get(item.project_reference.casefold())
-            if matched_project and not (
-                "pm_project_id" in updated_fields and payload.pm_project_id
-            ):
+            if "pm_project_id" not in updated_fields:
                 item.pm_project_id = matched_project
+        elif "pm_project_id" not in updated_fields:
+            item.pm_project_id = None
     db.add(AuditLog(
         user_id=user.id,
         action="finance_transaction_update",

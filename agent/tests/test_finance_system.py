@@ -534,12 +534,12 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
         assert confirmed_batch["confirmed_at"] is not None
 
         # Confirmation locks the bank-originated facts, while finance may
-        # still add the real reimbursement purpose and Feishu project segment.
+        # still correct the category and use a registered company code.
         annotation = client.patch(
             f"/v1/finance/transactions/{transactions.json()[0]['id']}",
             json={
                 "category": "办公场地",
-                "project_reference": " Cc2609 ",
+                "project_reference": " Cc26B09 ",
                 "pm_project_id": None,
             },
         )
@@ -548,7 +548,7 @@ def test_finance_statement_upload_dedup_confirm_and_dashboard(tmp_path, monkeypa
             f"/v1/finance/statements/{first.json()['id']}/transactions"
         ).json()[0]
         assert annotated["note"] == "项目回款"
-        assert annotated["project_reference"] == "Cc2609"
+        assert annotated["project_reference"] == "CC26B09"
         immutable_edit = client.patch(
             f"/v1/finance/transactions/{transactions.json()[0]['id']}",
             json={"summary": "覆盖银行原始附言"},
@@ -712,6 +712,11 @@ def test_official_project_center_column_and_code_ledger(tmp_path, monkeypatch) -
         assert ledger.status_code == 200
         assert ledger.json()["transaction_count"] == 1
         assert ledger.json()["items"][0]["counterparty"] == "赛事酒店"
+        assert client.patch(
+            f"/v1/finance/transactions/{ledger.json()['items'][0]['id']}",
+            params={"entity_id": entity["id"]},
+            json={"project_reference": "CC2619"},
+        ).status_code == 422
     finally:
         app.dependency_overrides.clear()
         db.close()
