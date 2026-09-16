@@ -642,6 +642,9 @@ def create_cost_document(cohort_id: str, payload: CostDocumentCreate,
         note=payload.note, created_by_user_id=user.id, version=1, active=True,
     )
     db.add(document)
+    # PostgreSQL enforces this foreign key immediately. Flush the source cost
+    # before inserting its direct-ledger row so the whole write stays atomic.
+    db.flush()
     target_cohort_id, student_id, ledger_month, amount, note = target
     db.add(EducationCostAllocation(
         cost_document_id=document.id, cohort_id=target_cohort_id, student_id=student_id,

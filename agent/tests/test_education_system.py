@@ -185,6 +185,29 @@ def test_entry_period_has_end_date_and_rejects_reverse_range(setup):
     assert rejected.status_code == 422
 
 
+def test_expense_entry_can_be_deleted_and_totals_refresh(setup):
+    client, db, users, actor = setup
+    cohort_id = client.post("/v1/pm/education/cohorts", json=cohort_payload()).json()["id"]
+    path = f"/v1/pm/education/cohorts/{cohort_id}/entries"
+    expense = client.post(path, json=entry_payload(
+        direction="expense", amount="2900", purpose="住宿费",
+    ))
+    assert expense.status_code == 200, expense.text
+    income = client.post(path, json=entry_payload(amount="5000", purpose="学费收入"))
+    assert income.status_code == 200, income.text
+    expense_id = expense.json()["id"]
+    assert client.delete(f"{path}/{expense_id}?version=1").json() == {"deleted": True}
+    assert client.get(f"/v1/pm/education/cohorts/{cohort_id}").json()["expense"] == "0.00"
+    assert client.delete(f"{path}/{expense_id}?version=1").status_code == 404
+    assert client.delete(f"{path}/{income.json()['id']}?version=1").status_code == 422
+    assert db.scalar(select(func.count(EducationCashEntry.id))) == 1
+    assert db.scalar(select(AuditLog).where(AuditLog.action == "education_expense_entry_deleted"))
+
+    actor[0] = users["finance"]
+    remaining = client.get(f"/v1/pm/education/cohorts/{cohort_id}").json()["entries"][0]
+    assert client.delete(f"{path}/{remaining['id']}?version={remaining['version']}").status_code == 403
+
+
 def test_month_duration_boundaries():
     assert month_end(date(2026, 12, 1)) == date(2026, 12, 29)
     assert month_end(date(2028, 2, 1)) == date(2028, 2, 29)

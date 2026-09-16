@@ -126,6 +126,19 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
     finally { setBusy(""); }
   }
 
+  async function deleteExpense(entry: Entry) {
+    if (!detail || busy || entry.direction !== "expense") return;
+    if (!confirm(`确认删除这笔支出 ${money(entry.amount)}？删除后会立即从总账和结余中扣除，操作不可撤销。`)) return;
+    setBusy(`delete-${entry.id}`); setError(""); setMessage("");
+    try {
+      await api(`v1/pm/education/cohorts/${detail.id}/entries/${entry.id}?version=${entry.version}`, { method: "DELETE" }, token);
+      if (editing?.id === entry.id) setEditing(null);
+      setMessage("支出记录已删除，总账和结余已更新。");
+      setRevision((value) => value + 1);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "删除失败，请刷新后重试"); }
+    finally { setBusy(""); }
+  }
+
   return <section className="educationWorkspace">
     <section className="panel educationHeader">
       <div><p className="eyebrow">XINGYAO · EDUCATION</p><h2>星曜电竞 · 托管式教培</h2>
@@ -207,7 +220,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
         {!detail.entries.length && <p>尚未登记收支。</p>}
         <div className="educationEntries">{detail.entries.map((entry) => <article key={entry.id}>
           <div><strong>{entry.direction === "income" ? "收入" : "支出"} {money(entry.amount)}</strong><span>发生 {entry.occurred_on} · 结束 {entry.ended_on || entry.occurred_on} · {entry.category || "其他"} / {entry.detail || "其他"} · {entry.purpose}</span></div>
-          {registry.can_edit && <button type="button" disabled={!!busy} onClick={() => setEditing(entry)}>修正</button>}
+          {registry.can_edit && <div className="educationEntryActions"><button type="button" disabled={!!busy} onClick={() => setEditing(entry)}>修正</button>{entry.direction === "expense" && <button type="button" className="educationEntryDelete" disabled={!!busy} onClick={() => void deleteExpense(entry)}>{busy === `delete-${entry.id}` ? "删除中…" : "删除"}</button>}</div>}
         </article>)}</div>
       </section>}
       </>}

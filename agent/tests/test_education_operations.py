@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.finance_system import _receivables_payables_payload
 from app.models import (
@@ -81,6 +81,7 @@ def test_schedule_generation_is_idempotent_and_manual_changes_survive(setup):
 
 def test_cost_document_calculates_total_and_posts_directly_to_ledger(setup):
     client, db, _, _ = setup
+    db.execute(text("PRAGMA foreign_keys=ON"))
     cohort_id = _cohort(client)
     _student(client, cohort_id, name="学员甲")
     _student(client, cohort_id, name="学员乙", received="0")

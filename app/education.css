@@ -34,6 +34,8 @@
 .educationEntries article div { display: grid; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .educationEntries article span { color: #687d91; font-size: 13px; }
 .educationEntries button { padding: 8px 16px; border: 1px solid #d1e1ec; border-radius: 8px; background: #f2f8fc; color: #1a5b8a; white-space: nowrap; cursor: pointer; }
+.educationEntryActions, .educationFormActions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.educationEntries .educationEntryDelete { border-color: #edb8bf; background: #fff5f6; color: #b42338; }
 .educationNotes { white-space: pre-wrap; overflow-wrap: anywhere; }
 .educationEnrollment { margin: 24px 0; padding: 20px 0; border-top: 2px solid #dce8f1; border-bottom: 2px solid #dce8f1; }
 .educationFeeRow { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 12px; padding: 16px; border: 1px solid #dce5ed; border-radius: 10px; margin-bottom: 12px; background: #f8fafc; }

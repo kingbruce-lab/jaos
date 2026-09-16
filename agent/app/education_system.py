@@ -375,3 +375,33 @@ def update_entry(cohort_id: str, entry_id: str, payload: EntryUpdate,
     _audit(db, user, "education_entry_updated", before, _entry_data(row))
     _commit(db)
     return {"id": row.id}
+
+
+@router.delete("/cohorts/{cohort_id}/entries/{entry_id}")
+def delete_expense_entry(
+    cohort_id: str,
+    entry_id: str,
+    version: int = Query(..., ge=1),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    cohort = _cohort(db, user, cohort_id, write=True)
+    row = db.scalar(select(EducationCashEntry).where(
+        EducationCashEntry.id == entry_id,
+        EducationCashEntry.cohort_id == cohort.id,
+    ).with_for_update())
+    if row is None:
+        raise HTTPException(404, "支出记录不存在")
+    if row.direction != "expense":
+        raise HTTPException(422, "收入记录请使用修正功能，不支持直接删除")
+    if row.version != version:
+        raise HTTPException(409, "支出记录已更新，请刷新后重试")
+    before = _entry_data(row)
+    db.delete(row)
+    _audit(db, user, "education_expense_entry_deleted", before, {
+        "id": row.id,
+        "cohort_id": cohort.id,
+        "deletion_mode": "hard_delete",
+    })
+    _commit(db)
+    return {"deleted": True}

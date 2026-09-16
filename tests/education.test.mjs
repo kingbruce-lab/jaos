@@ -30,7 +30,9 @@ test("education separates expected and actual income and protects repeated write
   assert.match(education, /总收入/);
   assert.match(education, /总成本/);
   assert.match(education, /逐项登记收入 \/ 费用支出/);
-  assert.match(education, /保存本项并继续添加/);
+  assert.match(education, /保存本项/);
+  assert.match(operations, /保存并增加下一段费用/);
+  assert.match(education, /education_expense_entry_deleted|deleteExpense/);
   assert.match(education, /实时结余/);
   assert.match(education, /educationStickyMetrics/);
   assert.match(education, /request_id = createId.current/);

@@ -183,6 +183,8 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
     event.preventDefault();
     if (busy || !canEdit) return;
     const form = event.currentTarget;
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const addAnother = submitter?.dataset.action === "continue";
     const formData = new FormData(form);
     const values = Object.fromEntries(formData.entries());
     const attachments = formData.getAll("attachments").filter((item): item is File => item instanceof File && item.size > 0);
@@ -193,8 +195,13 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
     try {
       const result = await api<{ id: string }>(`v1/pm/education/cohorts/${cohortId}/cost-documents`, { method: "POST", body: JSON.stringify(body) }, token);
       for (const attachment of attachments) await uploadAttachment(result.id, attachment);
-      costId.current = null; form.reset(); setCategory("住宿费"); setCostFormKey((value) => value + 1);
-      setMessage(`费用时段已保存${attachments.length ? `，并上传 ${attachments.length} 个凭证附件` : ""}，顶部汇总已刷新。`); setRevision((value) => value + 1); onChanged();
+      costId.current = null; form.reset();
+      if (!addAnother) setCategory("住宿费");
+      setCostFormKey((value) => value + 1);
+      setMessage(addAnother
+        ? `本段费用已保存${attachments.length ? `，并上传 ${attachments.length} 个凭证附件` : ""}，可继续填写下一段。`
+        : `费用已保存${attachments.length ? `，并上传 ${attachments.length} 个凭证附件` : ""}，并已计入总账。`);
+      setRevision((value) => value + 1); onChanged();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "成本单据保存失败"); }
     finally { setBusy(""); }
   }
@@ -360,7 +367,10 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
         <label className="educationWide educationFileField">凭证与附件<input name="attachments" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.zip" /><small>文件直接保存到公司 NAS 的台账附件目录；单个文件最大 200MB，可多选。</small></label>
         <label className="educationWide">备注<textarea name="note" maxLength={2000} /></label>
         <p className="educationWide educationHint">总价＝每日单价 × 天数，天数包含发生日和结束日。价格发生变化时，请按不同起止日期分别保存一条费用。</p>
-        <button className="primaryButton" disabled={!!busy}>{busy === "cost" ? "保存中…" : "保存并继续增加下一段费用"}</button>
+        <div className="educationWide educationFormActions">
+          <button className="primaryButton" data-action="save" disabled={!!busy}>{busy === "cost" ? "保存中…" : "保存本项"}</button>
+          <button className="secondaryButton" data-action="continue" disabled={!!busy}>保存并增加下一段费用</button>
+        </div>
       </form>}
       <div className="educationCostDocuments">{data?.costs.items.map((item) => <article key={item.id}>
         <header><strong>{item.category} / {item.detail}</strong><b>{money(item.amount)}</b></header>
