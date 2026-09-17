@@ -157,6 +157,8 @@ test("finance provides a company code ledger and requires coded 2026 headquarter
   assert.match(page, /CC26B08/);
   assert.match(page, /CC26B09/);
   assert.match(page, /CC26C03/);
+  assert.match(page, /\["CC26A10", "出借款"\]/);
+  assert.match(page, /\["CC26A11", "短信验证"\]/);
   assert.match(styles, /\.financeCostCenterGroups/);
   assert.match(financeAgent, /项目中心号/);
   assert.match(financeAgent, /未使用有效编码/);

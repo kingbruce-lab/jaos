@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from app import finance_system
 from app.auth import current_user
+from app.cost_centers import cost_center_catalog, registered_cost_center_code
 from app.database import get_db
 from app.main import app
 from app.models import (
@@ -762,6 +763,61 @@ def test_headquarters_2026_batch_requires_registered_code_before_confirm(
             f"/v1/finance/statements/{uploaded['id']}/confirm",
             params={"entity_id": entity["id"]},
         ).status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
+    tmp_path, monkeypatch
+) -> None:
+    labels = {item["code"]: item["label"] for item in cost_center_catalog(2026)}
+    assert len(labels) == 23
+    assert labels["CC26A10"] == "出借款"
+    assert labels["CC26A11"] == "短信验证"
+    assert registered_cost_center_code("cc26-a10") == "CC26A10"
+    assert registered_cost_center_code("出借款") is None
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["交易日期", "项目中心号", "借方发生额", "贷方发生额", "余额", "对手方", "摘要"])
+    sheet.append(["2026-09-02", "Cc26A10", 1000, None, 9000, "往来单位", "借款支付"])
+    sheet.append(["2026-09-03", "CC26A11", 20, None, 8980, "服务商", "短信验证费"])
+    output = BytesIO()
+    workbook.save(output)
+
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        entity = client.get("/v1/finance/entities").json()[0]
+        uploaded = client.post(
+            "/v1/finance/statements/upload",
+            data={
+                "entity_id": entity["id"],
+                "bank_name": "北京银行成寿寺支行",
+                "account_name": "基本户",
+                "account_number": "20000100355200177786862",
+            },
+            files={"file": ("新增编码.xlsx", output.getvalue(), "application/octet-stream")},
+        )
+        assert uploaded.status_code == 200
+        batch_id = uploaded.json()["id"]
+        rows = client.get(
+            f"/v1/finance/statements/{batch_id}/transactions",
+            params={"entity_id": entity["id"]},
+        )
+        assert rows.status_code == 200
+        assert {row["project_reference"] for row in rows.json()} == {"CC26A10", "CC26A11"}
+        assert all(row["project_reference_valid"] for row in rows.json())
+        assert client.post(
+            f"/v1/finance/statements/{batch_id}/confirm",
+            params={"entity_id": entity["id"]},
+        ).status_code == 200
+        registry = client.get("/v1/finance/cost-centers", params={"entity_id": entity["id"]})
+        assert registry.status_code == 200
+        entries = {item["code"]: item for item in registry.json()["items"]}
+        assert entries["CC26A10"]["transaction_count"] == 1
+        assert entries["CC26A11"]["transaction_count"] == 1
     finally:
         app.dependency_overrides.clear()
         db.close()
