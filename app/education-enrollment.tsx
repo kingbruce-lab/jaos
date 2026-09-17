@@ -137,6 +137,15 @@ export function EducationEnrollment({ api, token, cohortId, start, period, canEd
   }, [api, token, cohortId]);
   useEffect(() => { if (identity) { const timer = setTimeout(() => setIdentity(null), 60000); return () => clearTimeout(timer); } }, [identity]);
 
+  async function refreshStudents(studentId?: string) {
+    const updated = await api<Registry>(`${base(cohortId)}/students`, {}, token);
+    setRegistry(updated);
+    if (studentId) {
+      const student = await api<Student>(`${base(cohortId)}/students/${studentId}`, {}, token);
+      setSelected((current) => current?.id === studentId ? student : current);
+    }
+  }
+
   async function save(event: FormEvent<HTMLFormElement>, fees: Fee[], staff_assignments: StaffAssignment[]) {
     event.preventDefault(); if (busy) return;
     const values = Object.fromEntries(new FormData(event.currentTarget));
@@ -150,7 +159,9 @@ export function EducationEnrollment({ api, token, cohortId, start, period, canEd
     setBusy(true); setError("");
     try {
       await api(`${base(cohortId)}/students${selected ? `/${selected.id}` : ""}`, { method: selected ? "PATCH" : "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(20000) }, token);
-      requestId.current = null; onSaved();
+      requestId.current = null;
+      void refreshStudents(selected?.id).catch((cause) => setError(cause instanceof Error ? `保存成功，但学员列表刷新失败：${cause.message}` : "保存成功，但学员列表刷新失败"));
+      onSaved();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败；请刷新确认后再试"); }
     finally { setBusy(false); }
   }
@@ -208,7 +219,7 @@ export function EducationEnrollment({ api, token, cohortId, start, period, canEd
         {canEdit && <form className="educationForm educationStaffQuickAdd" onSubmit={(e) => void addStaff(e)}><label>人员姓名<input name="name" required maxLength={80} autoComplete="off" /></label><label>人员类型<select name="role" value={staffRole || options.staff_roles[0]} onChange={(event) => setStaffRole(event.target.value)}>{options.staff_roles.map((role) => <option key={role}>{role}</option>)}</select></label><label>人员备注{(staffRole || options.staff_roles[0]) === "其他教师" ? "（必填）" : "（选填）"}<input name="note" required={(staffRole || options.staff_roles[0]) === "其他教师"} maxLength={500} placeholder="其他教师请注明类型或职责" /></label><button className="primaryButton" disabled={busy}>{busy ? "添加中…" : "添加并继续下一位"}</button></form>}
       </details>
       {selected && <div className="educationModuleTabs"><button type="button" className={studentModule === "fees" ? "active" : ""} onClick={() => setStudentModule("fees")}>报名与套餐</button><button type="button" className={studentModule === "payments" ? "active" : ""} onClick={() => { setIdentity(null); setStudentModule("payments"); }}>分期与收退款</button>{canEdit && <button type="button" className={studentModule === "assessment" ? "active" : ""} onClick={() => { setIdentity(null); setStudentModule("assessment"); }}>教练评估体系</button>}</div>}
-      {selected && studentModule === "payments" && <EducationPayments key={`${selected.id}-${selected.version}`} api={api} token={token} cohortId={cohortId} studentId={selected.id} canEdit={canEdit} onChanged={onSaved} />}
+      {selected && studentModule === "payments" && <EducationPayments key={`${selected.id}-${selected.version}`} api={api} token={token} cohortId={cohortId} studentId={selected.id} canEdit={canEdit} onChanged={() => { void refreshStudents(selected.id).catch((cause) => setError(cause instanceof Error ? `收款已保存，但学员列表刷新失败：${cause.message}` : "收款已保存，但学员列表刷新失败")); onSaved(); }} />}
       {selected && canEdit && studentModule === "assessment" && <EducationAssessments key={selected.id} api={api} token={token} cohortId={cohortId} studentId={selected.id} studentName={selected.name} studyStart={selected.study_start} studyEnd={selected.study_end} staff={staff} />}
       {canEdit && studentModule === "fees" && <details open={!!selected} key={selected?.id || "new"}><summary>{selected ? `修改报名：${selected.name}` : "＋ 新增学员报名"}</summary>
         {selected && <><button type="button" disabled={busy} onClick={() => { setSelected(null); setIdentity(null); }}>退出修改</button><button type="button" disabled={busy} onClick={() => void reveal()}>查看证件及联系电话</button>{identity && <p className="educationIdentity">身份证号：{identity.identity_number || "未填写"}　学员电话：{identity.phone || "未填写"}　监护人电话：{identity.guardian_phone || "未填写"}<button type="button" onClick={() => setIdentity(null)}>隐藏</button></p>}</>}

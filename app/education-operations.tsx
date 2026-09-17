@@ -16,6 +16,7 @@ type Student = { id: string; name: string; student_no?: string | null };
 
 const costDetails: Record<string, string[]> = {
   "住宿费": ["一人间", "两人间", "其他"],
+  "教学房间": ["训练室", "教室", "其他"],
   "饭费": ["早餐", "午餐", "晚餐", "餐费套餐", "其他"],
   "零食费": ["零食", "饮料", "水果", "其他"],
   "活动经费": ["团建活动", "外出参观", "交通费", "场地费", "活动物料", "比赛报名费", "奖品", "其他"],
@@ -276,6 +277,53 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
     <header><div><p className="eyebrow">COHORT OPERATIONS</p><h3>班期运营台账</h3><p>费用按实际日期和每日单价登记，自动计算总价并直接进入班期总账。</p></div></header>
     {error && <div className="educationError" role="alert">{error}</div>}
     {message && <div className="noticeBar" role="status">{message}</div>}
+    <section className="educationOperationSection educationCostEntrySection">
+      <h4 className="educationSectionTitle">逐项登记费用支出与凭证</h4>
+      <div className="educationPurposeNote"><strong>按每日单价直接记入总账</strong><span>饭费、住宿费、训练室房间费、零食费、活动经费和教师费用，请按实际发生时段填写每日单价；系统按起止日期自动计算总价，保存后直接汇入本班期总账。</span></div>
+      {error && <div className="educationError educationInlineStatus" role="alert">{error}</div>}
+      {message && <div className="noticeBar educationInlineStatus" role="status">{message}</div>}
+      <div className="educationOperationSummary"><span>已进入本期总账 {money(data?.costs.ledger_total || "0")}</span></div>
+      {canEdit && <form className="educationForm" onSubmit={(event) => void createCost(event)}>
+        <CostPricingFields key={costFormKey} start={cohortStart} end={cohortEnd} />
+        <label>成本分类<select name="category" value={category} onChange={(event) => setCategory(event.target.value)}>{Object.keys(costDetails).map((item) => <option key={item}>{item}</option>)}</select></label>
+        <label>成本明细<select name="detail" key={category}>{costDetails[category].map((item) => <option key={item}>{item}</option>)}</select></label>
+        <label>供应商/收款方<input name="vendor" maxLength={240} /></label>
+        <label>单据编号<input name="document_no" maxLength={120} /></label>
+        <label className="educationWide educationFileField">凭证与附件<input name="attachments" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.zip" /><small>文件直接保存到公司 NAS 的台账附件目录；单个文件最大 200MB，可多选。</small></label>
+        <label className="educationWide">备注<textarea name="note" maxLength={2000} /></label>
+        <p className="educationWide educationHint">总价＝每日单价 × 天数，天数包含发生日和结束日。价格发生变化时，请按不同起止日期分别保存一条费用。</p>
+        <div className="educationWide educationFormActions">
+          <button className="primaryButton" data-action="save" disabled={!!busy}>{busy === "cost" ? "保存中…" : "保存本项"}</button>
+          <button className="secondaryButton" data-action="continue" disabled={!!busy}>保存并增加下一段费用</button>
+        </div>
+      </form>}
+      <div className="educationCostDocuments">{data?.costs.items.map((item) => <article key={item.id}>
+        <header><strong>{item.category} / {item.detail}</strong><b>{money(item.amount)}</b></header>
+        <p>发生 {item.occurred_on} · 结束 {item.ended_on || item.occurred_on}{item.vendor ? ` · ${item.vendor}` : ""}{item.document_no ? ` · 单据 ${item.document_no}` : ""}</p>
+        <p>每日单价 {money(item.unit_price)} × {item.quantity_days} 天 · 已直接计入班期总账</p>
+        {item.source_ref && <p className="educationHint">凭证：{item.source_ref}</p>}
+        {!!item.attachments.length && <div className="educationAttachments">{item.attachments.map((attachment) => <span key={attachment.id}><button type="button" disabled={!!busy} onClick={() => void downloadAttachment(item.id, attachment)}>{attachment.filename}</button><small>{Math.max(1, Math.ceil(attachment.size_bytes / 1024))} KB</small>{canEdit && <button type="button" className="educationAttachmentDelete" disabled={!!busy} onClick={() => void deleteAttachment(item.id, attachment)}>移除</button>}</span>)}</div>}
+        {canEdit && <button type="button" disabled={!!busy} onClick={() => void loadCostForEdit(item.id)}>{busy === `cost-load-${item.id}` ? "加载中…" : "修正费用"}</button>}
+      </article>)}</div>
+      {editingCost && <section className="educationCostCorrection">
+        <h4>修正费用项目</h4>
+        {!editingCost.can_edit && <p className="educationError">当前账号无权修正这条历史费用，请由L5管理处理。</p>}
+        <form className="educationForm" onSubmit={(event) => void updateCost(event)}>
+          <CostPricingFields key={editingCost.id} start={editingCost.occurred_on} end={editingCost.ended_on || editingCost.occurred_on} unitPrice={editingCost.unit_price} disabled={!editingCost.can_edit} />
+          <label>成本分类<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value)} disabled={!editingCost.can_edit}>{Object.keys(costDetails).map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>成本明细<select name="detail" key={editCategory} defaultValue={editingCost.category === editCategory ? editingCost.detail : costDetails[editCategory][0]} disabled={!editingCost.can_edit}>{costDetails[editCategory].map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>供应商/收款方<input name="vendor" defaultValue={editingCost.vendor} maxLength={240} disabled={!editingCost.can_edit} /></label>
+          <label>单据编号<input name="document_no" defaultValue={editingCost.document_no} maxLength={120} disabled={!editingCost.can_edit} /></label>
+          <label className="educationWide educationFileField">继续添加凭证与附件<input name="attachments" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.zip" disabled={!editingCost.can_edit} /><small>新选择的文件将追加保存，原附件不会被覆盖。</small></label>
+          <label className="educationWide">备注<textarea name="note" defaultValue={editingCost.note} maxLength={2000} disabled={!editingCost.can_edit} /></label>
+          {!!editingCost.attachments.length && <div className="educationWide educationAttachments">{editingCost.attachments.map((attachment) => <span key={attachment.id}><button type="button" onClick={() => void downloadAttachment(editingCost.id, attachment)}>{attachment.filename}</button><small>{Math.max(1, Math.ceil(attachment.size_bytes / 1024))} KB</small>{editingCost.can_edit && <button type="button" className="educationAttachmentDelete" onClick={() => void deleteAttachment(editingCost.id, attachment)}>移除</button>}</span>)}</div>}
+          <button className="primaryButton" disabled={!!busy || !editingCost.can_edit}>{busy === `cost-update-${editingCost.id}` ? "保存中…" : "保存修正"}</button>
+          <button type="button" disabled={!!busy} onClick={() => setEditingCost(null)}>取消</button>
+        </form>
+      </section>}
+      {!data?.costs.items.length && <p className="educationHint">尚未登记费用项目。请在上方选择费用分类、填写日期和每日单价后保存。</p>}
+    </section>
+
 
     <section className="educationOperationSection educationCalendarSection">
       <h4 className="educationSectionTitle">6＋1 教学日历</h4>
@@ -350,53 +398,6 @@ export function EducationOperations({ api, token, cohortId, cohortStart, cohortE
         </div>
       </form></div>}
       {!data?.schedule.days.length && <p className="educationHint">尚未生成课表。系统会以开班日为第1天，循环安排6天授课、1天自主练习。</p>}
-    </section>
-
-    <section className="educationOperationSection educationCostEntrySection">
-      <h4 className="educationSectionTitle">逐项登记费用支出与凭证</h4>
-      <div className="educationPurposeNote"><strong>按每日单价直接记入总账</strong><span>饭费、住宿费、训练室房间费、零食费、活动经费和教师费用，请按实际发生时段填写每日单价；系统按起止日期自动计算总价，保存后直接汇入本班期总账。</span></div>
-      {error && <div className="educationError educationInlineStatus" role="alert">{error}</div>}
-      {message && <div className="noticeBar educationInlineStatus" role="status">{message}</div>}
-      <div className="educationOperationSummary"><span>已进入本期总账 {money(data?.costs.ledger_total || "0")}</span></div>
-      {canEdit && <form className="educationForm" onSubmit={(event) => void createCost(event)}>
-        <CostPricingFields key={costFormKey} start={cohortStart} end={cohortEnd} />
-        <label>成本分类<select name="category" value={category} onChange={(event) => setCategory(event.target.value)}>{Object.keys(costDetails).map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>成本明细<select name="detail" key={category}>{costDetails[category].map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>供应商/收款方<input name="vendor" maxLength={240} /></label>
-        <label>单据编号<input name="document_no" maxLength={120} /></label>
-        <label className="educationWide educationFileField">凭证与附件<input name="attachments" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.zip" /><small>文件直接保存到公司 NAS 的台账附件目录；单个文件最大 200MB，可多选。</small></label>
-        <label className="educationWide">备注<textarea name="note" maxLength={2000} /></label>
-        <p className="educationWide educationHint">总价＝每日单价 × 天数，天数包含发生日和结束日。价格发生变化时，请按不同起止日期分别保存一条费用。</p>
-        <div className="educationWide educationFormActions">
-          <button className="primaryButton" data-action="save" disabled={!!busy}>{busy === "cost" ? "保存中…" : "保存本项"}</button>
-          <button className="secondaryButton" data-action="continue" disabled={!!busy}>保存并增加下一段费用</button>
-        </div>
-      </form>}
-      <div className="educationCostDocuments">{data?.costs.items.map((item) => <article key={item.id}>
-        <header><strong>{item.category} / {item.detail}</strong><b>{money(item.amount)}</b></header>
-        <p>发生 {item.occurred_on} · 结束 {item.ended_on || item.occurred_on}{item.vendor ? ` · ${item.vendor}` : ""}{item.document_no ? ` · 单据 ${item.document_no}` : ""}</p>
-        <p>每日单价 {money(item.unit_price)} × {item.quantity_days} 天 · 已直接计入班期总账</p>
-        {item.source_ref && <p className="educationHint">凭证：{item.source_ref}</p>}
-        {!!item.attachments.length && <div className="educationAttachments">{item.attachments.map((attachment) => <span key={attachment.id}><button type="button" disabled={!!busy} onClick={() => void downloadAttachment(item.id, attachment)}>{attachment.filename}</button><small>{Math.max(1, Math.ceil(attachment.size_bytes / 1024))} KB</small>{canEdit && <button type="button" className="educationAttachmentDelete" disabled={!!busy} onClick={() => void deleteAttachment(item.id, attachment)}>移除</button>}</span>)}</div>}
-        {canEdit && <button type="button" disabled={!!busy} onClick={() => void loadCostForEdit(item.id)}>{busy === `cost-load-${item.id}` ? "加载中…" : "修正费用"}</button>}
-      </article>)}</div>
-      {editingCost && <section className="educationCostCorrection">
-        <h4>修正费用项目</h4>
-        {!editingCost.can_edit && <p className="educationError">当前账号无权修正这条历史费用，请由L5管理处理。</p>}
-        <form className="educationForm" onSubmit={(event) => void updateCost(event)}>
-          <CostPricingFields key={editingCost.id} start={editingCost.occurred_on} end={editingCost.ended_on || editingCost.occurred_on} unitPrice={editingCost.unit_price} disabled={!editingCost.can_edit} />
-          <label>成本分类<select name="category" value={editCategory} onChange={(event) => setEditCategory(event.target.value)} disabled={!editingCost.can_edit}>{Object.keys(costDetails).map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>成本明细<select name="detail" key={editCategory} defaultValue={editingCost.category === editCategory ? editingCost.detail : costDetails[editCategory][0]} disabled={!editingCost.can_edit}>{costDetails[editCategory].map((item) => <option key={item}>{item}</option>)}</select></label>
-          <label>供应商/收款方<input name="vendor" defaultValue={editingCost.vendor} maxLength={240} disabled={!editingCost.can_edit} /></label>
-          <label>单据编号<input name="document_no" defaultValue={editingCost.document_no} maxLength={120} disabled={!editingCost.can_edit} /></label>
-          <label className="educationWide educationFileField">继续添加凭证与附件<input name="attachments" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.zip" disabled={!editingCost.can_edit} /><small>新选择的文件将追加保存，原附件不会被覆盖。</small></label>
-          <label className="educationWide">备注<textarea name="note" defaultValue={editingCost.note} maxLength={2000} disabled={!editingCost.can_edit} /></label>
-          {!!editingCost.attachments.length && <div className="educationWide educationAttachments">{editingCost.attachments.map((attachment) => <span key={attachment.id}><button type="button" onClick={() => void downloadAttachment(editingCost.id, attachment)}>{attachment.filename}</button><small>{Math.max(1, Math.ceil(attachment.size_bytes / 1024))} KB</small>{editingCost.can_edit && <button type="button" className="educationAttachmentDelete" onClick={() => void deleteAttachment(editingCost.id, attachment)}>移除</button>}</span>)}</div>}
-          <button className="primaryButton" disabled={!!busy || !editingCost.can_edit}>{busy === `cost-update-${editingCost.id}` ? "保存中…" : "保存修正"}</button>
-          <button type="button" disabled={!!busy} onClick={() => setEditingCost(null)}>取消</button>
-        </form>
-      </section>}
-      {!data?.costs.items.length && <p className="educationHint">尚未登记费用项目。请在上方选择费用分类、填写日期和每日单价后保存。</p>}
     </section>
 
     {data?.can_view_logs && <details className="educationOperationSection">

@@ -124,6 +124,24 @@ def test_cost_document_calculates_total_and_posts_directly_to_ledger(setup):
     assert db.scalar(select(func.count(EducationCostAllocation.id))) == 1
 
 
+def test_teaching_room_is_available_as_a_direct_cost_category(setup):
+    client, _, _, _ = setup
+    cohort_id = _cohort(client)
+    path = f"/v1/pm/education/cohorts/{cohort_id}"
+    response = client.post(path + "/cost-documents", json={
+        "request_id": str(uuid4()),
+        "occurred_on": "2026-10-03", "ended_on": "2026-10-04",
+        "category": "教学房间", "detail": "训练室", "unit_price": "120.00",
+        "vendor": "教培场地", "document_no": "ROOM-001", "note": "两天训练室",
+    })
+    assert response.status_code == 200, response.text
+    operations = client.get(path + "/operations").json()
+    assert operations["costs"]["items"][0]["category"] == "教学房间"
+    assert operations["costs"]["items"][0]["amount"] == "240.00"
+    assert operations["costs"]["ledger_total"] == "240.00"
+    assert client.get(path).json()["expense"] == "240.00"
+
+
 def test_cost_voucher_is_saved_downloaded_and_deleted_as_a_file(setup, tmp_path, monkeypatch):
     client, db, _, _ = setup
     monkeypatch.setattr("app.education_operations._attachment_root", lambda: tmp_path.resolve())

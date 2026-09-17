@@ -51,6 +51,14 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
   const createId = useRef<string | null>(null);
   const entryId = useRef<string | null>(null);
 
+  function selectCohort(id: string) {
+    if (id === selectedId) return;
+    setSelectedId(id);
+    setDetail(null);
+    setEditing(null);
+    entryId.current = null;
+  }
+
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -61,9 +69,6 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
   }, [api, token, revision]);
 
   useEffect(() => {
-    setDetail(null);
-    setEditing(null);
-    entryId.current = null;
     if (!selectedId) return;
     const controller = new AbortController();
     api<Cohort & { entries: Entry[] }>(`v1/pm/education/cohorts/${selectedId}`, { signal: controller.signal }, token)
@@ -107,7 +112,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
         method: action === "cohort" || action === "correct" ? "PATCH" : "POST",
         body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
       }, token);
-      if (action === "create") { createId.current = null; setSelectedId(result.id); }
+      if (action === "create") { createId.current = null; selectCohort(result.id); }
       entryId.current = null;
       setEditing(null); setFormKey((key) => key + 1); setRevision((value) => value + 1);
       setMessage(action === "entry" ? "本项已保存并计入顶部实时统计，可继续添加下一项。" : "已保存，班期及累计统计已更新。");
@@ -153,7 +158,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
         <button type="button" className={module === "ledger" ? "active" : ""} onClick={() => setModule("ledger")}>综合台账</button>
         <button type="button" className={module === "cohorts" ? "active" : ""} onClick={() => setModule("cohorts")}>班期管理</button>
       </div>
-      {module === "ledger" && <EducationLedgerOverview api={api} token={token} cohorts={registry.items} onOpenCohort={(id) => { setSelectedId(id); setModule("cohorts"); }} />}
+      {module === "ledger" && <EducationLedgerOverview api={api} token={token} cohorts={registry.items} onOpenCohort={(id) => { selectCohort(id); setModule("cohorts"); }} />}
       {module === "cohorts" && <>
       <section className="educationMetrics educationStickyMetrics" aria-label="教培实时经营统计">
         <article><span>总收入</span><strong>{money(registry.summary.income)}</strong></article>
@@ -180,7 +185,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
         <h3>{registry.scope === "mine" ? "我的教培班期" : "全部教培班期"}（{registry.summary.cohort_count}）</h3>
         {registry.items.length === 0 && <p>暂无班期。教培员工可从“新增招生班期”开始登记。</p>}
         <div className="educationCohortList">{registry.items.map((cohort) => <button type="button" className={selectedId === cohort.id ? "active" : ""} key={cohort.id}
-          disabled={!!busy} onClick={() => { setSelectedId(cohort.id); setError(""); setMessage(""); }}>
+          disabled={!!busy} onClick={() => { selectCohort(cohort.id); setError(""); setMessage(""); }}>
           <strong>{cohort.name}</strong><span>{cohort.start_date} 至 {cohort.end_date} · 登记人：{cohort.owner_name}</span>
           <span>{cohort.effective_student_count ?? cohort.student_count} 人 · {cohort.enrollment_count ? "已按报名记录统计" : `预估客单价 ${money(cohort.unit_price)}`}</span>
           <span>收入 {money(cohort.income)} · 支出 {money(cohort.expense)} · 结余 {money(cohort.net)}</span>
@@ -190,7 +195,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
       {selectedId && !detail && <p role="status">正在加载班期详情…</p>}
       {detail && <section className="panel educationDetail">
         <h3>{detail.name}</h3><p>{detail.start_date} 至 {detail.end_date} · 登记人：{detail.owner_name}</p>
-        {registry.can_delete && <EducationCohortDelete key={`${detail.id}-${detail.version}`} api={api} token={token} cohort={detail} onDeleted={() => { setSelectedId(""); setDetail(null); setRevision((value) => value + 1); setMessage("班期已删除，已从日常页面及教培汇总移除；历史资料保留供追溯。"); }} />}
+        {registry.can_delete && <EducationCohortDelete key={`${detail.id}-${detail.version}`} api={api} token={token} cohort={detail} onDeleted={() => { selectCohort(""); setRevision((value) => value + 1); setMessage("班期已删除，已从日常页面及教培汇总移除；历史资料保留供追溯。"); }} />}
         <div className="educationMetrics">
           <article><span>本期人数</span><strong>{detail.effective_student_count ?? detail.student_count} 人</strong></article>
           <article><span>预计收入</span><strong>{money(detail.expected_income)}</strong></article>
@@ -199,10 +204,9 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
           <article><span>本期收支结余</span><strong>{money(detail.net)}</strong></article>
         </div>
         {detail.notes && <p className="educationNotes">{detail.notes}</p>}
-        <EducationEnrollment key={`${detail.id}-${revision}`} api={api} token={token} cohortId={detail.id} start={detail.start_date} period={detail.course_period || "1_month"} canEdit={registry.can_edit} onSaved={() => { setMessage("已保存，报名与班期汇总已更新。"); setRevision((value) => value + 1); }} />
-        <EducationOperations key={`operations-${detail.id}`} api={api} token={token} cohortId={detail.id} cohortStart={detail.start_date} cohortEnd={detail.end_date} canEdit={registry.can_edit} onChanged={() => setRevision((value) => value + 1)} />
+        <EducationEnrollment key={detail.id} api={api} token={token} cohortId={detail.id} start={detail.start_date} period={detail.course_period || "1_month"} canEdit={registry.can_edit} onSaved={() => { setMessage("已保存，报名与班期汇总已更新。"); setRevision((value) => value + 1); }} />
         {registry.can_edit && <>
-          <details key={`${detail.id}-${detail.version}`}><summary>编辑班期、招生人数和客单价</summary>
+          <details key={detail.id}><summary>编辑班期、招生人数和客单价</summary>
             <form className="educationForm" onSubmit={(event) => void submit(event, "cohort")}><CohortFields cohort={detail} /><button className="primaryButton" disabled={!!busy}>保存班期</button></form>
           </details>
           <h4>{editing ? "修正收支记录" : "逐项登记收入 / 费用支出"}</h4>
@@ -222,6 +226,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
           <div><strong>{entry.direction === "income" ? "收入" : "支出"} {money(entry.amount)}</strong><span>发生 {entry.occurred_on} · 结束 {entry.ended_on || entry.occurred_on} · {entry.category || "其他"} / {entry.detail || "其他"} · {entry.purpose}</span></div>
           {registry.can_edit && <div className="educationEntryActions"><button type="button" disabled={!!busy} onClick={() => setEditing(entry)}>修正</button>{entry.direction === "expense" && <button type="button" className="educationEntryDelete" disabled={!!busy} onClick={() => void deleteExpense(entry)}>{busy === `delete-${entry.id}` ? "删除中…" : "删除"}</button>}</div>}
         </article>)}</div>
+        <EducationOperations key={`operations-${detail.id}`} api={api} token={token} cohortId={detail.id} cohortStart={detail.start_date} cohortEnd={detail.end_date} canEdit={registry.can_edit} onChanged={() => setRevision((value) => value + 1)} />
       </section>}
       </>}
     </>}

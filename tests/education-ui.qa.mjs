@@ -36,7 +36,7 @@ try {
   await page.getByText("编辑班期、招生人数和客单价", { exact: true }).click();
   await page.locator('.educationDetail [name="student_count"]').fill("14");
   await page.getByRole("button", { name: "保存班期", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('.educationMetrics')?.textContent.includes('49,007.00'));
+  await page.waitForFunction(() => document.querySelector('.educationSecondaryMetrics')?.textContent.includes('49,007.00'));
   await page.getByText("＋ 新增学员报名", { exact: true }).click();
   const enrollment = page.locator('form').filter({ has: page.getByRole('button', { name: '保存报名', exact: true }) });
   await enrollment.getByLabel('学员姓名', { exact: true }).fill('测试学员');

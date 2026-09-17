@@ -70,6 +70,16 @@ test("education phase two provides 6+1 calendar, direct daily-price costs, daily
   assert.match(page, /星曜教培同步/);
 });
 
+test("education keeps the detail mounted while refreshing and places accounting before the calendar", () => {
+  const catalog = fs.readFileSync("agent/app/education_catalog.py", "utf8");
+  assert.match(catalog, /"教学房间": \("训练室", "教室", "其他"\)/);
+  assert.match(operations, /"教学房间": \["训练室", "教室", "其他"\]/);
+  assert.ok(education.indexOf("本期公共收支明细") < education.indexOf("<EducationOperations key="));
+  assert.ok(operations.indexOf("educationCostEntrySection") < operations.indexOf("educationCalendarSection"));
+  assert.match(education, /<EducationEnrollment key=\{detail\.id\}/);
+  assert.match(education, /function selectCohort\(id: string\) \{[\s\S]*?setSelectedId\(id\);\s*setDetail\(null\)/);
+});
+
 test("education combines referral, commission and every assigned teacher in the student record", () => {
   const enrollment = fs.readFileSync("app/education-enrollment.tsx", "utf8");
   const catalog = fs.readFileSync("agent/app/education_catalog.py", "utf8");

@@ -21,6 +21,7 @@ const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   if (path.endsWith("/options")) return catalog as T;
   if (path.includes("/staff/") && options.method === "DELETE") { staff[0].active = false; return { id: staff[0].id, active: false } as T; }
   if (path.endsWith("/staff")) return { items: staff } as T;
+  if (path.endsWith("/operations")) return { schedule: { generated: false, days: [], monthly_summaries: [], summary: { teaching: 0, practice: 0, rest: 0 } }, costs: { items: [], ledger_total: "0.00" }, logs: [], missing_log_days: [], can_view_logs: false, can_edit: true } as T;
   if (path.endsWith("/graduation-report")) return { title: "测试学员结营报告", text: assessments.map((item) => `${item.stage_name}\n${item.observations}\n${item.final_summary || ""}\n${item.conservative_outlook || ""}\n${item.optimistic_outlook || ""}`).join("\n\n") + "\n未来预期不构成保证。" } as T;
   if (path.includes("/assessments")) {
     if (options.method === "POST") assessments.push({ ...body, id: body.request_id, version: 1, evaluator_name: "测试教练" });
@@ -58,5 +59,5 @@ const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
 createRoot(document.getElementById("root")!).render(<>
   <style>{`body{font-family:Arial,"Microsoft YaHei",sans-serif;background:#f3f5f8;margin:0;padding:24px;color:#203347}*{box-sizing:border-box}.panel{padding:24px;background:white;border:1px solid #e0e6ec;border-radius:16px}button{cursor:pointer}.primaryButton{padding:12px;background:#e51932;border:0;border-radius:8px;color:white}.secondaryButton{padding:12px;border:1px solid #cde0ee;border-radius:8px;background:#fff}.noticeBar{padding:14px;background:#e4f5ed}.roleFixture{margin-bottom:20px;padding:12px;display:flex;gap:20px}`}</style>
   <form className="roleFixture"><AccountRoleFields initialRole="business" initialCeiling="L4" /></form>
-  <EducationWorkspace api={api} token="local-test-only" />
+  <EducationWorkspace api={api} token="local-test-only" initialModule="cohorts" />
 </>);
