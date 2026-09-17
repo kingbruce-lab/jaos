@@ -772,10 +772,13 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
     tmp_path, monkeypatch
 ) -> None:
     labels = {item["code"]: item["label"] for item in cost_center_catalog(2026)}
-    assert len(labels) == 23
+    assert len(labels) == 25
     assert labels["CC26A10"] == "出借款"
     assert labels["CC26A11"] == "短信验证"
+    assert labels["CC26C04"] == "西安回款"
+    assert labels["CC26C05"] == "国外战队奖金"
     assert registered_cost_center_code("cc26-a10") == "CC26A10"
+    assert registered_cost_center_code("Cc26C04") == "CC26C04"
     assert registered_cost_center_code("出借款") is None
 
     workbook = Workbook()
@@ -783,6 +786,8 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
     sheet.append(["交易日期", "项目中心号", "借方发生额", "贷方发生额", "余额", "对手方", "摘要"])
     sheet.append(["2026-09-02", "Cc26A10", 1000, None, 9000, "往来单位", "借款支付"])
     sheet.append(["2026-09-03", "CC26A11", 20, None, 8980, "服务商", "短信验证费"])
+    sheet.append(["2026-09-04", "Cc26C04", None, 500, 9480, "客户", "西安回款"])
+    sheet.append(["2026-09-05", "CC26C05", None, 600, 10080, "赛事方", "国外战队奖金"])
     output = BytesIO()
     workbook.save(output)
 
@@ -807,7 +812,9 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
             params={"entity_id": entity["id"]},
         )
         assert rows.status_code == 200
-        assert {row["project_reference"] for row in rows.json()} == {"CC26A10", "CC26A11"}
+        assert {row["project_reference"] for row in rows.json()} == {
+            "CC26A10", "CC26A11", "CC26C04", "CC26C05",
+        }
         assert all(row["project_reference_valid"] for row in rows.json())
         assert client.post(
             f"/v1/finance/statements/{batch_id}/confirm",
@@ -818,6 +825,8 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
         entries = {item["code"]: item for item in registry.json()["items"]}
         assert entries["CC26A10"]["transaction_count"] == 1
         assert entries["CC26A11"]["transaction_count"] == 1
+        assert entries["CC26C04"]["transaction_count"] == 1
+        assert entries["CC26C05"]["transaction_count"] == 1
     finally:
         app.dependency_overrides.clear()
         db.close()

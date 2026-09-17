@@ -31,6 +31,8 @@ COST_CENTER_LABELS: dict[str, str] = {
     "CC26C01": "智子费用",
     "CC26C02": "商演项目",
     "CC26C03": "备用金",
+    "CC26C04": "西安回款",
+    "CC26C05": "国外战队奖金",
 }
 
 COST_CENTER_GROUP_LABELS = {

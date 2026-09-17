@@ -1228,6 +1228,8 @@ const COST_CENTER_OPTIONS = [
   ["CC26C01", "智子费用"],
   ["CC26C02", "商演项目"],
   ["CC26C03", "备用金"],
+  ["CC26C04", "西安回款"],
+  ["CC26C05", "国外战队奖金"],
 ] as const;
 
 const COST_CENTER_CODE_PATTERN = "CC[0-9]{2}[A-C][0-9]{2}";
