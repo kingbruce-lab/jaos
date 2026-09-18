@@ -5442,7 +5442,7 @@ export default function Home() {
               <PanelTitle eyebrow="CONTRACT ARCHIVE" title="合同档案库" />
               <div className="contractSecurityNotice">
                 <strong>本地最高级别保护</strong>
-                <span>行政可检索行政及业务合同，人事可检索人事合同；行政、人事、财务均可上传总办涉密合同，并且只能检索、预览本人上传的总办合同。管理+L5可查阅全部合同。合同全文、OCR和检索词均不发送到云端模型。</span>
+                <span>行政可检索行政及业务合同，人事可上传、检索人事合同；行政、人事、财务均可上传总办涉密合同，并且只能检索、预览本人上传的总办合同。管理+L5可查阅全部合同。合同全文、OCR和检索词均不发送到云端模型。</span>
               </div>
               <div className="contractCategoryTabs">
                 {contractCategories.map((item) => (

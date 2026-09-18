@@ -552,8 +552,10 @@ def _can_upload_contract_category(user: User, category_key: str) -> bool:
         return ceiling >= CONFIDENTIALITY_RANK["L5"]
     if organization_role == "administrative":
         return category_key in CONTRACT_CATEGORIES
+    if organization_role == "personnel" and category_key in {"personnel", "executive_office"}:
+        return ceiling >= CONFIDENTIALITY_RANK["L4"]
     return bool(
-        organization_role in {"personnel", "finance"}
+        organization_role == "finance"
         and category_key == "executive_office"
         and ceiling >= CONFIDENTIALITY_RANK["L4"]
     )

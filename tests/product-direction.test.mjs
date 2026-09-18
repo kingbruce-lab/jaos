@@ -73,6 +73,7 @@ test("contract folders preserve structure and executive contracts stay uploader-
   assert.match(agent, /restricted_document_ids=owned_document_ids/);
   assert.match(page, /正在读取合同权限/);
   assert.match(page, /重新加载合同权限/);
+  assert.match(page, /人事可上传、检索人事合同/);
   assert.match(page, /不会再把加载失败误显示为“仅可上传”/);
   assert.match(page, /selectedContractCategory && \(/);
   assert.match(agent, /ContractDocumentSource/);

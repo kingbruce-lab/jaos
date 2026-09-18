@@ -582,7 +582,7 @@ def test_contract_search_scope_obeys_organization_role_matrix(
                 "name": "人事合同",
                 "confidentiality": "L4",
                 "can_search": True,
-                "can_upload": False,
+                "can_upload": True,
                 "search_scope": "all",
             },
             {
@@ -600,6 +600,19 @@ def test_contract_search_scope_obeys_organization_role_matrix(
         assert client.get(
             "/v1/contracts", params={"category": "administrative"}
         ).status_code == 403
+
+        personnel_upload = client.post(
+            "/v1/contracts/uploads",
+            data={"category": "personnel"},
+            files={
+                "file": (
+                    "人事劳动合同.docx",
+                    _word_payload("员工劳动合同与入职用工约定。"),
+                    "application/octet-stream",
+                )
+            },
+        )
+        assert personnel_upload.status_code == 200, personnel_upload.text
 
         app.dependency_overrides[current_user] = lambda: users["l5_business"]
         assert client.get("/v1/contracts/categories").status_code == 403
