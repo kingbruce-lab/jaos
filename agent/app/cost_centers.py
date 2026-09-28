@@ -8,7 +8,8 @@ import unicodedata
 # accepts future years/sequence values so a yearly code refresh does not need
 # a database migration; this mapping supplies the current user-facing labels.
 COST_CENTER_LABELS: dict[str, str] = {
-    "CC26A01": "薪资社保",
+    "CC26A00": "收实缴注册资本金",
+    "CC26A01": "薪资社保、公积金",
     "CC26A02": "税费及财务费用",
     "CC26A03": "差旅",
     "CC26A04": "现金科目",
@@ -19,20 +20,26 @@ COST_CENTER_LABELS: dict[str, str] = {
     "CC26A09": "总部装修费用",
     "CC26A10": "出借款",
     "CC26A11": "短信验证",
-    "CC26B01": "KPL青训",
+    "CC26B01": "KPL青训北京",
     "CC26B02": "KPL上海大培训",
-    "CC26B03": "王者国家队集训",
+    "CC26B03": "王者国家集训队",
     "CC26B04": "LPL青训",
-    "CC26B05": "三角洲国际战队培训",
-    "CC26B06": "后勤保障项目",
+    "CC26B05": "后勤保障项目",
+    "CC26B06": "三角洲国际战队培训",
     "CC26B07": "德玛西亚杯",
     "CC26B08": "杭州童雅",
     "CC26B09": "上海业务",
+    "CC26B10": "KPL青训杭州",
     "CC26C01": "智子费用",
     "CC26C02": "商演项目",
     "CC26C03": "备用金",
     "CC26C04": "西安回款",
     "CC26C05": "国外战队奖金",
+    "CC26C06": "JAG项目",
+    "CC26C07": "PD青训费用",
+    "CC26C08": "叶总费用",
+    "CC26C09": "繁星费用",
+    "CC26C10": "卓总费用",
 }
 
 COST_CENTER_GROUP_LABELS = {
