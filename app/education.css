@@ -61,10 +61,14 @@
 .educationError { padding: 16px; border-radius: 10px; background: #fff0f2; color: #b71c32; }
 .accountPolicyForm label { display: grid; gap: 4px; min-width: 0; font-size: 12px; }
 @media (max-width: 760px) {
+  /* Module tabs stay on one swipeable row instead of wrapping into two. */
+  .educationModuleTabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  .educationModuleTabs::-webkit-scrollbar { display: none; }
+  .educationModuleTabs button { flex: none; min-height: 44px; padding: 10px 16px; white-space: nowrap; }
   .educationHeader { flex-direction: column; align-items: stretch; }
   .educationMetrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .educationMetrics strong { font-size: 17px; }
-  .educationForm { grid-template-columns: 1fr; }
+  .educationForm { grid-template-columns: minmax(0, 1fr); }
 }
 .educationRosterGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap: 12px; margin: 14px 0; }
 .educationRosterPerson { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 14px; border: 1px solid #d8e6f1; border-radius: 14px; background: linear-gradient(145deg,#fff,#f3f8fc); box-shadow: 0 5px 16px rgba(31,78,113,.06); }
@@ -98,7 +102,7 @@
 .educationLedgerCard button { justify-self: start; }
 @media (max-width: 1100px) {
   .educationLedgerIntro { align-items: stretch; flex-direction: column; }
-  .educationLedgerFilters, .educationLedgerSplit { grid-template-columns: 1fr; }
+  .educationLedgerFilters, .educationLedgerSplit { grid-template-columns: minmax(0, 1fr); }
 }
 .educationOperations { margin-top: 20px; padding-top: 20px; border-top: 1px solid #dbe4ee; }
 .educationOperations > header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
@@ -175,9 +179,9 @@
 .educationMissingLogs { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; padding: 11px; border-left: 4px solid #e49a18; border-radius: 8px; background: #fff8e8; color: #76520f; }
 @media (max-width: 760px) {
   .educationStickyMetrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .educationDayFlagGrid { grid-template-columns: 1fr; }
-  .educationCustomAllocationRow { grid-template-columns: 1fr; }
-  .educationAssignmentRow { grid-template-columns: 1fr; }
+  .educationDayFlagGrid { grid-template-columns: minmax(0, 1fr); }
+  .educationCustomAllocationRow { grid-template-columns: minmax(0, 1fr); }
+  .educationAssignmentRow { grid-template-columns: minmax(0, 1fr); }
   .educationCostDocuments article header, .educationDailyLogs article header { display: grid; gap: 5px; }
   .educationRosterPerson { grid-template-columns: 42px minmax(0,1fr); }
   .educationRosterPerson button { grid-column: 1 / -1; }

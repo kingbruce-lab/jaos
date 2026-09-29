@@ -389,10 +389,10 @@
   .financePeriodSwitcherButtons button { flex: 0 0 auto; min-height: 46px; font-size: 15px; }
   .financeCostCenterHero { align-items: stretch; flex-direction: column; padding: 22px 18px; }
   .financeCostCenterHeroActions { justify-content: flex-start; }
-  .financeCostCenterGroups { grid-template-columns: 1fr; }
+  .financeCostCenterGroups { grid-template-columns: minmax(0, 1fr); }
   .financeCostCenterLedgerPanel { padding: 20px 16px; }
-  .financeCostCenterMetrics { grid-template-columns: 1fr; }
-  .financeCostCenterTransactions > article { grid-template-columns: 1fr; gap: 7px; }
+  .financeCostCenterMetrics { grid-template-columns: minmax(0, 1fr); }
+  .financeCostCenterTransactions > article { grid-template-columns: minmax(0, 1fr); gap: 7px; }
   .financeAnnualHero { min-height: 0; padding: 25px 20px; }
   .financeAnnualHero p { margin-bottom: 18px; }
   .financeAnnualHero span { font-size: 16px; }
@@ -418,31 +418,31 @@
   .financeAnnualTrendPanel { padding: 20px 16px; }
   .financeAnnualTrendPanel > header { align-items: start; flex-direction: column; }
   .financeAnnualMonthChart { grid-template-columns: repeat(12,60px); padding-bottom: 8px; }
-  .financeAnnualRankingGrid, .financeAnnualCategoryGrid, .financeAnnualRiskGrid { grid-template-columns: 1fr; }
+  .financeAnnualRankingGrid, .financeAnnualCategoryGrid, .financeAnnualRiskGrid { grid-template-columns: minmax(0, 1fr); }
   .financeAnnualRankingGrid .financeRankingPanel, .financeAnnualRiskGrid .financeAnomalyPanel { min-height: 0; }
 }
 
 @media (max-width: 760px) {
-  .financeAnnualSearchList dl { grid-template-columns: 1fr; }
-  .financeAnnualMetricGrid, .financeAnnualConcentrationGrid { grid-template-columns: 1fr; }
+  .financeAnnualSearchList dl { grid-template-columns: minmax(0, 1fr); }
+  .financeAnnualMetricGrid, .financeAnnualConcentrationGrid { grid-template-columns: minmax(0, 1fr); }
   .financeAnnualMetricGrid article, .financeAnnualConcentrationGrid article { min-height: 112px; }
 }
 
 @media (max-width: 1100px) {
   .financeObligationsHeader { flex-direction: column; }
   .financeObligationsTotals { width: 100%; }
-  .financeObligationColumns { grid-template-columns: 1fr; }
+  .financeObligationColumns { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 760px) {
   .financeObligationsPanel { padding: 20px 16px; }
   .financeObligationsHeader h2 { font-size: 24px; }
-  .financeObligationsTotals { grid-template-columns: 1fr; }
+  .financeObligationsTotals { grid-template-columns: minmax(0, 1fr); }
   .financeObligationColumn { padding: 14px; }
   .financeObligationColumn > header { align-items: flex-start; flex-direction: column; }
   .financeObligationColumn > header > div:last-child { text-align: left; }
   .financeObligationItem dl { grid-template-columns: 1fr 1fr; }
-  .financeObligationCreate > form, .financeObligationEdit > form { grid-template-columns: 1fr; }
+  .financeObligationCreate > form, .financeObligationEdit > form { grid-template-columns: minmax(0, 1fr); }
 }
 .financeTrendPanel, .financeAccountPanel, .financeLedgerPanel, .transactionPanel, .compactLedgerPanel { padding: 26px; }
 .financeTrendExplanation { margin: 8px 0 0; color: #748196; font-size: 12px; line-height: 1.6; }
@@ -673,10 +673,10 @@
 .financeCashStandaloneGrid.readonly { grid-template-columns: minmax(0, 1fr); }
 
 @media (max-width: 760px) {
-  .transactionEditExpanded { grid-template-columns: 1fr; }
+  .transactionEditExpanded { grid-template-columns: minmax(0, 1fr); }
   .transactionEditExpanded .summaryField, .transactionEditActions { grid-column: 1; }
   .transactionIdentityCell { min-width: 240px; }
-  .financeMonthlyGrid, .financeCashStandaloneGrid { grid-template-columns: 1fr; }
+  .financeMonthlyGrid, .financeCashStandaloneGrid { grid-template-columns: minmax(0, 1fr); }
   .financeMonthlySection > header, .financeOffbookHero { align-items: flex-start; flex-direction: column; }
   .financeOffbookEntry { align-items: flex-start; flex-direction: column; }
   .financeHealthHeader, .financeTransferPanelHeader { align-items: stretch; flex-direction: column; }
@@ -953,11 +953,11 @@
 .pmTimeline small { font-size: 12px; }
 
 @media (max-width: 1100px) {
-  .financeDashboardGrid, .pmMainGrid { grid-template-columns: 1fr; }
+  .financeDashboardGrid, .pmMainGrid { grid-template-columns: minmax(0, 1fr); }
   .financeHealthGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .financeWeeklyInsights, .financeMonthlyInsights { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .financeWeeklyInsights .financeAnomalyPanel, .financeMonthlyInsights .financeAnomalyPanel { grid-column: 1 / -1; min-height: auto; }
-  .financeOperationsGrid, .pmActionGrid { grid-template-columns: 1fr; }
+  .financeOperationsGrid, .pmActionGrid { grid-template-columns: minmax(0, 1fr); }
   .pmProjectListPanel { position: static; }
   .pmProjectList { max-height: 420px; }
   .pmFinancialSummary { grid-template-columns: repeat(3, 1fr); }
@@ -974,7 +974,7 @@
   .financeTrendPanel, .financeAccountPanel, .financeLedgerPanel, .transactionPanel, .compactLedgerPanel, .financeOperationCard, .pmProjectListPanel, .pmProjectDetailPanel { padding: 18px; }
   .trendRow { grid-template-columns: 62px 1fr; }
   .trendNetValue { grid-column: 2; }
-  .formGrid.twoColumns, .formGrid.threeColumns { grid-template-columns: 1fr; }
+  .formGrid.twoColumns, .formGrid.threeColumns { grid-template-columns: minmax(0, 1fr); }
   .formGrid .spanTwo { grid-column: auto; }
   .financeBatchList article { grid-template-columns: 1fr auto; }
   .financeBatchActions { grid-column: 1 / -1; justify-content: stretch; }
@@ -986,13 +986,13 @@
   .pmPortfolioStats { width: 100%; grid-template-columns: repeat(2, 1fr); }
   .pmPortfolioStats article:nth-child(2) { border-right: 0; }
   .pmPortfolioStats article:nth-child(-n+2) { border-bottom: 1px solid rgba(255,255,255,.09); }
-  .pmDetailHeadline { grid-template-columns: 1fr; gap: 16px; }
+  .pmDetailHeadline { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .pmClientSpotlight { align-items: flex-start; }
   .pmExecutionTeam { align-items: flex-start; flex-direction: column; }
   .pmFinancialSummary { grid-template-columns: 1fr 1fr; }
   .pmDetailHeader h2 { font-size: 30px; overflow-wrap: anywhere; }
   .pmExecutionTeam { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .pmCollaboratorAccess { grid-template-columns: 1fr; }
+  .pmCollaboratorAccess { grid-template-columns: minmax(0, 1fr); }
   .pmCollaboratorForm { grid-column: 1; width: 100%; max-width: none; }
   .pmCollaboratorForm button { flex: none; }
   .pmContractStatusPanel { align-items: stretch; flex-direction: column; gap: 16px; }
@@ -1000,10 +1000,10 @@
   .pmCreatePanel summary span { align-items: flex-start; flex-direction: column; gap: 7px; }
   .pmCreatePanel > form { padding: 8px 18px 22px; }
   .pmProjectNoField { padding: 14px; }
-  .pmBrief, .reviewSlotGrid, .inlineReviewForm { grid-template-columns: 1fr; }
+  .pmBrief, .reviewSlotGrid, .inlineReviewForm { grid-template-columns: minmax(0, 1fr); }
   .pmBrief p { grid-column: auto; }
   .pmPaymentStatus { align-items: flex-start; flex-direction: column; }
-  .pmDeletionPanel, .pmDeletionRequestForm { grid-template-columns: 1fr; }
+  .pmDeletionPanel, .pmDeletionRequestForm { grid-template-columns: minmax(0, 1fr); }
   .pmDeletionPending { padding: 14px 0 0; border-left: 0; border-top: 1px solid #f0dadd; }
   .compactBusinessForm { grid-template-columns: 1fr 1fr; }
   .compactBusinessForm button { min-height: 38px; }
@@ -1334,7 +1334,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .uploadFileList b { min-width: 0; overflow: hidden; color: #344052; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .uploadFileList small { flex: none; color: #8c95a2; font-size: 12px; }
 .uploadFileList .folderSelectionSummary { border: 1px solid #cce2d8; background: #f2fbf6; }
-.contractGrid.contractGrid.searchOnly { grid-template-columns: 1fr; }
+.contractGrid.contractGrid.searchOnly { grid-template-columns: minmax(0, 1fr); }
 .uploadOptions { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .uploadOptions label { display: grid; gap: 10px; color: #3f4b5d; font-size: 14px; font-weight: 900; }
 .uploadOptions select { width: 100%; min-height: 56px; border: 1px solid #d4dce6; border-radius: 10px; padding: 0 16px; color: #172033; background: var(--white); outline: none; font-size: 16px; font-weight: 800; }
@@ -1780,7 +1780,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .contractOwnHeader { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
 .contractOwnHeader > p { max-width: 680px; margin: 0; color: #68758a; line-height: 1.65; }
 .contractFolderCreate { margin-top: 18px; padding: 15px; display: grid; grid-template-columns: minmax(180px, .55fr) minmax(260px, 1.45fr) auto; align-items: end; gap: 12px; border: 1px solid #dce5ee; border-radius: 10px; background: var(--surface-soft); }
-.contractFolderCreate label { display: grid; gap: 7px; color: #4f5d72; font-weight: 700; }
+.contractFolderCreate label { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 7px; color: #4f5d72; font-weight: 700; }
 .contractFolderCreate input, .contractFolderCreate select, .contractOwnActions select { min-height: 44px; padding: 0 12px; border: 1px solid #d5dee8; border-radius: 8px; color: #1f2a3b; background: var(--white); }
 .contractOwnList { margin-top: 18px; display: grid; gap: 10px; }
 .contractOwnList article { padding: 15px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; border: 1px solid #e1e7ee; border-radius: 10px; background: var(--white); }
@@ -1811,18 +1811,18 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .heroCopy { width: 90%; }
   .evidenceVisual { opacity: .35; }
   .stats { grid-template-columns: repeat(2, 1fr); }
-  .workspaceGrid { grid-template-columns: 1fr; }
-  .uploadLayout { grid-template-columns: 1fr; }
+  .workspaceGrid { grid-template-columns: minmax(0, 1fr); }
+  .uploadLayout { grid-template-columns: minmax(0, 1fr); }
   .uploadGuide { position: static; }
-  .accountLayout { grid-template-columns: 1fr; }
-  .operationsLayout { grid-template-columns: 1fr; }
-  .evolutionLayout { grid-template-columns: 1fr; }
+  .accountLayout { grid-template-columns: minmax(0, 1fr); }
+  .operationsLayout { grid-template-columns: minmax(0, 1fr); }
+  .evolutionLayout { grid-template-columns: minmax(0, 1fr); }
   .evolutionControl { position: static; }
   .evaluationBox { align-items: flex-start; flex-direction: column; }
   .businessGoldHeader { flex-direction: column; }
-  .businessGoldCreate { grid-template-columns: 1fr; }
+  .businessGoldCreate { grid-template-columns: minmax(0, 1fr); }
   .businessGoldCreate .goldQuestion, .businessGoldCreate .goldSource { grid-column: auto; }
-  .businessGoldApprove { grid-template-columns: 1fr; }
+  .businessGoldApprove { grid-template-columns: minmax(0, 1fr); }
   .reviewFacts { grid-template-columns: repeat(3, minmax(100px, 1fr)); }
   .reviewForm { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
   .governanceStats { grid-template-columns: repeat(2, 1fr); }
@@ -1830,11 +1830,11 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .governanceBatchBar { grid-template-columns: auto 1fr; }
   .governanceReason { grid-column: 1 / -1; }
   .contractCategoryTabs { grid-template-columns: repeat(2, 1fr); }
-  .contractGrid { grid-template-columns: 1fr; }
+  .contractGrid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 760px) {
-  .loginScreen { grid-template-columns: 1fr; }
+  .loginScreen { grid-template-columns: minmax(0, 1fr); }
   .loginBrand { min-height: 42vh; padding: 34px 26px; }
   .loginBrand img { width: 150px; }
   .loginBrandCopy h1 { font-size: 36px; }
@@ -1850,23 +1850,27 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .content { margin: 0 0 68px; width: 100%; padding: 20px 15px; }
   .financeEntitySwitcher { align-items: stretch; flex-direction: column; gap: 12px; padding: 14px; }
   .financeEntitySwitcherCopy { min-width: 0; }
-  .financeEntitySwitcherButtons { grid-template-columns: 1fr; width: 100%; }
+  .financeEntitySwitcherButtons { grid-template-columns: minmax(0, 1fr); width: 100%; }
   .financeEntitySwitcherButtons button { min-height: 52px; }
   .topbar { align-items: center; }
   .systemState { display: none; }
   .primaryButton { padding: 10px 12px; }
   .hero { padding: 30px 22px; }
+  .ask { height: auto; flex-wrap: wrap; gap: 8px; padding: 8px; }
+  .ask > span { display: none; }
+  .ask input { flex: 1 1 100%; min-height: 44px; padding: 0 8px; }
+  .ask button { flex: 1 1 100%; min-height: 44px; }
   .heroCopy { width: 100%; }
   .evidenceVisual { display: none; }
   .compactAnswer { display: grid; }
   .stats { grid-template-columns: 1fr 1fr; }
-  .qaLayout, .proposalLayout, .writingLayout { grid-template-columns: 1fr; }
+  .qaLayout, .proposalLayout, .writingLayout { grid-template-columns: minmax(0, 1fr); }
   .writingControl { position: static; }
   .questionPanel, .briefPanel { min-height: auto; }
   .emptyState { min-height: 300px; }
-  .briefForm { grid-template-columns: 1fr; }
+  .briefForm { grid-template-columns: minmax(0, 1fr); }
   .briefForm .full { grid-column: auto; }
-  .writingOptions { grid-template-columns: 1fr; }
+  .writingOptions { grid-template-columns: minmax(0, 1fr); }
   .writingPersistenceBar { align-items: stretch; flex-direction: column; }
   .writingPersistenceBar button { width: 100%; min-height: 44px; }
   .writingDraftRows article { gap: 8px; }
@@ -1880,20 +1884,20 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .accountPolicyForm { grid-template-columns: 1fr 1fr; }
   .accountPolicyForm select:first-child { grid-column: 1 / -1; }
   .accountPasswordForm { margin-left: 0; }
-  .operationCards { grid-template-columns: 1fr; }
+  .operationCards { grid-template-columns: minmax(0, 1fr); }
   .reviewCard { padding: 14px; }
-  .uploadOptions, .uploadPickerGrid { grid-template-columns: 1fr; }
+  .uploadOptions, .uploadPickerGrid { grid-template-columns: minmax(0, 1fr); }
   .uploadDropzone { min-height: 180px; padding: 24px 16px; }
   .uploadSubmit { width: 100%; justify-self: stretch; }
   .contractHeader, .contractUploadPanel, .contractSearchPanel, .contractDocuments, .contractResults, .contractOwnLibrary { padding: 18px; }
-  .contractSecurityNotice { grid-template-columns: 1fr; }
+  .contractSecurityNotice { grid-template-columns: minmax(0, 1fr); }
   .contractCategoryTabs { grid-template-columns: 1fr 1fr; }
   .contractDocumentList article { align-items: flex-start; flex-direction: column; }
   .contractOwnHeader { align-items: flex-start; flex-direction: column; gap: 10px; }
-  .contractFolderCreate { grid-template-columns: 1fr; }
+  .contractFolderCreate { grid-template-columns: minmax(0, 1fr); }
   .contractFolderCreate button { width: 100%; }
-  .contractOwnList article { grid-template-columns: 1fr; }
-    .contractOwnActions { display: grid; grid-template-columns: 1fr; justify-content: stretch; }
+  .contractOwnList article { grid-template-columns: minmax(0, 1fr); }
+    .contractOwnActions { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; }
     .contractOwnActions select { width: 100%; font-size: 16px; }
     .contractOwnActions .previewLink { grid-column: 1 / -1; width: 100%; }
     .contractOwnActions .secondaryButton { width: 100%; }
@@ -1911,20 +1915,20 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .governanceStat { padding: 14px; }
   .governanceStat span { font-size: 12px; }
   .governanceStat strong { font-size: 22px; }
-  .governanceAIBox { grid-template-columns: 1fr; padding: 16px; }
+  .governanceAIBox { grid-template-columns: minmax(0, 1fr); padding: 16px; }
   .governanceAIActions { display: grid; grid-template-columns: 1fr 1fr; }
   .governanceAIReport { grid-column: auto; }
-  .governanceFilters { grid-template-columns: 1fr; }
+  .governanceFilters { grid-template-columns: minmax(0, 1fr); }
   .governanceManualFilter { white-space: normal; }
-  .governanceBatchBar { position: static; grid-template-columns: 1fr; }
+  .governanceBatchBar { position: static; grid-template-columns: minmax(0, 1fr); }
   .governanceReason { grid-column: auto; }
   .governanceCard { padding: 14px; }
   .governanceCard header { flex-direction: column; }
   .governanceBadges { justify-content: flex-start; }
   .governanceMeta { grid-template-columns: 1fr 1fr; }
-  .governanceSuggestion { grid-template-columns: 1fr; }
+  .governanceSuggestion { grid-template-columns: minmax(0, 1fr); }
   .governanceSuggestion .previewLink { justify-self: start; }
-  .evolutionForm { grid-template-columns: 1fr; }
+  .evolutionForm { grid-template-columns: minmax(0, 1fr); }
   .evolutionForm .full { grid-column: auto; }
   .evolutionForm button { grid-column: auto; }
   .evolutionStats { grid-template-columns: 1fr 1fr; }
@@ -1932,10 +1936,10 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .evolutionCandidate { padding: 14px; }
   .evolutionSource { align-items: flex-start; flex-direction: column; }
   .artifactList > button { align-items: flex-start; }
-  .candidateDecisionForm { grid-template-columns: 1fr; }
+  .candidateDecisionForm { grid-template-columns: minmax(0, 1fr); }
   .candidateDecisionForm > div, .candidateDecisionForm > small { grid-column: auto; }
   .candidateDecisionForm > div { display: grid; grid-template-columns: 1fr 1fr; }
-  .evolutionGateForm { grid-template-columns: 1fr; }
+  .evolutionGateForm { grid-template-columns: minmax(0, 1fr); }
   .evolutionGateForm strong, .evolutionGateForm p { grid-column: auto; }
   .changePlanBox > div { align-items: flex-start; flex-direction: column; }
   footer { padding-bottom: 4px; }
@@ -3501,7 +3505,7 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   }
 
   .contractPickerGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .contractUploadPanel form > .primaryButton,
@@ -3521,7 +3525,7 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   }
 
   .contractUploadSuccess {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .contractUploadSuccess button {
@@ -3793,17 +3797,9 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
     border-radius: 10px;
   }
 
-  .topbar > div:first-child {
-    flex-basis: 100%;
-  }
-
-  .topActions {
-    width: 100%;
-  }
-
   .topActions .primaryButton {
-    width: 100%;
-    max-width: none;
+    padding-inline: 10px;
+    font-size: 12px;
   }
 
   .mobileMenuModules {
@@ -4289,7 +4285,7 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .pmProjectAdminFooter .deletionReviewForm,
   .pmFounderDeleteForm,
   .pmDeletePasswordSettings form {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .pmFounderDeleteControl > header {
