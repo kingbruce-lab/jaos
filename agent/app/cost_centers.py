@@ -8,6 +8,7 @@ import unicodedata
 # accepts future years/sequence values so a yearly code refresh does not need
 # a database migration; this mapping supplies the current user-facing labels.
 COST_CENTER_LABELS: dict[str, str] = {
+    "CC2501": "25年数据",
     "CC26A00": "收实缴注册资本金",
     "CC26A01": "薪资社保、公积金",
     "CC26A02": "税费及财务费用",
@@ -57,7 +58,7 @@ def cost_center_catalog(year: int | None = None) -> list[dict[str, str]]:
         {
             "code": code,
             "label": label,
-            "group": COST_CENTER_GROUP_LABELS.get(code[4], "其他项目"),
+            "group": "历史数据" if code == "CC2501" else COST_CENTER_GROUP_LABELS.get(code[4], "其他项目"),
         }
         for code, label in COST_CENTER_LABELS.items()
         if year_key is None or code[2:4] == year_key
@@ -70,7 +71,9 @@ def registered_cost_center_code(value: str | None) -> str | None:
     code = normalize_cost_center_code(value)
     return code if code in COST_CENTER_LABELS else None
 
-COST_CENTER_CODE_RE = re.compile(r"^CC\d{2}[A-C]\d{2}$")
+COST_CENTER_CODE_RE = re.compile(r"^(?:CC\d{2}[A-C]\d{2}|CC2501)$")
+_LEGACY_2025_RE = re.compile(r"^CC[\s_-]?25[\s_-]?01$", re.IGNORECASE)
+_EMBEDDED_2025_RE = re.compile(r"(?<![A-Za-z0-9])CC[\s_-]?25[\s_-]?01(?![A-Za-z0-9])", re.IGNORECASE)
 _FLEXIBLE_COST_CENTER_RE = re.compile(
     r"^CC[\s_-]?(\d{2})[\s_-]?([A-C])[\s_-]?(\d{2})$",
     re.IGNORECASE,
@@ -85,6 +88,8 @@ def normalize_cost_center_code(value: str | None) -> str | None:
     """Return a canonical ``CCYYANN`` code, or ``None`` when invalid."""
 
     text = unicodedata.normalize("NFKC", value or "").strip()
+    if _LEGACY_2025_RE.fullmatch(text):
+        return "CC2501"
     match = _FLEXIBLE_COST_CENTER_RE.fullmatch(text)
     if not match:
         return None
@@ -97,5 +102,5 @@ def extract_cost_center_code(value: str | None) -> str | None:
     text = unicodedata.normalize("NFKC", value or "")
     match = _EMBEDDED_COST_CENTER_RE.search(text)
     if not match:
-        return None
+        return "CC2501" if _EMBEDDED_2025_RE.search(text) else None
     return f"CC{match.group(1)}{match.group(2).upper()}{match.group(3)}"

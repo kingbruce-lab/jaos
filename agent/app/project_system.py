@@ -281,7 +281,7 @@ def _normalize_project_no(value: str) -> str:
     if normalized is None:
         raise HTTPException(
             status_code=422,
-            detail="项目代码须使用 CC+两位年份+A/B/C+两位序号格式，例如 CC26B01",
+            detail="项目代码须使用 CC+两位年份+A/B/C+两位序号格式，例如 CC26B01；25年数据可使用 CC2501",
         )
     return normalized
 

@@ -1205,6 +1205,7 @@ const confidentialityNames: Record<string, string> = {
 };
 
 const COST_CENTER_OPTIONS = [
+  ["CC2501", "25年数据"],
   ["CC26A00", "收实缴注册资本金"],
   ["CC26A01", "薪资社保、公积金"],
   ["CC26A02", "税费及财务费用"],
@@ -1239,10 +1240,10 @@ const COST_CENTER_OPTIONS = [
   ["CC26C10", "卓总费用"],
 ] as const;
 
-const COST_CENTER_CODE_PATTERN = "CC[0-9]{2}[A-C][0-9]{2}";
+const COST_CENTER_CODE_PATTERN = "(?:CC[0-9]{2}[A-C][0-9]{2}|CC2501)";
 
 function isCostCenterCode(value: string): boolean {
-  return /^CC\d{2}[A-C]\d{2}$/.test(value.trim().toUpperCase());
+  return /^(?:CC\d{2}[A-C]\d{2}|CC2501)$/.test(value.trim().toUpperCase());
 }
 
 function confidentialityLabel(level: string): string {
@@ -9094,7 +9095,7 @@ function ProjectManagementWorkspace({
               <span>项目代码（成本中心）</span>
               <input name="project_no" required maxLength={7} pattern={COST_CENTER_CODE_PATTERN} list="cost-center-options-create" autoComplete="off" placeholder="例如：CC26B01" />
               <datalist id="cost-center-options-create">{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist>
-              <small>统一格式为 CC＋两位年份＋A/B/C＋两位序号；银行流水出现同一代码后会自动归集到本项目。</small>
+              <small>统一格式为 CC＋两位年份＋A/B/C＋两位序号；25年数据使用 CC2501。同公司银行流水出现同一代码后会自动归集到本项目。</small>
             </label>
             <div className="formGrid threeColumns">
               <label>项目名称<input name="name" required /></label>
