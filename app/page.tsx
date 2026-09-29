@@ -2,6 +2,7 @@
 
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountRoleFields, EducationWorkspace } from "./education-workspace";
+import { Icon, type IconName } from "./icons";
 
 type User = {
   id: string;
@@ -1147,18 +1148,18 @@ type Tab = "工作台" | "财务分析" | "项目管理" | "资料上传" | "合
 // 但不展示入口、不发起请求，便于未来按真实业务需要重新评估。
 const ADVANCED_GOVERNANCE_ENABLED = false;
 
-const tabs: { name: Tab; icon: string }[] = [
-  { name: "工作台", icon: "⌂" },
-  { name: "财务分析", icon: "¥" },
-  { name: "项目管理", icon: "▦" },
-  { name: "资料上传", icon: "↑" },
-  { name: "合同档案库", icon: "▣" },
-  { name: "AI资料检索", icon: "✦" },
-  { name: "智能创作", icon: "✎" },
-  { name: "入库审核", icon: "✓" },
-  { name: "资料治理", icon: "◆" },
-  { name: "系统状态", icon: "◎" },
-  { name: "账号管理", icon: "人" },
+const tabs: { name: Tab; icon: IconName }[] = [
+  { name: "工作台", icon: "home" },
+  { name: "财务分析", icon: "finance" },
+  { name: "项目管理", icon: "projects" },
+  { name: "资料上传", icon: "upload" },
+  { name: "合同档案库", icon: "contracts" },
+  { name: "AI资料检索", icon: "search" },
+  { name: "智能创作", icon: "write" },
+  { name: "入库审核", icon: "review" },
+  { name: "资料治理", icon: "governance" },
+  { name: "系统状态", icon: "status" },
+  { name: "账号管理", icon: "accounts" },
 ];
 
 const mobilePrimaryTabNames: Tab[] = ["工作台", "AI资料检索", "智能创作", "资料上传"];
@@ -5094,7 +5095,7 @@ export default function Home() {
                 className={active === item.name ? "active" : ""}
                 onClick={() => navigateToTab(item.name)}
               >
-                <span className="navIcon">{item.icon}</span>
+                <span className="navIcon"><Icon name={item.icon} /></span>
                 <span className="navLabel">{item.name}</span>
                 {item.name === "入库审核" && reviewQueue.length > 0 && (
                   <b className="navCount">{reviewQueue.length}</b>
@@ -5213,12 +5214,12 @@ export default function Home() {
               </section>
               <section className="panel quickPanel">
                 <PanelTitle eyebrow="NEXT ACTION" title="从真实工作开始" />
-                <QuickAction icon="✦" title="AI资料检索" note="按页码查看候选证据" onClick={() => setActive("AI资料检索")} />
-                <QuickAction icon="✎" title="用智库写材料" note="自由描述，自动引用内部资料" onClick={() => setActive("智能创作")} />
+                <QuickAction icon="search" title="AI资料检索" note="按页码查看候选证据" onClick={() => setActive("AI资料检索")} />
+                <QuickAction icon="write" title="用智库写材料" note="自由描述，自动引用内部资料" onClick={() => setActive("智能创作")} />
                 {["founder", "knowledge_admin", "department_owner"].includes(user.role) ? (
-                  <QuickAction icon="✓" title="处理入库资料" note={`${reviewQueue.length} 份资料等待确认`} onClick={() => setActive("入库审核")} />
+                  <QuickAction icon="review" title="处理入库资料" note={`${reviewQueue.length} 份资料等待确认`} onClick={() => setActive("入库审核")} />
                 ) : (
-                  <QuickAction icon="↑" title="上传工作资料" note="网页直接上传到授权分类" onClick={() => setActive("资料上传")} />
+                  <QuickAction icon="upload" title="上传工作资料" note="网页直接上传到授权分类" onClick={() => setActive("资料上传")} />
                 )}
               </section>
             </section>
@@ -5657,7 +5658,7 @@ export default function Home() {
                 </form>
               )}
               {ownedContractDocuments.length === 0 ? (
-                <div className="emptyState"><b>▣</b><h3>你还没有上传合同</h3><p>上传后会立即出现在这里，等待审核期间也可以整理文件夹。</p></div>
+                <div className="emptyState"><b><Icon name="contracts" size={22} /></b><h3>你还没有上传合同</h3><p>上传后会立即出现在这里，等待审核期间也可以整理文件夹。</p></div>
               ) : (
                 <div className="contractOwnList">
                   {ownedContractDocuments.map((item) => (
@@ -5759,7 +5760,7 @@ export default function Home() {
                 </div>
               )}
               {contractDocuments.length === 0 ? (
-                <div className="emptyState"><b>▣</b><h3>当前分类暂无已审核合同</h3><p>新上传合同审核通过后会显示在这里。</p></div>
+                <div className="emptyState"><b><Icon name="contracts" size={22} /></b><h3>当前分类暂无已审核合同</h3><p>新上传合同审核通过后会显示在这里。</p></div>
               ) : (
                 <div className="contractFolderGroups">
                   {contractDocumentGroups.map((group) => (
@@ -5814,7 +5815,7 @@ export default function Home() {
             </section>
             <section className="panel answerPanel">
               {!searchResponse ? (
-                <div className="emptyState"><b>✦</b><h3>答案将显示在这里</h3><p>每条结果都会标明候选/当前状态。</p></div>
+                <div className="emptyState"><b><Icon name="search" size={22} /></b><h3>答案将显示在这里</h3><p>每条结果都会标明候选/当前状态。</p></div>
               ) : (
                 <div ref={searchResultRef}>
                   <FullAnswer
@@ -5900,7 +5901,7 @@ export default function Home() {
                 </div>
               ) : !writingResponse ? (
                 <div className="emptyState">
-                  <b>✎</b><h3>从一句自然语言开始</h3>
+                  <b><Icon name="write" size={22} /></b><h3>从一句自然语言开始</h3>
                   <p>可以写方案、汇报、总结、课程材料或 PPT 大纲，具体结构由你的要求决定。</p>
                 </div>
               ) : (
@@ -6166,13 +6167,13 @@ export default function Home() {
             <section className="panel evolutionResult">
               {!selectedEvolutionArtifact ? (
                 <div className="emptyState evolutionEmpty">
-                  <b>↻</b>
+                  <b><Icon name="refresh" size={22} /></b>
                   <h3>选择一项维护资料</h3>
                   <p>登记现行公司介绍后，系统会按周期保存带页码的更新候选。</p>
                 </div>
               ) : !evolutionRun ? (
                 <div className="emptyState evolutionEmpty">
-                  <b>✓</b>
+                  <b><Icon name="review" size={22} /></b>
                   <h3>{selectedEvolutionArtifact.name}</h3>
                   <p>当前截止 {selectedEvolutionArtifact.cutoff_date}，下次计划复核 {selectedEvolutionArtifact.next_review_at}。尚无复核批次。</p>
                 </div>
@@ -7419,7 +7420,7 @@ export default function Home() {
             aria-current={active === item.name ? "page" : undefined}
             onClick={() => navigateToTab(item.name)}
           >
-            <span className="mobileTabIcon" aria-hidden="true">{item.icon}</span>
+            <span className="mobileTabIcon" aria-hidden="true"><Icon name={item.icon} size={20} /></span>
             <span>{item.name === "AI资料检索" ? "资料检索" : item.name}</span>
           </button>
         ))}
@@ -7430,7 +7431,7 @@ export default function Home() {
           aria-controls="mobile-more-sheet"
           onClick={() => setMobileMenuOpen(true)}
         >
-          <span className="mobileTabIcon" aria-hidden="true">•••</span>
+          <span className="mobileTabIcon" aria-hidden="true"><Icon name="more" size={20} /></span>
           <span>更多</span>
         </button>
       </nav>
@@ -7472,7 +7473,7 @@ export default function Home() {
                     aria-current={active === item.name ? "page" : undefined}
                     onClick={() => navigateToTab(item.name)}
                   >
-                    <span className="navIcon" aria-hidden="true">{item.icon}</span>
+                    <span className="navIcon" aria-hidden="true"><Icon name={item.icon} size={22} /></span>
                     <span>{item.name}</span>
                     {item.name === "入库审核" && reviewQueue.length > 0 && <b>{reviewQueue.length}</b>}
                   </button>
@@ -8265,7 +8266,7 @@ function FinanceWorkspace({
                     </article>
                   );
                 })}
-                {!costCenterLedger.items.length && <div className="emptyState compact"><b>¥</b><h3>该编码暂无已确认流水</h3><p>上传、补齐编码并确认后会自动显示在这里。</p></div>}
+                {!costCenterLedger.items.length && <div className="emptyState compact"><b><Icon name="finance" size={22} /></b><h3>该编码暂无已确认流水</h3><p>上传、补齐编码并确认后会自动显示在这里。</p></div>}
               </div>
             </>
           )}
@@ -8605,7 +8606,7 @@ function FinanceWorkspace({
           <PanelTitle eyebrow="CASHFLOW TREND" title="近 26 周收支与净流入趋势" />
           <p className="financeTrendExplanation">红柱为收入，绿柱为支出；右侧显示当周净流入或净流出，不是收入金额。</p>
           {(dashboard?.weekly.length || 0) === 0 ? (
-            <div className="emptyState compact"><b>¥</b><h3>等待首批银行流水</h3><p>上传并确认后自动形成周度收支趋势。</p></div>
+            <div className="emptyState compact"><b><Icon name="finance" size={22} /></b><h3>等待首批银行流水</h3><p>上传并确认后自动形成周度收支趋势。</p></div>
           ) : (
             <div className="financeTrendChart">
               {dashboard?.weekly.map((item) => {
@@ -9152,13 +9153,13 @@ function ProjectManagementWorkspace({
                 </div>
               </section>
             ))}
-            {!registry.items.length && <div className="emptyState compact"><b>▦</b><h3>还没有项目</h3><p>由业务账号建立第一条立项。</p></div>}
+            {!registry.items.length && <div className="emptyState compact"><b><Icon name="projects" size={22} /></b><h3>还没有项目</h3><p>由业务账号建立第一条立项。</p></div>}
           </div>
         </section>
 
         <section className="panel pmProjectDetailPanel" ref={projectDetailRef}>
           {!selected ? (
-            <div className="emptyState"><b>▦</b><h3>选择一个项目查看全貌</h3><p>项目资料、资金计划、进度与复核状态会集中显示。</p></div>
+            <div className="emptyState"><b><Icon name="projects" size={22} /></b><h3>选择一个项目查看全貌</h3><p>项目资料、资金计划、进度与复核状态会集中显示。</p></div>
           ) : (
             <>
               <header className="pmDetailHeader">
@@ -9668,10 +9669,10 @@ function ProjectRows({
   );
 }
 
-function QuickAction({ icon, title, note, onClick }: { icon: string; title: string; note: string; onClick: () => void }) {
+function QuickAction({ icon, title, note, onClick }: { icon: IconName; title: string; note: string; onClick: () => void }) {
   return (
     <button type="button" className="quickAction" onClick={onClick}>
-      <span>{icon}</span><div><strong>{title}</strong><small>{note}</small></div><b>→</b>
+      <span><Icon name={icon} /></span><div><strong>{title}</strong><small>{note}</small></div><b>→</b>
     </button>
   );
 }
