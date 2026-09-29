@@ -8,7 +8,7 @@
 .educationMetrics article { padding: 18px; background: #f7fafc; border: 1px solid #e0e9ef; border-radius: 12px; min-width: 0; }
 .educationMetrics span, .educationMetrics strong { display: block; overflow-wrap: anywhere; }
 .educationMetrics span { font-size: 12px; color: #728297; margin-bottom: 10px; }
-.educationMetrics strong { font-size: 21px; color: #173d58; }
+.educationMetrics strong { font-size: 22px; color: #173d58; }
 .educationStickyMetrics { position: sticky; top: 0; z-index: 20; grid-template-columns: repeat(4,minmax(170px,1fr)); margin: 0 -10px; padding: 10px; border: 1px solid rgba(209,222,232,.9); border-radius: 16px; background: rgba(245,248,251,.96); box-shadow: 0 10px 28px rgba(21,56,82,.12); backdrop-filter: blur(12px); }
 .educationStickyMetrics article { background: #fff; box-shadow: 0 3px 12px rgba(20,55,80,.05); }
 .educationSecondaryMetrics { margin-top: 14px; }
@@ -60,7 +60,7 @@
 .educationRoster p, .educationStudentRead p { overflow-wrap: anywhere; white-space: pre-wrap; }
 .educationError { padding: 16px; border-radius: 10px; background: #fff0f2; color: #b71c32; }
 .accountPolicyForm label { display: grid; gap: 4px; min-width: 0; font-size: 12px; }
-@media(max-width:760px) {
+@media (max-width: 760px) {
   .educationHeader { flex-direction: column; align-items: stretch; }
   .educationMetrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .educationMetrics strong { font-size: 17px; }
@@ -96,7 +96,7 @@
 .educationLedgerCard { display: grid; gap: 7px; padding: 14px; margin-bottom: 10px; border: 1px solid #dce5ed; border-radius: 10px; background: #f8fafc; overflow-wrap: anywhere; }
 .educationLedgerCard span { color: #63788c; font-size: 13px; line-height: 1.55; }
 .educationLedgerCard button { justify-self: start; }
-@media(max-width:900px) {
+@media (max-width: 1100px) {
   .educationLedgerIntro { align-items: stretch; flex-direction: column; }
   .educationLedgerFilters, .educationLedgerSplit { grid-template-columns: 1fr; }
 }
@@ -123,26 +123,26 @@
 .educationCalendarDay { position: relative; min-height: 154px; display: grid; grid-template-rows: 1fr auto; border: 1px solid #d8e2ec; border-top: 4px solid #2563eb; border-radius: 11px; background: #fff; color: #23435c; overflow: hidden; }
 .educationDayOpen { min-width: 0; display: grid; align-content: start; gap: 6px; padding: 11px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; font: inherit; }
 .educationCalendarDay:hover, .educationCalendarDay.selected { border-color: #2563eb; background: #eef6ff; box-shadow: 0 7px 18px rgba(37,99,235,.1); transform: translateY(-1px); }
-.educationDayOpen span { width: max-content; padding: 3px 8px; border-radius: 999px; background: #e7efff; color: #2457a4; font-size: 11px; }
+.educationDayOpen span { width: max-content; padding: 3px 8px; border-radius: 999px; background: #e7efff; color: #2457a4; font-size: 12px; }
 .educationCalendarDay.practice { border-top-color: #14936f; }
 .educationCalendarDay.rest { border-top-color: #94a3b8; }
 .educationCalendarDay.practice .educationDayOpen span { background: #e4f7f0; color: #147458; }
 .educationCalendarDay.rest .educationDayOpen span { background: #eef1f4; color: #5e6c7a; }
 .educationDayOpen b { overflow-wrap: anywhere; font-size: 12px; }
-.educationDayOpen small { color: #667b8f; font-size: 10px; }
+.educationDayOpen small { color: #667b8f; font-size: 12px; }
 .educationDayMarks { display: flex; gap: 6px; padding: 0 10px 10px; }
 .educationDayMarks button { width: 30px; height: 28px; border: 1px solid #efc9cd; border-radius: 8px; color: #b4a0a3; background: #fff7f8; cursor: pointer; font-weight: 900; }
 .educationDayMarks button:disabled { cursor: not-allowed; opacity: .55; }
 .educationDayMarks button.active { border-color: #dc2637; color: #fff; background: #dc2637; box-shadow: 0 4px 10px rgba(220,38,55,.2); }
 .educationMonthlySummaryCard { min-height: 154px; display: grid; align-content: center; gap: 8px; padding: 14px; border: 2px dashed #c99430; border-radius: 11px; color: #76500e; background: #fff9e9; text-align: left; cursor: pointer; }
 .educationMonthlySummaryCard.complete { border-style: solid; border-color: #2b8c65; color: #22684d; background: #edf9f4; }
-.educationMonthlySummaryCard span, .educationMonthlySummaryCard small { font-size: 11px; }
+.educationMonthlySummaryCard span, .educationMonthlySummaryCard small { font-size: 12px; }
 .educationMonthlySummaryCard small { color: #7c6b4d; }
 .educationDayEditor { margin-top: 18px; padding: 20px; border: 1px solid #9fc2df; border-radius: 16px; background: #fff; box-shadow: 0 14px 32px rgba(24,75,112,.11); }
 .educationReportOverlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(10,24,38,.62); backdrop-filter: blur(3px); }
 .educationReportDialog { width: min(1080px,100%); max-height: calc(100vh - 48px); margin: 0; overflow-y: auto; overscroll-behavior: contain; box-shadow: 0 28px 80px rgba(6,20,34,.32); }
 .educationDayEditor > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 14px; border-bottom: 1px solid #dbe8f1; }
-.educationDayEditor h4 { margin: 4px 0 0; color: #153b61; font-size: 21px; }
+.educationDayEditor h4 { margin: 4px 0 0; color: #153b61; font-size: 22px; }
 .educationDayEditor header span { color: #2870a4; font-weight: 700; }
 .educationDayEditor header button { padding: 8px 13px; border: 1px solid #d6e2eb; border-radius: 8px; background: #f7fafc; cursor: pointer; }
 .educationDayEditor textarea { min-height: 112px; line-height: 1.65; }
@@ -173,7 +173,7 @@
 .educationLogFilters label { display: grid; gap: 5px; color: #52667a; font-size: 13px; }
 .educationLogFilters select { min-width: 190px; padding: 9px; border: 1px solid #d9e3eb; border-radius: 8px; background: #fff; }
 .educationMissingLogs { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; padding: 11px; border-left: 4px solid #e49a18; border-radius: 8px; background: #fff8e8; color: #76520f; }
-@media(max-width:720px) {
+@media (max-width: 760px) {
   .educationStickyMetrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .educationDayFlagGrid { grid-template-columns: 1fr; }
   .educationCustomAllocationRow { grid-template-columns: 1fr; }
