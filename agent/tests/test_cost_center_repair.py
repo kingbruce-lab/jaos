@@ -95,3 +95,20 @@ def test_missing_project_unlinks_without_changing_bank_code(db):
     migration.repair(db, apply=True)
     assert db.get(Transaction, "expense").pm_project_id is None
     assert db.get(Transaction, "expense").project_reference == "Cc26B05"
+
+
+def test_company_scope_preserves_other_company_bank_records(db):
+    db.add(Transaction(id="foreign", project_reference="CC26B06", pm_project_id=None,
+                       entity_id="other", expense=29081.01, summary="other company"))
+    db.commit()
+    migration.repair(db, apply=True, entity_id="ja")
+    db.commit()
+    assert db.get(Transaction, "foreign").pm_project_id is None
+    assert db.get(Transaction, "expense").pm_project_id == "support"
+
+
+def test_company_scope_rejects_existing_cross_company_link(db):
+    db.get(Transaction, "expense").entity_id = "other"
+    db.flush()
+    with pytest.raises(ValueError, match="跨公司"):
+        migration.repair(db, apply=True, entity_id="ja")

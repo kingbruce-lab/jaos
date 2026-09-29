@@ -107,6 +107,7 @@ try {
     }
 
     $singleFileCopies = @(
+        @{ Source = "agent\repair_cost_centers_20260929.py"; Destination = "agent\repair_cost_centers_20260929.py" },
         @{ Source = "agent\.dockerignore"; Destination = "agent\.dockerignore" },
         @{ Source = "agent\Dockerfile"; Destination = "agent\Dockerfile" },
         @{ Source = "agent\requirements.txt"; Destination = "agent\requirements.txt" },

@@ -40,9 +40,10 @@ class BankTransaction(RepairBase):
 EXPECTED = {"CC26B05": "后勤保障项目", "CC26B06": "三角洲国际战队培训"}
 
 
-def repair(db, *, apply=False):
+def repair(db, *, apply=False, entity_id=None):
     projects = db.scalars(select(ManagedProject).with_for_update()).all()
-    relevant = [p for p in projects if normalize_cost_center_code(p.project_no) in EXPECTED]
+    relevant = [p for p in projects if normalize_cost_center_code(p.project_no) in EXPECTED
+                and (entity_id is None or p.entity_id == entity_id)]
     renames = []
     for p in relevant:
         if p.name not in EXPECTED.values():
@@ -58,6 +59,10 @@ def repair(db, *, apply=False):
     affected_ids = {p.id for p in relevant}
     links = []
     for t in db.scalars(select(BankTransaction).with_for_update()).all():
+        if entity_id is not None and t.entity_id != entity_id:
+            if t.pm_project_id in affected_ids:
+                raise ValueError(f"流水 {t.id} 跨公司关联待修复项目，需要人工核对")
+            continue
         code = normalize_cost_center_code(t.project_reference)
         if code not in EXPECTED and t.pm_project_id not in affected_ids:
             continue
@@ -87,6 +92,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--journal", type=Path)
+    parser.add_argument("--entity-id", help="Only repair this company's projects and transactions")
     args = parser.parse_args()
     if args.apply and not args.journal:
         parser.error("--apply requires --journal for the before/after audit record")
@@ -95,13 +101,13 @@ def main():
         parser.error("Set DATABASE_URL explicitly to the database to inspect/repair")
     SessionLocal = sessionmaker(bind=create_engine(database_url), autoflush=False)
     with SessionLocal() as db:
-        plan = repair(db)
+        plan = repair(db, entity_id=args.entity_id)
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         if args.apply:
             # Exclusive create: never overwrite an earlier migration journal.
             with args.journal.open("x", encoding="utf-8") as stream:
                 json.dump({"status": "planned", **plan}, stream, ensure_ascii=False, indent=2)
-            applied = repair(db, apply=True)
+            applied = repair(db, apply=True, entity_id=args.entity_id)
             if applied != plan:
                 raise RuntimeError("数据已变化，事务回滚，请重新预览")
             db.commit()

@@ -772,7 +772,9 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
     tmp_path, monkeypatch
 ) -> None:
     labels = {item["code"]: item["label"] for item in cost_center_catalog(2026)}
-    assert len(labels) == 25
+    assert len(labels) == 32
+    assert labels["CC26B05"] == "后勤保障项目"
+    assert labels["CC26B06"] == "三角洲国际战队培训"
     assert labels["CC26A10"] == "出借款"
     assert labels["CC26A11"] == "短信验证"
     assert labels["CC26C04"] == "西安回款"
