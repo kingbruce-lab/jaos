@@ -1038,10 +1038,10 @@ input, textarea { color: var(--ink); }
 .loginBrand img { position: relative; z-index: 1; width: clamp(150px, 22vw, 240px); height: auto; object-fit: contain; object-position: left center; filter: drop-shadow(0 0 2px rgba(255, 255, 255, .72)) drop-shadow(0 18px 34px rgba(0, 0, 0, .28)); }
 .loginBrandCopy { position: relative; z-index: 1; max-width: 690px; }
 .loginBrandCopy > span { color: #ff666e; font-weight: 800; font-size: 12px; letter-spacing: 1.2px; }
-.loginBrandCopy h1 { margin: 18px 0; font-size: clamp(34px, 4.2vw, 62px); line-height: 1.15; letter-spacing: -2px; }
+.loginBrandCopy h1 { margin: 18px 0; font-size: clamp(32px, 3.4vw, 56px); line-height: 1.15; letter-spacing: -2px; }
 .loginBrandCopy p { color: #aeb7c8; }
 .loginCard { background: var(--white); color: var(--ink); padding: clamp(40px, 7vw, 96px); display: flex; flex-direction: column; justify-content: center; gap: 30px; }
-.loginCard h2 { margin: 0; font-size: 28px; }
+.loginCard h2 { margin: 0; font-size: clamp(22px, 2vw, 28px); }
 .loginHint { color: var(--muted); font-size: 13px; line-height: 1.7; }
 .loginCard form { display: grid; gap: 18px; }
 .loginCard label, .briefForm label, .writingForm label { display: grid; gap: 8px; font-size: 12px; font-weight: 700; color: #4f586b; }
