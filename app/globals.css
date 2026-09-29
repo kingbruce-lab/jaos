@@ -1171,7 +1171,7 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .currentBadge { color: var(--green); background: var(--green-soft); }
 .levelBadge { color: #9b3340; background: #fbeaec; }
 .closingBadge { color: #9b3340; background: #fbeaec; }
-.emptyRows { padding: 30px; color: #9ca3af; text-align: center; font-size: 12px; }
+.emptyRows { padding: 30px; color: #7b8595; text-align: center; font-size: 13px; }
 .quickAction { width: 100%; display: flex; align-items: center; text-align: left; gap: 11px; border: 1px solid #eceef2; background: #fafbfc; padding: 12px; border-radius: 8px; margin-top: 9px; }
 .quickAction:hover { border-color: #d8dce3; background: var(--white); }
 .quickAction > span { width: 32px; height: 32px; display: grid; place-items: center; color: var(--red); background: var(--red-soft); border-radius: 7px; font-size: 16px; }
@@ -1196,10 +1196,12 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .searchPolicy { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 18px; }
 .searchPolicy span { padding: 6px 8px; color: #55728e; background: var(--blue-soft); border-radius: 5px; font-size: 12px; }
 .answerPanel, .proposalResult { min-width: 0; }
-.emptyState { min-height: 500px; display: grid; place-content: center; justify-items: center; text-align: center; color: #9ca3af; }
+.emptyState { min-height: 320px; display: grid; place-content: center; justify-items: center; padding: 28px 16px; text-align: center; color: #7b8595; }
+/* List panels size to their content when empty instead of holding a tall blank area. */
+.contractOwnLibrary .emptyState, .contractDocuments .emptyState, .contractResults .emptyState { min-height: 180px; }
 .emptyState b { width: 48px; height: 48px; display: grid; place-items: center; color: var(--red); background: var(--red-soft); border-radius: 50%; font-size: 20px; }
-.emptyState h3 { margin: 14px 0 4px; color: #5f6675; }
-.emptyState p { font-size: 12px; }
+.emptyState h3 { margin: 14px 0 4px; color: #4f5868; }
+.emptyState p { max-width: 36em; font-size: 13px; line-height: 1.6; }
 .answerSummary { padding: 4px 0 18px; border-bottom: 1px solid var(--line); }
 .answerSummary > span { color: var(--red); font-size: 12px; font-weight: 800; letter-spacing: 0.8px; }
 .answerSummary h3 { margin: 8px 0 0; font-size: 18px; line-height: 1.55; white-space: pre-line; }
@@ -1781,7 +1783,8 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .contractOwnHeader > p { max-width: 680px; margin: 0; color: #68758a; line-height: 1.65; }
 .contractFolderCreate { margin-top: 18px; padding: 15px; display: grid; grid-template-columns: minmax(180px, .55fr) minmax(260px, 1.45fr) auto; align-items: end; gap: 12px; border: 1px solid #dce5ee; border-radius: 10px; background: var(--surface-soft); }
 .contractFolderCreate label { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 7px; color: #4f5d72; font-weight: 700; }
-.contractFolderCreate input, .contractFolderCreate select, .contractOwnActions select { min-height: 44px; padding: 0 12px; border: 1px solid #d5dee8; border-radius: 8px; color: #1f2a3b; background: var(--white); }
+.contractFolderCreate button { min-height: 44px; padding: 0 16px; font-size: 14px; }
+.contractFolderCreate input, .contractFolderCreate select, .contractOwnActions select { min-height: 44px; padding: 0 12px; font-size: 14px; font-weight: 500; border: 1px solid #d5dee8; border-radius: 8px; color: #1f2a3b; background: var(--white); }
 .contractOwnList { margin-top: 18px; display: grid; gap: 10px; }
 .contractOwnList article { padding: 15px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; border: 1px solid #e1e7ee; border-radius: 10px; background: var(--white); }
 .contractOwnIdentity { min-width: 0; display: grid; gap: 5px; }
