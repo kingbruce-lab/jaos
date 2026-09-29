@@ -1817,7 +1817,7 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   .navIcon { font-size: 17px; }
   .content { margin-left: 84px; width: calc(100% - 84px); }
   .heroCopy { width: 90%; }
-  .evidenceVisual { opacity: .35; }
+  .evidenceVisual { display: none; }
   .stats { grid-template-columns: repeat(2, 1fr); }
   .workspaceGrid { grid-template-columns: minmax(0, 1fr); }
   .uploadLayout { grid-template-columns: minmax(0, 1fr); }
