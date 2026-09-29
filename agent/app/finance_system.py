@@ -1325,6 +1325,7 @@ def _project_reference_from_row(
 def _project_ids_by_reference(
     db: Session,
     references: list[str | None],
+    entity_id: str,
 ) -> dict[str, str]:
     wanted = {
         item.strip().casefold()
@@ -1334,7 +1335,10 @@ def _project_ids_by_reference(
     if not wanted:
         return {}
     projects = db.scalars(
-        select(ManagedProject).where(ManagedProject.status != "deleted")
+        select(ManagedProject).where(
+            ManagedProject.status != "deleted",
+            ManagedProject.entity_id == entity_id,
+        )
     ).all()
     return {
         project.project_no.casefold(): project.id
@@ -1403,13 +1407,16 @@ def _refresh_cost_center_project_links(
             item.project_reference = reference
             reference_updates += 1
 
-    project_ids = _project_ids_by_reference(db, references)
+    project_ids_by_entity = {
+        company_id: _project_ids_by_reference(db, references, company_id)
+        for company_id in {item.entity_id for item in transactions}
+    }
     project_link_updates = 0
     for item in transactions:
         reference = detected_by_id.get(item.id)
         if not reference:
             continue
-        project_id = project_ids.get(reference.casefold())
+        project_id = project_ids_by_entity[item.entity_id].get(reference.casefold())
         if project_id:
             item.pm_project_id = project_id
             project_link_updates += 1
@@ -1641,7 +1648,7 @@ def _merge_statement_annotations(
     project_reference_updates = 0
     project_link_updates = 0
     project_ids = _project_ids_by_reference(
-        db, [row.get("project_reference") for row in rows]
+        db, [row.get("project_reference") for row in rows], batch.entity_id
     )
     for row in rows:
         fingerprint = _transaction_fingerprint(batch.account_id, row)
@@ -2118,7 +2125,7 @@ async def upload_statement(
     inserted = 0
     seen: set[str] = set()
     project_ids = _project_ids_by_reference(
-        db, [row.get("project_reference") for row in rows]
+        db, [row.get("project_reference") for row in rows], entity.id
     )
     for row in rows:
         fingerprint = _transaction_fingerprint(account.id, row)
@@ -2660,7 +2667,7 @@ def update_transaction(
         item.project_reference = normalized_reference
         if item.project_reference:
             matched_project = _project_ids_by_reference(
-                db, [item.project_reference]
+                db, [item.project_reference], item.entity_id
             ).get(item.project_reference.casefold())
             if "pm_project_id" not in updated_fields:
                 item.pm_project_id = matched_project
