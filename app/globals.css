@@ -29,7 +29,7 @@
 
 /* Finance and project systems: executive-grade, information-dense without
    looking like a generic admin table. */
-.financeWorkspace, .projectManagementWorkspace { display: grid; gap: 18px; }
+.financeWorkspace, .projectManagementWorkspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
 .financeEntitySwitcher { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 18px; border: 1px solid var(--line-strong); border-radius: 14px; background: linear-gradient(135deg, #fff 0%, var(--surface-soft) 100%); box-shadow: var(--shadow-card); }
 .financeEntitySwitcherCopy { min-width: 160px; }
 .financeEntitySwitcherCopy p,
@@ -132,7 +132,7 @@
 .financeHealthGrid article.financeHealthFreshness.stale::before { background: var(--red); }
 .financeHealthGrid span, .financeHealthGrid strong, .financeHealthGrid small { display: block; }
 .financeHealthGrid span { color: #68778b; font-size: 14px; font-weight: 750; }
-.financeHealthGrid strong { margin: 12px 0 9px; color: var(--ink-strong); font-size: clamp(23px, 2vw, 30px); line-height: 1.15; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.financeHealthGrid strong { margin: 12px 0 9px; color: var(--ink-strong); font-size: clamp(22px, 1.7vw, 30px); line-height: 1.15; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .financeHealthGrid small { color: #8995a5; font-size: 12px; line-height: 1.5; }
 .financeInternalTransferPanel { padding: 28px; }
 .financeTransferPanelHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; padding-bottom: 22px; border-bottom: 1px solid #e6ebf0; }
@@ -954,6 +954,7 @@
 
 @media (max-width: 1100px) {
   .financeDashboardGrid, .pmMainGrid { grid-template-columns: 1fr; }
+  .financeHealthGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .financeWeeklyInsights, .financeMonthlyInsights { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .financeWeeklyInsights .financeAnomalyPanel, .financeMonthlyInsights .financeAnomalyPanel { grid-column: 1 / -1; min-height: auto; }
   .financeOperationsGrid, .pmActionGrid { grid-template-columns: 1fr; }
@@ -3080,7 +3081,7 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   }
 
   .financeEntitySwitcherButtons button {
-    flex: 0 0 min(76vw, 260px);
+    flex: 0 0 min(42vw, 180px);
     min-height: 56px;
     scroll-snap-align: start;
   }
@@ -3118,8 +3119,8 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
 
   .financeMetricGrid,
   .financeMonthlyGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 9px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 
   .financeMetricGrid article,
@@ -3134,6 +3135,17 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
     grid-column: 1 / -1;
   }
 
+  /* Amounts read as one figure: each metric is a single row with the label
+     on the left and the full amount on the right, never broken mid-number. */
+  .financeMetricGrid article,
+  .financeMonthlyGrid article {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 12px;
+    min-height: 0;
+  }
+
   .financeMetricGrid span,
   .financeMonthlyGrid span {
     font-size: 13px;
@@ -3141,9 +3153,18 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
 
   .financeMetricGrid strong,
   .financeMonthlyGrid strong {
-    margin-block: 9px 7px;
-    font-size: clamp(22px, 6.7vw, 27px);
-    overflow-wrap: anywhere;
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    margin: 0;
+    font-size: clamp(19px, 5.6vw, 23px);
+    white-space: nowrap;
+    text-align: right;
+  }
+
+  .financeMetricGrid small,
+  .financeMonthlyGrid small {
+    grid-column: 1;
+    margin-top: 4px;
   }
 
   .financeMetricGrid small,
@@ -3190,12 +3211,26 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
   }
 
   .financeHealthGrid article {
-    min-height: 112px;
-    padding: 16px 17px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 12px;
+    min-height: 0;
+    padding: 14px 16px;
   }
 
   .financeHealthGrid strong {
-    font-size: 24px;
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+    font-size: clamp(18px, 5.2vw, 22px);
+    white-space: nowrap;
+    text-align: right;
+  }
+
+  .financeHealthGrid small {
+    grid-column: 1 / -1;
+    margin-top: 6px;
   }
 
   .financeTransferSummary {
@@ -3298,8 +3333,15 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
 
   .trendRow {
     grid-template-columns: 58px minmax(0, 1fr);
-    gap: 8px;
+    gap: 4px 8px;
     font-size: 12px;
+  }
+
+  .trendNetValue {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: 6px;
   }
 
   .financeBatchList article {
@@ -3704,8 +3746,6 @@ footer { color: #a2a8b3; padding: 18px 2px 0; display: flex; justify-content: sp
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .financeMetricGrid,
-  .financeMonthlyGrid,
   .pmFinancialSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
