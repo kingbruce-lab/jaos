@@ -661,6 +661,26 @@ def test_cost_center_in_statement_auto_links_confirmed_project_cash(
         assert project_payload["bank_received"] == "12000.00"
         assert project_payload["bank_spent"] == "3500.00"
         assert project_payload["bank_transaction_count"] == 2
+        # Another company can carry the same source code without owning this project.
+        other = entities[1]
+        other_upload = client.post(
+            "/v1/finance/statements/upload",
+            data={"entity_id": other["id"], "bank_name": "其他公司银行",
+                  "account_name": "基本户", "account_number": "6222000099990002"},
+            files={"file": ("其他公司流水.xlsx", _project_code_xlsx(),
+                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert other_upload.status_code == 200
+        other_rows = db.scalars(select(BankTransaction).where(
+            BankTransaction.batch_id == other_upload.json()["id"]
+        )).all()
+        assert len(other_rows) == 2
+        assert all(row.pm_project_id is None for row in other_rows)
+        # The global reconciliation path must also preserve the company boundary.
+        finance_system._refresh_cost_center_project_links(db)
+        db.flush()
+        assert all(row.pm_project_id is None for row in other_rows)
+        assert finance_system._project_ids_by_reference(db, ["CC26B05"], other["id"]) == {}
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -772,7 +792,9 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
     tmp_path, monkeypatch
 ) -> None:
     labels = {item["code"]: item["label"] for item in cost_center_catalog(2026)}
-    assert len(labels) == 25
+    assert len(labels) == 32
+    assert labels["CC26B05"] == "后勤保障项目"
+    assert labels["CC26B06"] == "三角洲国际战队培训"
     assert labels["CC26A10"] == "出借款"
     assert labels["CC26A11"] == "短信验证"
     assert labels["CC26C04"] == "西安回款"
