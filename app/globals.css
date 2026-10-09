@@ -1088,6 +1088,10 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .primaryButton { border: 0; color: #fff; background: var(--red); border-radius: 8px; padding: 11px 17px; font-weight: 800; box-shadow: 0 7px 16px rgba(217, 30, 43, .16); }
 .globalError { margin: -6px 0 16px; padding: 11px 14px; color: #a9232d; background: #fff0f1; border: 1px solid #f3c8cc; border-radius: 8px; font-size: 12px; display: flex; justify-content: space-between; }
 .globalError button { border: 0; background: transparent; color: inherit; }
+.pmCashflowEditor .businessForm { min-width: 230px; max-width: 360px; padding: 14px; white-space: normal; gap: 10px; }
+.pmCashflowEditorActions { display: flex; gap: 10px; flex-wrap: wrap; }
+.pmCashflowEditor [role="status"] { color: #16734d; font-size: 13px; }
+@media (max-width: 760px) { .pmCashflowEditor .businessForm { min-width: 0; max-width: none; width: 100%; } }
 
 .hero { min-height: 316px; overflow: hidden; position: relative; color: #fff; background: linear-gradient(120deg, #172945, #111722 57%, #2c171c); border-radius: 16px; padding: 40px 42px; display: flex; box-shadow: 0 15px 40px rgba(17, 23, 39, .1); }
 .hero::before { content: ""; position: absolute; inset: 0 0 auto; height: 3px; background: linear-gradient(90deg, var(--blue) 0 25%, var(--red) 25% 50%, var(--green) 50% 75%, var(--orange) 75%); }

@@ -2,6 +2,7 @@
 
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountRoleFields, EducationWorkspace } from "./education-workspace";
+import { ProjectCashflowEditor, type CashflowPlanValues } from "./project-cashflow-editor";
 
 type User = {
   id: string;
@@ -4139,6 +4140,14 @@ export default function Home() {
     }
   }
 
+  async function handleProjectCashflowUpdate(cashflowId: string, values: CashflowPlanValues) {
+    if (!token || !selectedManagedProject) throw new Error("登录已失效，请重新登录后修改");
+    await kbFetch(`v1/pm/cashflow/${cashflowId}`, {
+      method: "PATCH", body: JSON.stringify(values),
+    }, token);
+    await refreshManagedProjects(selectedManagedProject.id);
+  }
+
   async function handleProjectCashflowActual(
     event: FormEvent<HTMLFormElement>,
     cashflowId: string,
@@ -5308,6 +5317,7 @@ export default function Home() {
             onArchive={handleProjectArchive}
             onSelect={handleManagedProjectSelect}
             onCashflow={handleProjectCashflow}
+            onCashflowUpdate={handleProjectCashflowUpdate}
             onCashflowActual={handleProjectCashflowActual}
             onSubmitInitiation={handleSubmitInitiation}
             onProgress={handleProjectProgress}
@@ -8987,6 +8997,7 @@ function ProjectManagementWorkspace({
   onArchive,
   onSelect,
   onCashflow,
+  onCashflowUpdate,
   onCashflowActual,
   onSubmitInitiation,
   onProgress,
@@ -9016,6 +9027,7 @@ function ProjectManagementWorkspace({
   onArchive: (action: "archive" | "restore") => Promise<void>;
   onSelect: (projectId: string) => Promise<void>;
   onCashflow: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onCashflowUpdate: (id: string, values: CashflowPlanValues) => Promise<void>;
   onCashflowActual: (event: FormEvent<HTMLFormElement>, cashflowId: string) => Promise<void>;
   onSubmitInitiation: () => Promise<void>;
   onProgress: (event: FormEvent<HTMLFormElement>) => Promise<void>;
@@ -9026,6 +9038,7 @@ function ProjectManagementWorkspace({
   const isOwner = Boolean(selected && selected.manager_user_id === user.id && user.organization_role === "business");
   const isCollaborator = Boolean(selected?.collaborators?.some((item) => item.user_id === user.id));
   const canEditContent = isOwner || isCollaborator;
+  const canEditCashflow = canEditContent && Boolean(selected && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status));
   const reviewStage = selected?.status === "initiation_review" ? "initiation" : selected?.status === "closing_review" ? "closing" : null;
   const reviewRows = reviewStage === "initiation" ? selected?.initiation_reviews : selected?.closing_reviews;
   const slot = ["found", "founder"].includes(user.username.toLowerCase()) ? "founder" : "";
@@ -9416,11 +9429,11 @@ function ProjectManagementWorkspace({
 
               <section className="pmCashflowSection">
                 <div className="sectionHeading"><div><span>CASHFLOW PLAN</span><h3>应收应付与资金周期</h3></div></div>
-                <div className="tableScroll desktopDataTable pmCashflowTable"><table className="businessTable"><thead><tr><th>方向</th><th>计划日期</th><th>金额</th><th>对方</th><th>累计现金</th><th>实际收付</th></tr></thead><tbody>
+                <div className="tableScroll desktopDataTable pmCashflowTable"><table className="businessTable"><thead><tr><th>方向</th><th>计划日期</th><th>金额</th><th>对方</th><th>累计现金</th><th>实际收付</th>{canEditCashflow && <th>操作</th>}</tr></thead><tbody>
                   {(selected.cashflow_plans || []).map((item) => (
-                    <tr key={item.id}><td>{item.direction === "receivable" ? "应收" : "应付"}</td><td>{item.due_date}</td><td>{formatMoney(item.amount)}</td><td>{item.counterparty || "—"}</td><td className={Number(item.running_cash) >= 0 ? "positive" : "negative"}>{formatMoney(item.running_cash)}</td><td>{canFinanceConfirm ? <form className="actualForm" onSubmit={(event) => void onCashflowActual(event, item.id)}><input name="actual_amount" type="number" min="0" step="0.01" defaultValue={Number(item.actual_amount || 0)} /><input name="actual_date" type="date" defaultValue={item.actual_date || ""} /><button>确认</button></form> : item.actual_date ? `${item.actual_date} · ${formatMoney(item.actual_amount)}` : "未发生"}</td></tr>
+                    <tr key={item.id}><td>{item.direction === "receivable" ? "应收" : "应付"}</td><td>{item.due_date}</td><td>{formatMoney(item.amount)}</td><td>{item.counterparty || "—"}</td><td className={Number(item.running_cash) >= 0 ? "positive" : "negative"}>{formatMoney(item.running_cash)}</td><td>{canFinanceConfirm ? <form className="actualForm" onSubmit={(event) => void onCashflowActual(event, item.id)}><input name="actual_amount" type="number" min="0" step="0.01" defaultValue={Number(item.actual_amount || 0)} /><input name="actual_date" type="date" defaultValue={item.actual_date || ""} /><button>确认</button></form> : item.actual_date ? `${item.actual_date} · ${formatMoney(item.actual_amount)}` : "未发生"}</td>{canEditCashflow && <td><ProjectCashflowEditor item={item} onSave={onCashflowUpdate} /></td>}</tr>
                   ))}
-                  {!(selected.cashflow_plans || []).length && <tr><td colSpan={6}>尚未登记收付款计划。</td></tr>}
+                  {!(selected.cashflow_plans || []).length && <tr><td colSpan={canEditCashflow ? 7 : 6}>尚未登记收付款计划。</td></tr>}
                 </tbody></table></div>
                 <div className="mobileDataCards pmCashflowCards" aria-label="手机端项目现金流计划">
                   {(selected.cashflow_plans || []).map((item) => (
@@ -9438,6 +9451,7 @@ function ProjectManagementWorkspace({
                         <div><dt>实际收付</dt><dd>{item.actual_date ? `${item.actual_date} · ${formatMoney(item.actual_amount)}` : "未发生"}</dd></div>
                       </dl>
                       {item.note && <p>{item.note}</p>}
+                      {canEditCashflow && <ProjectCashflowEditor item={item} onSave={onCashflowUpdate} />}
                       {canFinanceConfirm && (
                         <form className="actualForm mobileActualForm" onSubmit={(event) => void onCashflowActual(event, item.id)}>
                           <label>实际金额<input name="actual_amount" type="number" min="0" step="0.01" defaultValue={Number(item.actual_amount || 0)} /></label>

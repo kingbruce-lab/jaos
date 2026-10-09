@@ -1070,6 +1070,43 @@ def add_project_cashflow(
     return {"id": item.id, "status": "created"}
 
 
+@router.patch("/cashflow/{cashflow_id}")
+def update_project_cashflow_plan(
+    cashflow_id: str,
+    payload: ProjectCashflowCreate,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    item = db.get(ProjectCashflowPlan, cashflow_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="收付款计划不存在")
+    project = _project_or_404(db, user, item.project_id)
+    if not _project_content_editable(db, user, project):
+        raise HTTPException(status_code=403, detail="仅项目经理或项目协作人员可以修改收付款计划")
+    if project.status not in {"draft", "initiation_rejected", "active", "closing_rejected"}:
+        raise HTTPException(status_code=409, detail="当前项目状态不能修改收付款计划")
+    actual = item.actual_amount or Decimal("0")
+    if payload.amount < actual:
+        raise HTTPException(status_code=422, detail="计划金额不能小于财务已确认的实际收付款金额")
+    if payload.direction != item.direction and (actual > 0 or item.actual_date is not None):
+        raise HTTPException(status_code=409, detail="已有财务实际收付款记录，不能变更应收应付方向")
+    fields = ("direction", "due_date", "amount", "counterparty", "note")
+    before = {field: getattr(item, field) for field in fields}
+    for field in fields:
+        setattr(item, field, getattr(payload, field))
+    db.add(AuditLog(
+        user_id=user.id,
+        action="pm_cashflow_plan_update",
+        details_json=json.dumps({
+            "project_id": project.id, "cashflow_id": item.id,
+            "before": before,
+            "after": {field: getattr(item, field) for field in fields},
+        }, ensure_ascii=False, default=str),
+    ))
+    db.commit()
+    return {"id": item.id, "status": "updated"}
+
+
 @router.patch("/cashflow/{cashflow_id}/actual")
 def update_project_cashflow_actual(
     cashflow_id: str,

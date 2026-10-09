@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import json
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -19,6 +20,7 @@ from app.models import (
     ManagedProject,
     ProjectDeletionRequest,
     ProjectReview,
+    ProjectCashflowPlan,
     User,
 )
 
@@ -94,6 +96,63 @@ def _configure(monkeypatch, tmp_path, db: Session, user: User) -> TestClient:
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[current_user] = lambda: user
     return TestClient(app)
+
+
+def test_cashflow_plan_edit_permissions_totals_and_actual_protection(tmp_path, monkeypatch):
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["business"])
+    try:
+        created = client.post("/v1/pm/projects", data={
+            "project_no": "CC26B07", "name": "应收修改测试",
+            "company_name": "京奥电竞（北京）科技有限公司", "client": "测试客户",
+            "business_category": "电竞赛事", "planned_start": "2026-09-01",
+            "planned_end": "2026-11-30", "objective": "验证应收计划金额修改",
+            "members_json": '["执行同事"]',
+        })
+        assert created.status_code == 200, created.text
+        project_id = created.json()["id"]
+        values = {"direction": "receivable", "due_date": "2026-09-30", "amount": "480000", "counterparty": "客户", "note": "原计划"}
+        response = client.post(f"/v1/pm/projects/{project_id}/cashflow", json=values)
+        assert response.status_code == 200
+        plan_id = response.json()["id"]
+        url = f"/v1/pm/cashflow/{plan_id}"
+        values.update(amount="460000", due_date="2026-10-15", note="金额更正")
+        assert client.patch(url, json=values).status_code == 200
+        detail = client.get(f"/v1/pm/projects/{project_id}").json()
+        assert detail["planned_receivable"] == "460000.00"
+        assert detail["outstanding_receivable"] == "460000.00"
+        assert detail["cashflow_plans"][0]["running_cash"] == "460000.00"
+        audit = db.scalar(select(AuditLog).where(AuditLog.action == "pm_cashflow_plan_update"))
+        changes = json.loads(audit.details_json)
+        assert Decimal(changes["before"]["amount"]) == 480000
+        assert Decimal(changes["after"]["amount"]) == 460000
+
+        app.dependency_overrides[current_user] = lambda: users["second_business"]
+        assert client.patch(url, json=values).status_code in (403, 404)
+        app.dependency_overrides[current_user] = lambda: users["finance"]
+        assert client.patch(url, json=values).status_code == 403
+        assert client.patch(url + "/actual", json={"actual_amount": "100000", "actual_date": "2026-10-01"}).status_code == 200
+        app.dependency_overrides[current_user] = lambda: users["business"]
+        assert client.patch(url, json={**values, "amount": "90000"}).status_code == 422
+        assert client.patch(url, json={**values, "direction": "payable"}).status_code == 409
+        assert client.patch(url, json={**values, "amount": "450000"}).status_code == 200
+        plan = db.get(ProjectCashflowPlan, plan_id)
+        assert plan.actual_amount == Decimal("100000")
+        assert str(plan.actual_date) == "2026-10-01"
+        assert Decimal(client.get(f"/v1/pm/projects/{project_id}").json()["outstanding_receivable"]) == Decimal("350000")
+
+        delegated = client.put(f"/v1/pm/projects/{project_id}/collaborators", json={"usernames": ["pm-business-2"]})
+        assert delegated.status_code == 200
+        app.dependency_overrides[current_user] = lambda: users["second_business"]
+        assert client.patch(url, json={**values, "amount": "440000"}).status_code == 200
+        project = db.get(ManagedProject, project_id)
+        project.status = "closing_review"
+        db.commit()
+        assert client.patch(url, json=values).status_code == 409
+        assert db.get(ProjectCashflowPlan, plan_id).amount == Decimal("440000")
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
 
 
 def _review(client: TestClient, project_id: str, stage: str, decision: str = "approved"):
