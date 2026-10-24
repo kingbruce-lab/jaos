@@ -1729,6 +1729,7 @@ export default function Home() {
   const [financeUploadError, setFinanceUploadError] = useState("");
   const [managedProjects, setManagedProjects] = useState<ManagedProjectRegistry>({ counts: {}, portfolio_counts: {}, items: [] });
   const [selectedManagedProject, setSelectedManagedProject] = useState<ManagedProject | null>(null);
+  const managedProjectSelectionRequestRef = useRef(0);
   const [projectCollaboratorCandidates, setProjectCollaboratorCandidates] = useState<ProjectCollaboratorAccount[]>([]);
   const [projectBusy, setProjectBusy] = useState("");
   const [projectModule, setProjectModule] = useState<"standard" | "education" | "education-ledger">("standard");
@@ -3843,15 +3844,18 @@ export default function Home() {
   }
 
   async function handleManagedProjectSelect(projectId: string) {
-    if (!token) return;
+    if (!token) throw new Error("登录已失效，请重新登录后查看项目");
+    const requestId = ++managedProjectSelectionRequestRef.current;
     setProjectBusy(`project-${projectId}`);
     setError("");
     try {
-      setSelectedManagedProject(await kbFetch<ManagedProject>(`v1/pm/projects/${projectId}`, {}, token));
+      const project = await kbFetch<ManagedProject>(`v1/pm/projects/${projectId}`, {}, token);
+      if (requestId === managedProjectSelectionRequestRef.current) setSelectedManagedProject(project);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "项目详情加载失败");
+      if (requestId === managedProjectSelectionRequestRef.current) setError(cause instanceof Error ? cause.message : "项目详情加载失败");
+      throw cause;
     } finally {
-      setProjectBusy("");
+      if (requestId === managedProjectSelectionRequestRef.current) setProjectBusy("");
     }
   }
 
@@ -3873,6 +3877,7 @@ export default function Home() {
       await refreshManagedProjects(project.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "项目创建失败");
+      throw cause;
     } finally {
       setProjectBusy("");
     }
@@ -8973,7 +8978,7 @@ function FinanceWorkspace({
   );
 }
 
-function ProjectManagementWorkspace({
+export function ProjectManagementWorkspace({
   user,
   registry,
   selected,
@@ -9035,6 +9040,23 @@ function ProjectManagementWorkspace({
   onReview: (event: FormEvent<HTMLFormElement>, stage: "initiation" | "closing") => Promise<void>;
 }) {
   const projectDetailRef = useRef<HTMLElement | null>(null);
+  const projectEditRef = useRef<HTMLDetailsElement | null>(null);
+  const createPanelRef = useRef<HTMLDetailsElement | null>(null);
+  const portfolioTabsRef = useRef<HTMLDivElement | null>(null);
+  const detailTabsRef = useRef<HTMLElement | null>(null);
+  const listScrollRef = useRef(0);
+  const selectionRequestRef = useRef(0);
+  const [view, setView] = useState<"list" | "detail">("list");
+  const [query, setQuery] = useState("");
+  const [manager, setManager] = useState("");
+  const [year, setYear] = useState("");
+  const [portfolioGroup, setPortfolioGroup] = useState("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [loadingProjectId, setLoadingProjectId] = useState("");
+  const [selectionError, setSelectionError] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const isOwner = Boolean(selected && selected.manager_user_id === user.id && user.organization_role === "business");
   const isCollaborator = Boolean(selected?.collaborators?.some((item) => item.user_id === user.id));
   const canEditContent = isOwner || isCollaborator;
@@ -9047,21 +9069,141 @@ function ProjectManagementWorkspace({
   const selectedContractAlert = selected ? managedProjectContractAlert(selected) : false;
   const selectedContractStatus = selected ? managedProjectContractStatus(selected) : "unsigned";
   const portfolioSections = [
-    { key: "ongoing", title: "正在进行", hint: "执行、结案准备中的项目", tone: "active" },
-    { key: "closed_unpaid", title: "已结案 · 待回款", hint: "继续跟踪回款，暂不能归档", tone: "warning" },
-    { key: "pipeline", title: "立项准备", hint: "草稿、复核或退回修改", tone: "pipeline" },
-    { key: "ready_archive", title: "回款完成 · 可归档", hint: "已结案且无待回款", tone: "ready" },
-    { key: "archived", title: "归档项目", hint: "保留完整记录，可随时恢复", tone: "archived" },
-  ].map((section) => ({
-    ...section,
-    items: registry.items.filter((item) => item.portfolio_group === section.key),
-  })).filter((section) => section.items.length > 0);
+    { key: "all", title: "全部项目" },
+    { key: "ongoing", title: "进行中" },
+    { key: "pipeline", title: "立项准备" },
+    { key: "closed_unpaid", title: "结案待回款" },
+    { key: "ready_archive", title: "可归档" },
+    { key: "archived", title: "已归档" },
+  ];
+  const detailTabs = [
+    { key: "overview", title: "概览" },
+    { key: "finance", title: "预算与现金流" },
+    { key: "contracts", title: "合同与附件" },
+    { key: "progress", title: "进度记录" },
+    { key: "members", title: "成员与权限" },
+    { key: "management", title: "管理记录" },
+  ];
+  const managers = [...new Map(registry.items.map((item) => [item.manager_user_id, item.manager])).entries()]
+    .sort((left, right) => left[1].localeCompare(right[1], "zh-CN"));
+  const projectYear = (item: ManagedProject) => (item.planned_start || item.created_at || "").slice(0, 4);
+  const years = [...new Set(registry.items.map(projectYear).filter(Boolean))].sort().reverse();
+  const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
+  const matchingProjects = registry.items.filter((item) => (
+    (!manager || item.manager_user_id === manager)
+    && (!year || projectYear(item) === year)
+    && (!normalizedQuery || [item.project_no, item.name, item.client, item.company_name, item.manager]
+      .some((value) => value.toLocaleLowerCase("zh-CN").includes(normalizedQuery)))
+  ));
+  const visibleProjects = matchingProjects.filter((item) => portfolioGroup === "all" || item.portfolio_group === portfolioGroup);
+  const activeFilterCount = Number(Boolean(manager)) + Number(Boolean(year));
+  const selecting = Boolean(loadingProjectId);
+  const mutationPending = Boolean(busy) && !selecting;
+  const showingDetail = view === "detail" && Boolean(selected);
+  const selectedProjectId = selected?.id;
+  const canEditBasics = canEditContent && Boolean(selected && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status));
 
-  async function handleMobileProjectSelect(projectId: string) {
-    await onSelect(projectId);
-    if (typeof window === "undefined" || !window.matchMedia("(max-width: 760px)").matches) return;
+  useEffect(() => {
+    if (!showingDetail || !selectedProjectId) return;
+    projectDetailRef.current?.scrollIntoView({ block: "start" });
+    projectDetailRef.current?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+  }, [showingDetail, selectedProjectId]);
+
+  useEffect(() => {
+    const tabList = showingDetail ? detailTabsRef.current : portfolioTabsRef.current;
+    if (!tabList) return;
+    const revealActiveTab = () => {
+      const active = tabList.querySelector<HTMLElement>(showingDetail ? '[aria-selected="true"]' : '[aria-pressed="true"]');
+      if (!active) return;
+      const bounds = tabList.getBoundingClientRect();
+      const activeBounds = active.getBoundingClientRect();
+      if (activeBounds.left < bounds.left || activeBounds.right > bounds.right) {
+        tabList.scrollTo({ left: tabList.scrollLeft + activeBounds.left - bounds.left - 8 });
+      }
+    };
+    revealActiveTab();
+    const observer = new ResizeObserver(revealActiveTab);
+    observer.observe(tabList);
+    return () => observer.disconnect();
+  }, [showingDetail, activeTab, portfolioGroup]);
+
+  function changeDetailTab(tab: string, focusPanel = false) {
+    setActiveTab(tab);
     window.requestAnimationFrame(() => {
-      projectDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const panel = document.getElementById(`pm-panel-${tab}`);
+      if (!panel) return;
+      if (projectDetailRef.current && projectDetailRef.current.clientWidth <= 760) {
+        panel.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+      }
+      if (focusPanel) panel.focus({ preventScroll: true });
+    });
+  }
+
+  async function openProject(projectId: string) {
+    if (selecting || mutationPending) return;
+    const requestId = ++selectionRequestRef.current;
+    if (!showingDetail) listScrollRef.current = window.scrollY;
+    setLoadingProjectId(projectId);
+    setSelectionError("");
+    try {
+      await onSelect(projectId);
+      if (requestId !== selectionRequestRef.current) return;
+      setActiveTab("overview");
+      setEditOpen(false);
+      setCreateOpen(false);
+      setView("detail");
+    } catch (cause) {
+      if (requestId === selectionRequestRef.current) {
+        setSelectionError(cause instanceof Error ? cause.message : "项目详情加载失败，请重试。");
+      }
+    } finally {
+      if (requestId === selectionRequestRef.current) setLoadingProjectId("");
+    }
+  }
+
+  function returnToList() {
+    if (mutationPending) return;
+    selectionRequestRef.current += 1;
+    setLoadingProjectId("");
+    setSelectionError("");
+    setView("list");
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: listScrollRef.current, behavior: "instant" });
+      if (selected) document.getElementById(`pm-project-${selected.id}`)?.focus({ preventScroll: true });
+    });
+  }
+
+  function clearFilters() {
+    setQuery(""); setManager(""); setYear(""); setPortfolioGroup("all");
+  }
+
+  function showCreate() {
+    if (busy || selecting) return;
+    setView("list");
+    setCreateOpen(true);
+    window.requestAnimationFrame(() => {
+      createPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      createPanelRef.current?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    });
+  }
+
+  async function createProject(event: FormEvent<HTMLFormElement>) {
+    setSelectionError("");
+    try {
+      await onCreate(event);
+      setCreateOpen(false);
+      clearFilters();
+    } catch (cause) {
+      setSelectionError(cause instanceof Error ? cause.message : "项目创建失败，请重试。");
+    }
+  }
+
+  function showProjectEditor() {
+    setActiveTab("overview");
+    setEditOpen(true);
+    window.requestAnimationFrame(() => {
+      projectEditRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      projectEditRef.current?.querySelector<HTMLInputElement>("input:not([readonly])")?.focus({ preventScroll: true });
     });
   }
 
@@ -9087,23 +9229,20 @@ function ProjectManagementWorkspace({
   }
 
   return (
-    <section className="projectManagementWorkspace">
-      <section className="pmPortfolioHeader">
-        <div><p>JINGAO PROJECT PORTFOLIO</p><h2>项目全流程管理</h2><span>从业务立项、资金计划、过程进度到负责人结案复核。</span></div>
-        <div className="pmPortfolioStats">
-          <article><strong>{registry.portfolio_counts.ongoing || 0}</strong><span>正在进行</span></article>
-          <article><strong>{registry.portfolio_counts.closed_unpaid || 0}</strong><span>结案待回款</span></article>
-          <article><strong>{registry.portfolio_counts.ready_archive || 0}</strong><span>可归档</span></article>
-          <article><strong>{registry.portfolio_counts.archived || 0}</strong><span>已归档</span></article>
-        </div>
-      </section>
-
-      {message && <div className="noticeBar successNotice"><strong>流程已更新</strong><span>{message}</span></div>}
-
-      {canCreate && (
-        <details className="panel pmCreatePanel" open={!registry.items.length}>
-          <summary><span><b>＋ 新建项目立项</b><small>项目代码统一使用公司成本中心格式</small></span></summary>
-          <form className="businessForm" onSubmit={onCreate}>
+    <section className="projectManagementWorkspace pmWorkspaceV2">
+      {message && <div className="noticeBar successNotice" role="status"><strong>流程已更新</strong><span>{message}</span></div>}
+      {selectionError && <div className="noticeBar errorNotice" role="alert"><strong>操作未完成</strong><span>{selectionError}</span></div>}
+      {selecting && <p className="pmLoadingNotice" role="status">正在加载项目详情…</p>}
+      {!showingDetail ? (
+        <>
+          <header className="pmPageHeading">
+            <div className="pmHeadingCopy"><h2>项目管理</h2><p>项目状态、合同与执行进度，一目了然。</p></div>
+            {canCreate && <div className="pmHeadingActions"><button type="button" className="primaryButton" disabled={Boolean(busy) || selecting} onClick={showCreate}>＋ 新建项目</button></div>}
+          </header>
+          {canCreate && (
+            <details className="panel pmCreatePanel" ref={createPanelRef} open={createOpen} onToggle={(event) => setCreateOpen(event.currentTarget.open)}>
+              <summary><span><b>新建项目立项</b><small>填写项目资料，建立后保存为草稿</small></span></summary>
+          <form className="businessForm" onSubmit={(event) => void createProject(event)}>
             <label className="pmProjectNoField">
               <span>项目代码（成本中心）</span>
               <input name="project_no" required maxLength={7} pattern={COST_CENTER_CODE_PATTERN} list="cost-center-options-create" autoComplete="off" placeholder="例如：CC26B01" />
@@ -9130,69 +9269,263 @@ function ProjectManagementWorkspace({
             <label className="fileInputCard">上传立项提案或预算附件（选填）<input name="proposal_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.zip" /></label>
             <button className="primaryButton" disabled={busy === "create"}>{busy === "create" ? "正在建立…" : "建立项目草稿"}</button>
           </form>
-        </details>
-      )}
-
-      <section className="pmMainGrid">
-        <section className="panel pmProjectListPanel">
-          <PanelTitle eyebrow="PROJECT PORTFOLIO" title="项目组合" />
-          <div className="pmProjectList">
-            {portfolioSections.map((section) => (
-              <section className={`pmPortfolioSection ${section.tone}`} key={section.key}>
-                <header>
-                  <div><strong>{section.title}</strong><small>{section.hint}</small></div>
-                  <b>{section.items.length}</b>
-                </header>
-                <div className="pmPortfolioSectionItems">
-                  {section.items.map((item) => (
-                    <button type="button" className={`${selected?.id === item.id ? "active" : ""}${managedProjectContractAlert(item) ? " contractAlert" : ""}`} key={item.id} onClick={() => void handleMobileProjectSelect(item.id)}>
-                      <span className="pmProjectNo">{item.project_no}</span>
-                      <strong>{item.name}</strong>
-                      <small>{item.client} · 项目经理 {item.manager}</small>
-                      <span className={`pmTeamSummary${executionTeamMembers(item).length ? "" : " empty"}`}>
-                        执行：{executionTeamSummary(item)}
-                      </span>
-                      <span className={`pmContractBadge ${managedProjectContractAlert(item) ? "alert" : managedProjectContractStatus(item)}`}>
-                        {managedProjectContractAlert(item) ? "异常 · 合同未签署" : `合同 · ${managedProjectContractLabel(item)}`}
-                      </span>
-                      <div>
-                        <span>{managedProjectStatusNames[item.status] || item.status}</span>
-                        {item.portfolio_group === "closed_unpaid"
-                          ? <b className="negative">待回 {formatMoney(item.outstanding_receivable)}</b>
-                          : <b>{item.progress_percent}%</b>}
-                      </div>
-                    </button>
+            </details>
+          )}
+          <section className="pmOverviewPanel panel" aria-label="项目总览">
+            <div className="pmFilterBar">
+              <div className="pmSearchControls">
+                <label className="pmSearchField"><span>搜索项目</span><input type="search" aria-label="搜索项目" placeholder="搜索项目名称 / 编号 / 客户" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+                <button type="button" className="pmMobileFilterToggle" aria-label="筛选项目" aria-expanded={filtersOpen} aria-controls="pm-project-filters" onClick={() => setFiltersOpen((open) => !open)}>筛选{activeFilterCount > 0 && <b>{activeFilterCount}</b>}<span aria-hidden="true">{filtersOpen ? "⌃" : "⌄"}</span></button>
+              </div>
+              <div id="pm-project-filters" className={`pmFilterFields${filtersOpen ? " expanded" : ""}`}>
+                <label className="pmFilterField"><span>负责人</span><select aria-label="按负责人筛选" value={manager} onChange={(event) => setManager(event.target.value)}><option value="">全部负责人</option>{managers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+                <label className="pmFilterField"><span>年份</span><select aria-label="按年份筛选" value={year} onChange={(event) => setYear(event.target.value)}><option value="">全部年份</option>{years.map((value) => <option key={value} value={value}>{value} 年</option>)}</select></label>
+              </div>
+            </div>
+            {activeFilterCount > 0 && <div className="pmFilterSummary" aria-live="polite"><span>已筛选</span>{manager && <span>{managers.find(([id]) => id === manager)?.[1] || "已选负责人"}</span>}{year && <span>{year} 年</span>}</div>}
+            <div className="pmPortfolioTabs" ref={portfolioTabsRef} aria-label="按项目状态筛选">
+              {portfolioSections.map((section) => <button type="button" className={`pmPortfolioTab${portfolioGroup === section.key ? " active" : ""}`} aria-pressed={portfolioGroup === section.key} key={section.key} onClick={() => setPortfolioGroup(section.key)}>{section.title}<span>{matchingProjects.filter((item) => section.key === "all" || item.portfolio_group === section.key).length}</span></button>)}
+            </div>
+            {visibleProjects.length ? (
+              <table className="pmProjectTable" aria-label="项目列表">
+                <thead className="pmProjectTableHead"><tr><th scope="col">项目 / 甲方公司</th><th scope="col">项目经理</th><th scope="col">状态</th><th scope="col">进度</th><th scope="col">合同</th><th scope="col"><span className="srOnly">操作</span></th></tr></thead>
+                <tbody>
+                  {visibleProjects.map((item) => (
+                    <tr className={`pmProjectRow${selected?.id === item.id ? " selected" : ""}`} key={item.id}>
+                      <td className="pmProjectIdentity"><button type="button" id={`pm-project-${item.id}`} className="pmProjectOpen" aria-label={`查看项目 ${item.name}`} disabled={selecting || mutationPending} onClick={() => void openProject(item.id)}><small>{item.project_no}</small><strong>{item.name}</strong><span>{item.client || "待补充甲方公司"}</span></button></td>
+                      <td className="pmProjectManager" data-label="项目经理">{item.manager}</td>
+                      <td className="pmProjectState" data-label="状态"><span className={`pmStatus ${item.status}`}>{managedProjectStatusNames[item.status] || item.status}</span></td>
+                      <td className="pmProjectProgress" data-label="进度"><span>{item.progress_percent}%</span><div className="pmListProgressTrack" role="progressbar" aria-label={`${item.name}执行进度`} aria-valuenow={item.progress_percent} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${item.progress_percent}%` }} /></div>{item.portfolio_group === "closed_unpaid" && <small>待回 {formatMoney(item.outstanding_receivable)}</small>}</td>
+                      <td className="pmProjectContract" data-label="合同"><span className={`pmContractBadge ${managedProjectContractAlert(item) ? "alert" : managedProjectContractStatus(item)}`}>{managedProjectContractLabel(item)}</span></td>
+                      <td className="pmProjectRowAction"><button type="button" className="pmProjectOpen" aria-label={`打开 ${item.project_no} 详情`} disabled={selecting || mutationPending} onClick={() => void openProject(item.id)}>查看 <span aria-hidden="true">→</span></button></td>
+                    </tr>
                   ))}
+                </tbody>
+              </table>
+            ) : (
+              <div className="pmNoResults"><h3>{registry.items.length ? "没有符合条件的项目" : "还没有项目"}</h3><p>{registry.items.length ? "试试其他关键词、负责人或年份。" : canCreate ? "建立第一个项目，开始跟踪合同与执行进度。" : "当前账号暂无可查看的项目。"}</p>{registry.items.length > 0 && <button type="button" className="secondaryButton" onClick={clearFilters}>清除筛选</button>}</div>
+            )}
+            <footer className="pmListFooter"><span>共 {visibleProjects.length} 个项目{visibleProjects.length !== registry.items.length ? ` / 全部 ${registry.items.length} 个` : ""}</span>{(query || manager || year || portfolioGroup !== "all") && <button type="button" onClick={clearFilters}>清除筛选</button>}</footer>
+          </section>
+        </>
+      ) : selected ? (
+        <section className="panel pmWorkspaceDetail" ref={projectDetailRef}>
+          <div className="pmDetailNav"><button type="button" className="pmBackButton" aria-label="全部项目" disabled={mutationPending} onClick={returnToList}><span aria-hidden="true">←</span> 全部项目</button><label className="pmProjectSwitcher"><span>切换项目</span><select aria-label="切换项目" value={selected.id} disabled={selecting || mutationPending} onChange={(event) => void openProject(event.target.value)}>{registry.items.map((item) => <option key={item.id} value={item.id}>{item.project_no} · {item.name}</option>)}</select></label></div>
+          <div inert={selecting} aria-busy={selecting}>
+            <header className="pmWorkspaceHeader">
+              <div className="pmDetailTopline"><p className="pmProjectNo">{selected.project_no}</p><span className={`pmStatus ${selected.status}`}>{managedProjectStatusNames[selected.status] || selected.status}</span></div>
+              <div className="pmWorkspaceTitle"><h2 tabIndex={-1}>{selected.name}</h2>{canEditBasics && <button type="button" className="secondaryButton" onClick={showProjectEditor}>编辑项目</button>}</div>
+              <div className="pmWorkspaceMeta"><p><span>甲方</span><strong>{selected.client || "待补充甲方公司"}</strong></p><div><span>项目经理：{selected.manager}</span><span>对接人：{selected.client_contact || "待补充"}</span><span>项目周期：{selected.planned_start} 至 {selected.planned_end}</span></div></div>
+            </header>
+            <section className={`pmContractNotice ${selectedContractAlert ? "alert" : selectedContractStatus}`} aria-label="合同状态">
+              <p><span aria-hidden="true">{selectedContractAlert ? "!" : selectedContractStatus === "signed_received" ? "✓" : "i"}</span>{selectedContractAlert ? "项目已启动，合同尚未签署" : selectedContractStatus === "signed_received" ? "合同已签署收件" : "合同尚未签署，建议在项目启动前完成签署收件。"}</p>
+              <button type="button" onClick={() => changeDetailTab("contracts", true)}>查看合同 <span aria-hidden="true">→</span></button>
+            </section>
+            <section className="pmWorkspaceMetrics" aria-label="项目资金摘要">
+              <article><span>合同金额</span><strong>{formatMoney(selected.contract_amount)}</strong></article>
+              <article><span>预计毛利</span><strong className={Number(selected.expected_margin) >= 0 ? "positive" : "negative"}>{formatMoney(selected.expected_margin)}</strong></article>
+              <article><span>已收入</span><strong>{formatMoney(selected.bank_received ?? selected.process_received ?? 0)}</strong><small>财务已确认银行流水</small></article>
+              <article><span>已垫资</span><strong>{formatMoney(selected.process_advanced ?? 0)}</strong><small>项目经理累计填报</small></article>
+            </section>
+            {(reviewStage || (isOwner && ["draft", "initiation_rejected"].includes(selected.status))) && <div className="pmWorkflowHint"><span>{reviewStage ? "项目正在等待负责人复核。" : "项目尚未提交立项复核。"}</span><button type="button" onClick={() => changeDetailTab("management", true)}>查看管理记录 →</button></div>}
+            <nav className="pmDetailTabs" ref={detailTabsRef} role="tablist" aria-label="项目详情" onKeyDown={(event) => {
+              const index = detailTabs.findIndex((tab) => tab.key === activeTab);
+              const next = event.key === "ArrowRight" ? (index + 1) % detailTabs.length : event.key === "ArrowLeft" ? (index - 1 + detailTabs.length) % detailTabs.length : event.key === "Home" ? 0 : event.key === "End" ? detailTabs.length - 1 : -1;
+              if (next === -1) return;
+              event.preventDefault();
+              changeDetailTab(detailTabs[next].key);
+              event.currentTarget.querySelectorAll<HTMLButtonElement>("[role=tab]")[next]?.focus();
+            }}>{detailTabs.map((tab) => <button type="button" role="tab" className="pmDetailTab" key={tab.key} id={`pm-tab-${tab.key}`} aria-controls={`pm-panel-${tab.key}`} aria-selected={activeTab === tab.key} tabIndex={activeTab === tab.key ? 0 : -1} onClick={() => changeDetailTab(tab.key)}>{tab.title}</button>)}</nav>
+            <div key={selected.id}>
+              <section className="pmTabPanel" role="tabpanel" tabIndex={0} id="pm-panel-overview" aria-labelledby="pm-tab-overview" hidden={activeTab !== "overview"}>
+                <div className="pmOverviewGrid">
+                  <article className="pmOverviewCard"><h3>项目概况</h3><dl className="pmFactsList"><div><dt>签约主体</dt><dd>{selected.company_name}</dd></div><div><dt>业务分类</dt><dd>{selected.business_category || "待补充"}</dd></div><div><dt>当前阶段</dt><dd>{selected.current_stage || managedProjectStatusNames[selected.status]}</dd></div><div><dt>执行进度</dt><dd><span>{selected.progress_percent}%</span><div className="pmListProgressTrack" role="progressbar" aria-label="项目执行进度" aria-valuenow={selected.progress_percent} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${selected.progress_percent}%` }} /></div></dd></div><div><dt>项目目标</dt><dd>{selected.objective || "待补充"}</dd></div></dl></article>
+                  <article className="pmOverviewCard"><h3>项目过程资金</h3><dl className="pmFactsList"><div><dt>已收入</dt><dd className="positive">{formatMoney(selected.bank_received ?? selected.process_received ?? 0)}</dd></div><div><dt>已支出</dt><dd className="negative">{formatMoney(selected.bank_spent ?? selected.process_spent ?? 0)}</dd></div><div><dt>已垫资</dt><dd>{formatMoney(selected.process_advanced ?? 0)}</dd></div></dl><p className="mutedText">收支以财务已确认的银行流水为准；垫资由项目经理填报。</p><button type="button" className="secondaryButton" onClick={() => changeDetailTab("finance", true)}>查看现金流 →</button></article>
                 </div>
+                <div className="pmRecentProgress"><h3>近期进度</h3>{selected.progress_updates?.length ? <><p>{selected.progress_updates[0].current_stage} · {selected.progress_updates[0].progress_percent}%</p><p>{selected.progress_updates[0].completed}</p></> : <p>暂无执行记录，等待项目团队更新进度。</p>}<button type="button" onClick={() => changeDetailTab("progress", true)}>查看进度记录 →</button></div>
+              {["closed", "archived"].includes(selected.status) && (
+                <section className={`pmPaymentStatus ${selected.payment_complete ? "complete" : "pending"}`}>
+                  <div>
+                    <span>{selected.status === "archived" ? "ARCHIVED PROJECT" : "PAYMENT CLEARANCE"}</span>
+                    <h3>{selected.status === "archived" ? "项目已归档" : selected.payment_complete ? "回款已完成，可以归档" : "项目已结案，仍需跟踪回款"}</h3>
+                    <p>计划应收 {formatMoney(selected.planned_receivable)} · 已回款 {formatMoney(selected.received_amount)} · 待回款 {formatMoney(selected.outstanding_receivable)}</p>
+                  </div>
+                  {canArchive && selected.status === "closed" && selected.payment_complete && (
+                    <button type="button" onClick={() => void onArchive("archive")} disabled={busy === "project-archive"}>归档项目</button>
+                  )}
+                  {canArchive && selected.status === "archived" && (
+                    <button type="button" onClick={() => void onArchive("restore")} disabled={busy === "project-archive"}>恢复项目</button>
+                  )}
+                  {selected.status === "closed" && !selected.payment_complete && <b>待回款项目不能归档</b>}
+                </section>
+              )}
+              {canEditContent && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status) && (
+                <details className="pmProjectControlPanel" ref={projectEditRef} open={editOpen} onToggle={(event) => setEditOpen(event.currentTarget.open)}>
+                  <summary>修改项目基础信息、执行团队与预算</summary>
+                  <form className="businessForm" onSubmit={onUpdate}>
+                    <label className="pmProjectNoField">
+                      <span>项目代码（成本中心）</span>
+                      <input name="project_no" required maxLength={40} pattern={isOwner ? COST_CENTER_CODE_PATTERN : undefined} readOnly={!isOwner} list={isOwner ? `cost-center-options-${selected.id}` : undefined} defaultValue={selected.project_no} autoComplete="off" />
+                      {isOwner && <datalist id={`cost-center-options-${selected.id}`}>{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist>}
+                      <small>{isOwner ? (isCostCenterCode(selected.project_no) ? "项目经理可修改；改码后相同代码的未关联流水会自动补充关联。" : "当前为历史代码，保存其他修改前请改为最新 CC 成本中心格式。") : "只有项目经理可以修改项目代码。"}</small>
+                    </label>
+                    <div className="formGrid threeColumns">
+                      <label>项目名称<input name="name" defaultValue={selected.name} required /></label>
+                      <label>签约公司主体<input name="company_name" defaultValue={selected.company_name} required /></label>
+                      <label>甲方公司<input name="client" defaultValue={selected.client} required /></label>
+                      <label>甲方对接人<input name="client_contact" defaultValue={selected.client_contact || ""} required placeholder="填写主要对接人姓名" /></label>
+                      <label>业务分类<input name="business_category" defaultValue={selected.business_category} required /></label>
+                      <label>计划开始<input name="planned_start" type="date" defaultValue={selected.planned_start} required /></label>
+                      <label>计划结束<input name="planned_end" type="date" defaultValue={selected.planned_end} required /></label>
+                      <label>合同金额<input name="contract_amount" type="number" min="0" step="0.01" defaultValue={Number(selected.contract_amount || 0)} /></label>
+                      <label>预算收入<input name="budget_revenue" type="number" min="0" step="0.01" defaultValue={Number(selected.budget_revenue || 0)} /></label>
+                      <label>预算成本（不含税）<input name="budget_cost" type="number" min="0" step="0.01" defaultValue={Number(selected.budget_cost || 0)} /></label>
+                      <label>预计税费<input name="budget_tax" type="number" min="0" step="0.01" defaultValue={Number(selected.budget_tax || 0)} /></label>
+                      <label>合同状态<select name="contract_status" defaultValue={selectedContractStatus} key={`${selected.id}-${selectedContractStatus}`}><option value="unsigned">未签署</option><option value="signed_received">已签署收件</option></select></label>
+                      <label className="spanTwo">执行团队名单<input name="members" required defaultValue={selectedExecutionTeam.join("、")} placeholder="填写除项目经理外参与执行的人员，顿号/逗号分隔" /></label>
+                      <label>合同资料 ID（选填）<input name="contract_document_id" defaultValue={selected.contract_document_id || ""} /></label>
+                    </div>
+                    <label>项目目标<textarea name="objective" minLength={4} rows={4} defaultValue={selected.objective} required /></label>
+                    <button className="primaryButton" disabled={busy === "project-update"}>{busy === "project-update" ? "保存中…" : "保存项目修改"}</button>
+                  </form>
+                </details>
+              )}
               </section>
-            ))}
-            {!registry.items.length && <div className="emptyState compact"><b>▦</b><h3>还没有项目</h3><p>由业务账号建立第一条立项。</p></div>}
-          </div>
-        </section>
-
-        <section className="panel pmProjectDetailPanel" ref={projectDetailRef}>
-          {!selected ? (
-            <div className="emptyState"><b>▦</b><h3>选择一个项目查看全貌</h3><p>项目资料、资金计划、进度与复核状态会集中显示。</p></div>
-          ) : (
-            <>
-              <header className="pmDetailHeader">
-                <div className="pmDetailIdentity">
-                  <div className="pmDetailTopline">
-                    <p>{selected.project_no}</p>
-                    <b className={`pmStatus ${selected.status}`}>{managedProjectStatusNames[selected.status] || selected.status}</b>
-                  </div>
-                  <div className="pmDetailHeadline">
-                    <h2>{selected.name}</h2>
-                    <section className="pmClientSpotlight" aria-label="甲方信息">
-                      <span>甲方公司</span>
-                      <div>
-                        <strong>{selected.client || "待补充甲方公司"}</strong>
-                        <small>对接人 · {selected.client_contact || "待补充"}</small>
-                      </div>
-                    </section>
-                  </div>
-                  <span>{selected.company_name} · 项目经理 {selected.manager}</span>
-                  <div className={`pmExecutionTeam${selectedExecutionTeam.length ? "" : " empty"}`}>
+              <section className="pmTabPanel" role="tabpanel" tabIndex={0} id="pm-panel-finance" aria-labelledby="pm-tab-finance" hidden={activeTab !== "finance"}>
+                <section className="pmSectionCard"><h3>项目预算</h3>
+              <section className="pmFinancialSummary">
+                <article><span>合同金额</span><strong>{formatMoney(selected.contract_amount)}</strong></article>
+                <article><span>预算收入</span><strong>{formatMoney(selected.budget_revenue)}</strong></article>
+                <article><span>预算成本（不含税）</span><strong>{formatMoney(selected.budget_cost)}</strong></article>
+                <article><span>预计税费</span><strong>{formatMoney(selected.budget_tax ?? 0)}</strong></article>
+                <article><span>预计毛利</span><strong className={Number(selected.expected_margin) >= 0 ? "positive" : "negative"}>{formatMoney(selected.expected_margin)}</strong></article>
+                <article><span>最大垫资缺口</span><strong className="negative">{formatMoney(selected.maximum_funding_gap ?? 0)}</strong></article>
+              </section>
+                </section>
+              <section className="pmProcessFinanceSection">
+                <header>
+                  <div><span>FINANCE LINKED CASH</span><strong>项目过程资金</strong></div>
+                  <small>已自动归集 {selected.bank_transaction_count || 0} 笔已确认银行流水</small>
+                </header>
+                <div className="pmProcessFinanceSummary">
+                  <article className="received"><span>已收入</span><strong>{formatMoney(selected.bank_received ?? selected.process_received ?? 0)}</strong><small>已确认流水自动同步</small></article>
+                  <article className="spent"><span>已支出</span><strong>{formatMoney(selected.bank_spent ?? selected.process_spent ?? 0)}</strong><small>已确认流水自动同步</small></article>
+                  <article className="advanced"><span>已垫资</span><strong>{formatMoney(selected.process_advanced ?? 0)}</strong><small>PM累计填报</small></article>
+                </div>
+                {canEditContent && ["active", "closing_rejected"].includes(selected.status) && (
+                  <details className="pmProcessFinanceEditor">
+                    <summary>维护 PM 备查口径与垫资</summary>
+                    <form key={`${selected.id}-${selected.process_finance_updated_at || "new"}`} onSubmit={onProcessFinance}>
+                      <label>PM备查累计收入<input name="process_received" type="number" min="0" step="0.01" defaultValue={Number(selected.process_received || 0)} required /></label>
+                      <label>PM备查累计支出<input name="process_spent" type="number" min="0" step="0.01" defaultValue={Number(selected.process_spent || 0)} required /></label>
+                      <label>累计已垫资<input name="process_advanced" type="number" min="0" step="0.01" defaultValue={Number(selected.process_advanced || 0)} required /></label>
+                      <button type="submit" disabled={busy === "process-finance"}>{busy === "process-finance" ? "保存中…" : "保存过程资金"}</button>
+                    </form>
+                    <p>“已收入/已支出”卡片以财务确认的银行流水为准；这里保留项目团队备查口径，并维护尚未经过公司账户的垫资。</p>
+                  </details>
+                )}
+              </section>
+              <section className="pmCashflowSection">
+                <div className="sectionHeading"><div><span>CASHFLOW PLAN</span><h3>应收应付与资金周期</h3></div></div>
+                <div className="tableScroll desktopDataTable pmCashflowTable"><table className="businessTable"><thead><tr><th>方向</th><th>计划日期</th><th>金额</th><th>对方</th><th>累计现金</th><th>实际收付</th>{canEditCashflow && <th>操作</th>}</tr></thead><tbody>
+                  {(selected.cashflow_plans || []).map((item) => (
+                    <tr key={item.id}><td>{item.direction === "receivable" ? "应收" : "应付"}</td><td>{item.due_date}</td><td>{formatMoney(item.amount)}</td><td>{item.counterparty || "—"}</td><td className={Number(item.running_cash) >= 0 ? "positive" : "negative"}>{formatMoney(item.running_cash)}</td><td>{canFinanceConfirm ? <form className="actualForm" onSubmit={(event) => void onCashflowActual(event, item.id)}><input name="actual_amount" type="number" min="0" step="0.01" defaultValue={Number(item.actual_amount || 0)} /><input name="actual_date" type="date" defaultValue={item.actual_date || ""} /><button>确认</button></form> : item.actual_date ? `${item.actual_date} · ${formatMoney(item.actual_amount)}` : "未发生"}</td>{canEditCashflow && <td><ProjectCashflowEditor item={item} onSave={onCashflowUpdate} /></td>}</tr>
+                  ))}
+                  {!(selected.cashflow_plans || []).length && <tr><td colSpan={canEditCashflow ? 7 : 6}>尚未登记收付款计划。</td></tr>}
+                </tbody></table></div>
+                <div className="mobileDataCards pmCashflowCards" aria-label="手机端项目现金流计划">
+                  {(selected.cashflow_plans || []).map((item) => (
+                    <article className={`mobileDataCard pmCashflowCard ${item.direction}`} key={item.id}>
+                      <header>
+                        <div>
+                          <span>{item.direction === "receivable" ? "应收计划" : "应付计划"}</span>
+                          <strong>{item.counterparty || "未填写对方单位"}</strong>
+                        </div>
+                        <b className={item.direction === "receivable" ? "positive" : "negative"}>{formatMoney(item.amount)}</b>
+                      </header>
+                      <dl>
+                        <div><dt>计划日期</dt><dd>{item.due_date}</dd></div>
+                        <div><dt>累计现金</dt><dd className={Number(item.running_cash) >= 0 ? "positive" : "negative"}>{formatMoney(item.running_cash)}</dd></div>
+                        <div><dt>实际收付</dt><dd>{item.actual_date ? `${item.actual_date} · ${formatMoney(item.actual_amount)}` : "未发生"}</dd></div>
+                      </dl>
+                      {item.note && <p>{item.note}</p>}
+                      {canEditCashflow && <ProjectCashflowEditor item={item} onSave={onCashflowUpdate} />}
+                      {canFinanceConfirm && (
+                        <form className="actualForm mobileActualForm" onSubmit={(event) => void onCashflowActual(event, item.id)}>
+                          <label>实际金额<input name="actual_amount" type="number" min="0" step="0.01" defaultValue={Number(item.actual_amount || 0)} /></label>
+                          <label>实际日期<input name="actual_date" type="date" defaultValue={item.actual_date || ""} /></label>
+                          <button>确认实际收付</button>
+                        </form>
+                      )}
+                    </article>
+                  ))}
+                  {!(selected.cashflow_plans || []).length && <p className="mutedText">尚未登记收付款计划。</p>}
+                </div>
+                {selected.closing_summary && (
+                  <section className="mobileProjectSettlement" aria-label="手机端项目决算">
+                    <header><span>PROJECT SETTLEMENT</span><h4>项目结案决算</h4></header>
+                    <p>{selected.closing_summary}</p>
+                    <dl>
+                      <div><dt>实际收入</dt><dd className="positive">{formatMoney(selected.actual_revenue ?? 0)}</dd></div>
+                      <div><dt>实际成本</dt><dd className="negative">{formatMoney(selected.actual_cost ?? 0)}</dd></div>
+                      <div><dt>未收金额</dt><dd>{formatMoney(selected.actual_receivable ?? 0)}</dd></div>
+                      <div><dt>未付金额</dt><dd>{formatMoney(selected.actual_payable ?? 0)}</dd></div>
+                    </dl>
+                  </section>
+                )}
+                {canEditContent && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status) && (
+                  <form className="compactBusinessForm" onSubmit={onCashflow}>
+                    <select name="direction" aria-label="新增计划收付方向" defaultValue="receivable"><option value="receivable">应收</option><option value="payable">应付</option></select>
+                    <input name="due_date" aria-label="新增计划日期" type="date" required />
+                    <input name="amount" aria-label="新增计划金额（元）" type="number" inputMode="decimal" min="0.01" step="0.01" placeholder="金额" required />
+                    <input name="counterparty" aria-label="新增计划对方单位" placeholder="对方单位" />
+                    <input name="note" aria-label="新增计划说明" placeholder="说明" />
+                    <button>新增计划</button>
+                  </form>
+                )}
+              </section>
+              </section>
+              <section className="pmTabPanel" role="tabpanel" tabIndex={0} id="pm-panel-contracts" aria-labelledby="pm-tab-contracts" hidden={activeTab !== "contracts"}>
+                <section className="pmSectionCard"><h3>合同状态</h3><p>{selectedContractAlert ? selected.contract_alert_message || "项目已进入执行或结案流程，请尽快完成合同签署并确认收件。" : selectedContractStatus === "signed_received" ? "已记录签署并收到合同原件。" : "建议在项目启动前完成合同签署收件。"}</p>
+                {canEditContent && (
+                  <form className="pmContractStatusForm" onSubmit={onContractStatus}>
+                    <label htmlFor={`contract-status-${selected.id}`}>更新合同状态</label>
+                    <div>
+                      <select id={`contract-status-${selected.id}`} name="contract_status" defaultValue={selectedContractStatus} key={`${selected.id}-${selectedContractStatus}`}>
+                        <option value="unsigned">未签署</option>
+                        <option value="signed_received">已签署收件</option>
+                      </select>
+                      <button type="submit" disabled={busy === "contract-status"}>{busy === "contract-status" ? "更新中…" : "保存状态"}</button>
+                    </div>
+                  </form>
+                )}
+                </section>
+                <section className="pmSectionCard"><h3>项目附件</h3><dl className="pmFactsList"><div><dt>关联合同资料</dt><dd>{selected.contract_document_id || "尚未关联合同资料"}</dd></div><div><dt>立项提案 / 预算附件</dt><dd>{selected.proposal_attached ? "已上传" : "尚未上传"}</dd></div><div><dt>结案报告</dt><dd>{selected.closing_report_attached ? "已上传" : "尚未上传"}</dd></div></dl></section>
+              </section>
+              <section className="pmTabPanel" role="tabpanel" tabIndex={0} id="pm-panel-progress" aria-labelledby="pm-tab-progress" hidden={activeTab !== "progress"}>
+              {canEditContent && selected.status === "active" && (
+                <section className="pmActionGrid">
+                  <form className="businessForm" onSubmit={onProgress}>
+                    <h3>更新项目进度</h3>
+                    <div className="formGrid twoColumns"><label>完成度<input name="progress_percent" type="number" min="0" max="100" defaultValue={selected.progress_percent} required /></label><label>当前阶段<input name="current_stage" defaultValue={selected.current_stage} required /></label></div>
+                    <label>本期完成<textarea name="completed" rows={3} required /></label><label>下一步<textarea name="next_step" rows={3} required /></label><label>风险<textarea name="risks" rows={2} /></label><label className="checkboxLine"><input name="needs_coordination" type="checkbox" />需要管理层协调</label>
+                    <button className="secondaryButton" disabled={busy === "progress"}>保存进度</button>
+                  </form>
+                  {isOwner && (
+                    <form className="businessForm" onSubmit={onSubmitClosing}>
+                      <h3>提交项目结案</h3>
+                      <label>结案总结<textarea name="closing_summary" rows={4} required /></label>
+                      <div className="formGrid twoColumns"><label>实际收入<input name="actual_revenue" type="number" min="0" step="0.01" required /></label><label>实际成本<input name="actual_cost" type="number" min="0" step="0.01" required /></label><label>未收金额<input name="actual_receivable" type="number" min="0" step="0.01" defaultValue="0" /></label><label>未付金额<input name="actual_payable" type="number" min="0" step="0.01" defaultValue="0" /></label></div>
+                      <label className="fileInputCard">结案报告（选填）<input name="closing_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.zip" /></label>
+                      <button className="primaryButton" disabled={busy === "closing"}>提交结案复核</button>
+                    </form>
+                  )}
+                </section>
+              )}
+                <section className="pmTimeline pmSectionCard"><h3>过程记录</h3>{(selected.progress_updates || []).length ? selected.progress_updates?.map((item) => <article key={item.id}><i /><div><strong>{item.current_stage} · {item.progress_percent}%</strong><span>{item.completed}</span><span>下一步：{item.next_step}</span>{item.risks && <span>风险：{item.risks}</span>}{item.needs_coordination && <span>需要管理层协调</span>}<small>{new Date(item.created_at).toLocaleString("zh-CN")} · {item.creator}</small></div></article>) : <p className="mutedText">暂无进度记录。</p>}</section>
+              </section>
+              <section className="pmTabPanel" role="tabpanel" tabIndex={0} id="pm-panel-members" aria-labelledby="pm-tab-members" hidden={activeTab !== "members"}><section className="pmSectionCard"><h3>成员与权限</h3><dl className="pmFactsList"><div><dt>项目经理</dt><dd>{selected.manager}</dd></div></dl>
+                  <div aria-label={`执行团队：${executionTeamSummary(selected)}`} className={`pmExecutionTeam${selectedExecutionTeam.length ? "" : " empty"}`}>
                     <strong>执行团队</strong>
                     <div>
                       {selectedExecutionTeam.length
@@ -9227,118 +9560,13 @@ function ProjectManagementWorkspace({
                       </form>
                     )}
                   </div>
-                </div>
-              </header>
-              <section className={`pmContractStatusPanel ${selectedContractAlert ? "alert" : selectedContractStatus}`} role={selectedContractAlert ? "alert" : undefined}>
-                <div className="pmContractStatusCopy">
-                  <span>CONTRACT STATUS</span>
-                  <h3>{selectedContractAlert ? "项目已启动，合同仍未签署" : selectedContractStatus === "signed_received" ? "合同已签署收件" : "合同尚未签署"}</h3>
-                  <p>{selectedContractAlert
-                    ? selected.contract_alert_message || "该项目已进入执行或结案流程，请尽快完成合同签署并确认收件。"
-                    : selectedContractStatus === "signed_received"
-                      ? "合同状态正常；已记录签署并收到合同原件。"
-                      : "项目尚未启动，建议在进入执行前完成合同签署收件。"}</p>
-                </div>
-                {canEditContent && (
-                  <form className="pmContractStatusForm" onSubmit={onContractStatus}>
-                    <label htmlFor={`contract-status-${selected.id}`}>更新合同状态</label>
-                    <div>
-                      <select id={`contract-status-${selected.id}`} name="contract_status" defaultValue={selectedContractStatus} key={`${selected.id}-${selectedContractStatus}`}>
-                        <option value="unsigned">未签署</option>
-                        <option value="signed_received">已签署收件</option>
-                      </select>
-                      <button type="submit" disabled={busy === "contract-status"}>{busy === "contract-status" ? "更新中…" : "保存状态"}</button>
-                    </div>
-                  </form>
-                )}
-              </section>
-              <div className="pmProgressTrack"><span style={{ width: `${selected.progress_percent}%` }} /><b>{selected.progress_percent}%</b></div>
-              <section className="pmFinancialSummary">
-                <article><span>合同金额</span><strong>{formatMoney(selected.contract_amount)}</strong></article>
-                <article><span>预算收入</span><strong>{formatMoney(selected.budget_revenue)}</strong></article>
-                <article><span>预算成本（不含税）</span><strong>{formatMoney(selected.budget_cost)}</strong></article>
-                <article><span>预计税费</span><strong>{formatMoney(selected.budget_tax ?? 0)}</strong></article>
-                <article><span>预计毛利</span><strong className={Number(selected.expected_margin) >= 0 ? "positive" : "negative"}>{formatMoney(selected.expected_margin)}</strong></article>
-                <article><span>最大垫资缺口</span><strong className="negative">{formatMoney(selected.maximum_funding_gap ?? 0)}</strong></article>
-              </section>
-              <section className="pmProcessFinanceSection">
-                <header>
-                  <div><span>FINANCE LINKED CASH</span><strong>项目过程资金</strong></div>
-                  <small>已自动归集 {selected.bank_transaction_count || 0} 笔已确认银行流水</small>
-                </header>
-                <div className="pmProcessFinanceSummary">
-                  <article className="received"><span>已收入</span><strong>{formatMoney(selected.bank_received ?? selected.process_received ?? 0)}</strong><small>已确认流水自动同步</small></article>
-                  <article className="spent"><span>已支出</span><strong>{formatMoney(selected.bank_spent ?? selected.process_spent ?? 0)}</strong><small>已确认流水自动同步</small></article>
-                  <article className="advanced"><span>已垫资</span><strong>{formatMoney(selected.process_advanced ?? 0)}</strong><small>PM累计填报</small></article>
-                </div>
-                {canEditContent && ["active", "closing_rejected"].includes(selected.status) && (
-                  <details className="pmProcessFinanceEditor">
-                    <summary>维护 PM 备查口径与垫资</summary>
-                    <form key={`${selected.id}-${selected.process_finance_updated_at || "new"}`} onSubmit={onProcessFinance}>
-                      <label>PM备查累计收入<input name="process_received" type="number" min="0" step="0.01" defaultValue={Number(selected.process_received || 0)} required /></label>
-                      <label>PM备查累计支出<input name="process_spent" type="number" min="0" step="0.01" defaultValue={Number(selected.process_spent || 0)} required /></label>
-                      <label>累计已垫资<input name="process_advanced" type="number" min="0" step="0.01" defaultValue={Number(selected.process_advanced || 0)} required /></label>
-                      <button type="submit" disabled={busy === "process-finance"}>{busy === "process-finance" ? "保存中…" : "保存过程资金"}</button>
-                    </form>
-                    <p>“已收入/已支出”卡片以财务确认的银行流水为准；这里保留项目团队备查口径，并维护尚未经过公司账户的垫资。</p>
-                  </details>
-                )}
-              </section>
-              <section className="pmBrief"><div><span>周期</span><b>{selected.planned_start} 至 {selected.planned_end}</b></div><div><span>当前阶段</span><b>{selected.current_stage}</b></div><p>{selected.objective}</p></section>
-
-              {["closed", "archived"].includes(selected.status) && (
-                <section className={`pmPaymentStatus ${selected.payment_complete ? "complete" : "pending"}`}>
-                  <div>
-                    <span>{selected.status === "archived" ? "ARCHIVED PROJECT" : "PAYMENT CLEARANCE"}</span>
-                    <h3>{selected.status === "archived" ? "项目已归档" : selected.payment_complete ? "回款已完成，可以归档" : "项目已结案，仍需跟踪回款"}</h3>
-                    <p>计划应收 {formatMoney(selected.planned_receivable)} · 已回款 {formatMoney(selected.received_amount)} · 待回款 {formatMoney(selected.outstanding_receivable)}</p>
-                  </div>
-                  {canArchive && selected.status === "closed" && selected.payment_complete && (
-                    <button type="button" onClick={() => void onArchive("archive")} disabled={busy === "project-archive"}>归档项目</button>
-                  )}
-                  {canArchive && selected.status === "archived" && (
-                    <button type="button" onClick={() => void onArchive("restore")} disabled={busy === "project-archive"}>恢复项目</button>
-                  )}
-                  {selected.status === "closed" && !selected.payment_complete && <b>待回款项目不能归档</b>}
-                </section>
-              )}
-
-              {canEditContent && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status) && (
-                <details className="pmProjectControlPanel">
-                  <summary>修改项目基础信息、执行团队与预算</summary>
-                  <form className="businessForm" onSubmit={onUpdate}>
-                    <label className="pmProjectNoField">
-                      <span>项目代码（成本中心）</span>
-                      <input name="project_no" required maxLength={40} pattern={isOwner ? COST_CENTER_CODE_PATTERN : undefined} readOnly={!isOwner} list={isOwner ? `cost-center-options-${selected.id}` : undefined} defaultValue={selected.project_no} autoComplete="off" />
-                      {isOwner && <datalist id={`cost-center-options-${selected.id}`}>{COST_CENTER_OPTIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</datalist>}
-                      <small>{isOwner ? (isCostCenterCode(selected.project_no) ? "项目经理可修改；改码后相同代码的未关联流水会自动补充关联。" : "当前为历史代码，保存其他修改前请改为最新 CC 成本中心格式。") : "只有项目经理可以修改项目代码。"}</small>
-                    </label>
-                    <div className="formGrid threeColumns">
-                      <label>项目名称<input name="name" defaultValue={selected.name} required /></label>
-                      <label>签约公司主体<input name="company_name" defaultValue={selected.company_name} required /></label>
-                      <label>甲方公司<input name="client" defaultValue={selected.client} required /></label>
-                      <label>甲方对接人<input name="client_contact" defaultValue={selected.client_contact || ""} required placeholder="填写主要对接人姓名" /></label>
-                      <label>业务分类<input name="business_category" defaultValue={selected.business_category} required /></label>
-                      <label>计划开始<input name="planned_start" type="date" defaultValue={selected.planned_start} required /></label>
-                      <label>计划结束<input name="planned_end" type="date" defaultValue={selected.planned_end} required /></label>
-                      <label>合同金额<input name="contract_amount" type="number" min="0" step="0.01" defaultValue={Number(selected.contract_amount || 0)} /></label>
-                      <label>预算收入<input name="budget_revenue" type="number" min="0" step="0.01" defaultValue={Number(selected.budget_revenue || 0)} /></label>
-                      <label>预算成本（不含税）<input name="budget_cost" type="number" min="0" step="0.01" defaultValue={Number(selected.budget_cost || 0)} /></label>
-                      <label>预计税费<input name="budget_tax" type="number" min="0" step="0.01" defaultValue={Number(selected.budget_tax || 0)} /></label>
-                      <label>合同状态<select name="contract_status" defaultValue={selectedContractStatus}><option value="unsigned">未签署</option><option value="signed_received">已签署收件</option></select></label>
-                      <label className="spanTwo">执行团队名单<input name="members" required defaultValue={selectedExecutionTeam.join("、")} placeholder="填写除项目经理外参与执行的人员，顿号/逗号分隔" /></label>
-                      <label>合同资料 ID（选填）<input name="contract_document_id" defaultValue={selected.contract_document_id || ""} /></label>
-                    </div>
-                    <label>项目目标<textarea name="objective" minLength={4} rows={4} defaultValue={selected.objective} required /></label>
-                    <button className="primaryButton" disabled={busy === "project-update"}>{busy === "project-update" ? "保存中…" : "保存项目修改"}</button>
-                  </form>
-                </details>
-              )}
-
+              </section></section>
+              <section className="pmTabPanel" role="tabpanel" tabIndex={0} id="pm-panel-management" aria-labelledby="pm-tab-management" hidden={activeTab !== "management"}>
+              {isOwner && ["draft", "initiation_rejected"].includes(selected.status) && <button className="primaryButton pmPrimaryAction" onClick={() => void onSubmitInitiation()} disabled={busy === "submit-initiation"}>提交立项复核</button>}
               <section className="pmProjectAdminFooter" aria-label="项目管理记录">
                 <header><span>PROJECT ADMINISTRATION</span><strong>管理记录</strong><small>复核与删除操作集中收纳于此</small></header>
 
-                <details className="pmManagementItem pmReviewSection" defaultOpen={Boolean(canReview && reviewStage && !alreadyReviewed)} key={`${selected.id}-review-${reviewStage || "none"}-${alreadyReviewed ? "done" : "open"}`}>
+                <details className="pmManagementItem pmReviewSection" open={Boolean(canReview && reviewStage && !alreadyReviewed)} key={`${selected.id}-review-${reviewStage || "none"}-${alreadyReviewed ? "done" : "open"}`}>
                   <summary>
                     <div><strong>负责人复核</strong><small>测试阶段由叶靖波复核</small></div>
                     <span className={alreadyReviewed ? "complete" : reviewStage ? "pending" : "neutral"}>{alreadyReviewed ? "已完成" : reviewStage ? "待复核" : "暂无待办"}</span>
@@ -9359,7 +9587,7 @@ function ProjectManagementWorkspace({
                   </div>
                 </details>
 
-                <details className="pmManagementItem pmDeletionPanel" defaultOpen={selected.deletion_request?.status === "pending"} key={`${selected.id}-deletion-${selected.deletion_request?.status || "none"}`}>
+                <details className="pmManagementItem pmDeletionPanel" open={selected.deletion_request?.status === "pending"} key={`${selected.id}-deletion-${selected.deletion_request?.status || "none"}`}>
                   <summary>
                     <div><strong>项目删除</strong><small>项目经理可申请；创始人删除必须验证独立密码</small></div>
                     <span className={selected.deletion_request?.status === "pending" ? "danger" : selected.deletion_request?.status === "rejected" ? "rejected" : "neutral"}>{selected.deletion_request?.status === "pending" ? "待复核" : selected.deletion_request?.status === "rejected" ? "已驳回" : "无申请"}</span>
@@ -9426,94 +9654,11 @@ function ProjectManagementWorkspace({
                   </div>
                 </details>
               </section>
-
-              <section className="pmCashflowSection">
-                <div className="sectionHeading"><div><span>CASHFLOW PLAN</span><h3>应收应付与资金周期</h3></div></div>
-                <div className="tableScroll desktopDataTable pmCashflowTable"><table className="businessTable"><thead><tr><th>方向</th><th>计划日期</th><th>金额</th><th>对方</th><th>累计现金</th><th>实际收付</th>{canEditCashflow && <th>操作</th>}</tr></thead><tbody>
-                  {(selected.cashflow_plans || []).map((item) => (
-                    <tr key={item.id}><td>{item.direction === "receivable" ? "应收" : "应付"}</td><td>{item.due_date}</td><td>{formatMoney(item.amount)}</td><td>{item.counterparty || "—"}</td><td className={Number(item.running_cash) >= 0 ? "positive" : "negative"}>{formatMoney(item.running_cash)}</td><td>{canFinanceConfirm ? <form className="actualForm" onSubmit={(event) => void onCashflowActual(event, item.id)}><input name="actual_amount" type="number" min="0" step="0.01" defaultValue={Number(item.actual_amount || 0)} /><input name="actual_date" type="date" defaultValue={item.actual_date || ""} /><button>确认</button></form> : item.actual_date ? `${item.actual_date} · ${formatMoney(item.actual_amount)}` : "未发生"}</td>{canEditCashflow && <td><ProjectCashflowEditor item={item} onSave={onCashflowUpdate} /></td>}</tr>
-                  ))}
-                  {!(selected.cashflow_plans || []).length && <tr><td colSpan={canEditCashflow ? 7 : 6}>尚未登记收付款计划。</td></tr>}
-                </tbody></table></div>
-                <div className="mobileDataCards pmCashflowCards" aria-label="手机端项目现金流计划">
-                  {(selected.cashflow_plans || []).map((item) => (
-                    <article className={`mobileDataCard pmCashflowCard ${item.direction}`} key={item.id}>
-                      <header>
-                        <div>
-                          <span>{item.direction === "receivable" ? "应收计划" : "应付计划"}</span>
-                          <strong>{item.counterparty || "未填写对方单位"}</strong>
-                        </div>
-                        <b className={item.direction === "receivable" ? "positive" : "negative"}>{formatMoney(item.amount)}</b>
-                      </header>
-                      <dl>
-                        <div><dt>计划日期</dt><dd>{item.due_date}</dd></div>
-                        <div><dt>累计现金</dt><dd className={Number(item.running_cash) >= 0 ? "positive" : "negative"}>{formatMoney(item.running_cash)}</dd></div>
-                        <div><dt>实际收付</dt><dd>{item.actual_date ? `${item.actual_date} · ${formatMoney(item.actual_amount)}` : "未发生"}</dd></div>
-                      </dl>
-                      {item.note && <p>{item.note}</p>}
-                      {canEditCashflow && <ProjectCashflowEditor item={item} onSave={onCashflowUpdate} />}
-                      {canFinanceConfirm && (
-                        <form className="actualForm mobileActualForm" onSubmit={(event) => void onCashflowActual(event, item.id)}>
-                          <label>实际金额<input name="actual_amount" type="number" min="0" step="0.01" defaultValue={Number(item.actual_amount || 0)} /></label>
-                          <label>实际日期<input name="actual_date" type="date" defaultValue={item.actual_date || ""} /></label>
-                          <button>确认实际收付</button>
-                        </form>
-                      )}
-                    </article>
-                  ))}
-                  {!(selected.cashflow_plans || []).length && <p className="mutedText">尚未登记收付款计划。</p>}
-                </div>
-                {selected.closing_summary && (
-                  <section className="mobileProjectSettlement" aria-label="手机端项目决算">
-                    <header><span>PROJECT SETTLEMENT</span><h4>项目结案决算</h4></header>
-                    <p>{selected.closing_summary}</p>
-                    <dl>
-                      <div><dt>实际收入</dt><dd className="positive">{formatMoney(selected.actual_revenue ?? 0)}</dd></div>
-                      <div><dt>实际成本</dt><dd className="negative">{formatMoney(selected.actual_cost ?? 0)}</dd></div>
-                      <div><dt>未收金额</dt><dd>{formatMoney(selected.actual_receivable ?? 0)}</dd></div>
-                      <div><dt>未付金额</dt><dd>{formatMoney(selected.actual_payable ?? 0)}</dd></div>
-                    </dl>
-                  </section>
-                )}
-                {canEditContent && ["draft", "initiation_rejected", "active", "closing_rejected"].includes(selected.status) && (
-                  <form className="compactBusinessForm" onSubmit={onCashflow}>
-                    <select name="direction" defaultValue="receivable"><option value="receivable">应收</option><option value="payable">应付</option></select>
-                    <input name="due_date" type="date" required />
-                    <input name="amount" type="number" min="0.01" step="0.01" placeholder="金额" required />
-                    <input name="counterparty" placeholder="对方单位" />
-                    <input name="note" placeholder="说明" />
-                    <button>新增计划</button>
-                  </form>
-                )}
               </section>
-
-              {isOwner && ["draft", "initiation_rejected"].includes(selected.status) && <button className="primaryButton pmPrimaryAction" onClick={() => void onSubmitInitiation()} disabled={busy === "submit-initiation"}>提交立项复核</button>}
-
-              {canEditContent && selected.status === "active" && (
-                <section className="pmActionGrid">
-                  <form className="businessForm" onSubmit={onProgress}>
-                    <h3>更新项目进度</h3>
-                    <div className="formGrid twoColumns"><label>完成度<input name="progress_percent" type="number" min="0" max="100" defaultValue={selected.progress_percent} required /></label><label>当前阶段<input name="current_stage" defaultValue={selected.current_stage} required /></label></div>
-                    <label>本期完成<textarea name="completed" rows={3} required /></label><label>下一步<textarea name="next_step" rows={3} required /></label><label>风险<textarea name="risks" rows={2} /></label><label className="checkboxLine"><input name="needs_coordination" type="checkbox" />需要管理层协调</label>
-                    <button className="secondaryButton" disabled={busy === "progress"}>保存进度</button>
-                  </form>
-                  {isOwner && (
-                    <form className="businessForm" onSubmit={onSubmitClosing}>
-                      <h3>提交项目结案</h3>
-                      <label>结案总结<textarea name="closing_summary" rows={4} required /></label>
-                      <div className="formGrid twoColumns"><label>实际收入<input name="actual_revenue" type="number" min="0" step="0.01" required /></label><label>实际成本<input name="actual_cost" type="number" min="0" step="0.01" required /></label><label>未收金额<input name="actual_receivable" type="number" min="0" step="0.01" defaultValue="0" /></label><label>未付金额<input name="actual_payable" type="number" min="0" step="0.01" defaultValue="0" /></label></div>
-                      <label className="fileInputCard">结案报告（选填）<input name="closing_file" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.zip" /></label>
-                      <button className="primaryButton" disabled={busy === "closing"}>提交结案复核</button>
-                    </form>
-                  )}
-                </section>
-              )}
-
-              {(selected.progress_updates || []).length > 0 && <section className="pmTimeline"><div className="sectionHeading"><div><span>PROGRESS LOG</span><h3>过程记录</h3></div></div>{selected.progress_updates?.map((item) => <article key={item.id}><i /><div><strong>{item.current_stage} · {item.progress_percent}%</strong><span>{item.completed}</span><small>{new Date(item.created_at).toLocaleString("zh-CN")} · {item.creator}</small></div></article>)}</section>}
-            </>
-          )}
+            </div>
+          </div>
         </section>
-      </section>
+      ) : null}
     </section>
   );
 }

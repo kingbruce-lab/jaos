@@ -1,0 +1,1989 @@
+/* The project workspace owns its responsive layout. Keep these rules scoped
+   so the existing finance, education and knowledge screens are unaffected. */
+.projectManagementWorkspace.pmWorkspaceV2 {
+  --pm-ink: #17263c;
+  --pm-muted: #68778c;
+  --pm-line: #e2e8f0;
+  --pm-blue: #2563eb;
+  container: pm-workspace / inline-size;
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+  color: var(--pm-ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.pmWorkspaceV2 *,
+.pmWorkspaceV2 *::before,
+.pmWorkspaceV2 *::after {
+  box-sizing: border-box;
+}
+
+.pmWorkspaceV2 [hidden] {
+  display: none !important;
+}
+
+.pmWorkspaceV2 :is(button, input, select, textarea, summary, a):focus-visible {
+  outline: 3px solid #9cbdfa;
+  outline-offset: 3px;
+}
+
+.pmWorkspaceV2 :is(button, input, select, textarea) {
+  font: inherit;
+}
+
+.pmWorkspaceV2 :is(button, input, select, textarea, form, section, article) {
+  min-width: 0;
+}
+
+.pmWorkspaceV2 :is(h2, h3, p, strong, small, dd, span) {
+  overflow-wrap: anywhere;
+}
+
+.pmWorkspaceV2 .primaryButton,
+.pmWorkspaceV2 .pmPrimaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  padding: 10px 17px;
+  border: 1px solid var(--pm-blue);
+  border-radius: 8px;
+  color: #fff;
+  background: var(--pm-blue);
+  box-shadow: 0 3px 8px rgb(37 99 235 / 10%);
+  font-size: 14px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.pmWorkspaceV2 .secondaryButton,
+.pmWorkspaceV2 .pmSecondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 9px 15px;
+  border: 1px solid #cbd8e8;
+  border-radius: 8px;
+  color: #2357a0;
+  background: #fff;
+  box-shadow: none;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.pmWorkspaceV2 .pmPageHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 2px 0;
+}
+
+.pmWorkspaceV2 .pmHeadingCopy {
+  min-width: 0;
+}
+
+.pmWorkspaceV2 .pmHeadingCopy :is(h1, h2) {
+  margin: 0;
+  color: var(--pm-ink);
+  font-size: 27px;
+  font-weight: 750;
+  line-height: 1.3;
+  letter-spacing: -.5px;
+}
+
+.pmWorkspaceV2 .pmHeadingCopy :is(p, span) {
+  display: block;
+  margin: 6px 0 0;
+  color: var(--pm-muted);
+  font-size: 14px;
+}
+
+.pmWorkspaceV2 .pmHeadingActions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.pmWorkspaceV2 .pmOverviewPanel,
+.pmWorkspaceV2 .pmWorkspaceDetail {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--pm-line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 14px rgb(31 49 78 / 3%);
+}
+
+.pmWorkspaceV2 .pmFilterBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, .65fr);
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.pmWorkspaceV2 .pmSearchControls {
+  display: flex;
+  min-width: 0;
+  align-items: end;
+  gap: 10px;
+}
+
+.pmWorkspaceV2 .pmSearchControls .pmSearchField {
+  flex: 1 1 0;
+}
+
+.pmWorkspaceV2 .pmFilterFields {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pmWorkspaceV2 .pmMobileFilterToggle {
+  display: none;
+}
+
+.pmWorkspaceV2 .pmFilterSummary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: -5px 0 12px;
+  color: #536b92;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pmWorkspaceV2 .pmSearchField,
+.pmWorkspaceV2 .pmFilterField {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: #53647c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pmWorkspaceV2 .pmSearchField input,
+.pmWorkspaceV2 .pmFilterField select {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 13px;
+  border: 1px solid #d8e0ea;
+  border-radius: 8px;
+  color: var(--pm-ink);
+  background: #fff;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.pmWorkspaceV2 .pmSearchField input::placeholder {
+  color: #8b98aa;
+}
+
+.pmWorkspaceV2 .pmPortfolioTabs,
+.pmWorkspaceV2 .pmDetailTabs {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: 24px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-bottom: 1px solid var(--pm-line);
+  scrollbar-width: thin;
+}
+
+.pmWorkspaceV2 .pmPortfolioTab,
+.pmWorkspaceV2 .pmDetailTab {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 46px;
+  padding: 11px 2px;
+  border: 0;
+  border-radius: 0;
+  color: #66758b;
+  background: transparent;
+  box-shadow: none;
+  font-size: 14px;
+  font-weight: 650;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.pmWorkspaceV2 :is(.pmPortfolioTab, .pmDetailTab):hover {
+  color: var(--pm-blue);
+  background: transparent;
+}
+
+.pmWorkspaceV2 .pmPortfolioTab.active,
+.pmWorkspaceV2 .pmPortfolioTab[aria-pressed="true"],
+.pmWorkspaceV2 .pmDetailTab[aria-selected="true"] {
+  color: var(--pm-blue);
+  background: transparent;
+  box-shadow: inset 0 -3px var(--pm-blue);
+  font-weight: 750;
+}
+
+.pmWorkspaceV2 .pmPortfolioTab :is(span, b) {
+  padding: 1px 5px;
+  border-radius: 5px;
+  color: #8190a4;
+  background: #f0f3f7;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.pmWorkspaceV2 .pmPortfolioTab.active :is(span, b),
+.pmWorkspaceV2 .pmPortfolioTab[aria-pressed="true"] :is(span, b) {
+  color: #2563eb;
+  background: #eaf1ff;
+}
+
+.pmWorkspaceV2 .pmProjectTable {
+  width: 100%;
+  margin-top: 16px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  text-align: left;
+}
+
+.pmWorkspaceV2 .pmProjectTable th {
+  padding: 12px 10px;
+  border-bottom: 1px solid #e8edf4;
+  color: #748197;
+  background: #f7f9fc;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.pmWorkspaceV2 .pmProjectTable th:first-child {
+  width: 43%;
+  padding-left: 16px;
+  border-radius: 8px 0 0 0;
+}
+
+.pmWorkspaceV2 .pmProjectTable th:nth-child(2) { width: 10%; }
+.pmWorkspaceV2 .pmProjectTable th:nth-child(3) { width: 12%; }
+.pmWorkspaceV2 .pmProjectTable th:nth-child(4) { width: 14%; }
+.pmWorkspaceV2 .pmProjectTable th:nth-child(5) { width: 13%; }
+.pmWorkspaceV2 .pmProjectTable th:last-child {
+  width: 8%;
+  border-radius: 0 8px 0 0;
+}
+
+.pmWorkspaceV2 .pmProjectRow td {
+  min-width: 0;
+  padding: 20px 10px;
+  border-bottom: 1px solid #e9eef5;
+  color: #44546b;
+  font-size: 14px;
+  vertical-align: middle;
+  transition: background .15s ease;
+}
+
+.pmWorkspaceV2 .pmProjectRow td:first-child {
+  padding-left: 16px;
+}
+
+.pmWorkspaceV2 .pmProjectRow:hover td,
+.pmWorkspaceV2 .pmProjectRow:focus-within td {
+  background: #f2f6ff;
+}
+
+.pmWorkspaceV2 .pmProjectRow.active td,
+.pmWorkspaceV2 .pmProjectRow.selected td {
+  background: #edf4ff;
+}
+
+.pmWorkspaceV2 .pmProjectIdentity .pmProjectOpen {
+  display: grid;
+  width: 100%;
+  min-height: 52px;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.pmWorkspaceV2 .pmProjectIdentity .pmProjectOpen small {
+  color: #8390a2;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .3px;
+}
+
+.pmWorkspaceV2 .pmProjectIdentity .pmProjectOpen strong {
+  color: var(--pm-ink);
+  font-size: 17px;
+  font-weight: 750;
+  line-height: 1.55;
+}
+
+.pmWorkspaceV2 .pmProjectIdentity .pmProjectOpen span {
+  color: #748197;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.65;
+}
+
+.pmWorkspaceV2 .pmProjectIdentity :is(strong, span, small),
+.pmWorkspaceV2 .pmProjectManager {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.pmWorkspaceV2 td:not(.pmProjectIdentity) > .pmProjectOpen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  min-height: 40px;
+  padding: 6px 0;
+  border: 0;
+  color: var(--pm-blue);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: normal;
+}
+
+.pmWorkspaceV2 .pmProjectProgress > :is(span, b, strong) {
+  display: block;
+  margin-bottom: 6px;
+  color: #34455d;
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.pmWorkspaceV2 .pmProjectProgress :is(progress, i),
+.pmWorkspaceV2 .pmRowProgressTrack {
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: #e8edf4;
+  appearance: none;
+}
+
+.pmWorkspaceV2 .pmProjectProgress progress::-webkit-progress-bar { border-radius: 8px; background: #e8edf4; }
+.pmWorkspaceV2 .pmProjectProgress progress::-webkit-progress-value { border-radius: 8px; background: var(--pm-blue); }
+.pmWorkspaceV2 .pmProjectProgress progress::-moz-progress-bar { border-radius: 8px; background: var(--pm-blue); }
+.pmWorkspaceV2 .pmProjectProgress i > span,
+.pmWorkspaceV2 .pmRowProgressTrack > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--pm-blue);
+}
+
+.pmWorkspaceV2 .pmListProgressTrack {
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 8px;
+  background: #e8edf4;
+}
+
+.pmWorkspaceV2 .pmListProgressTrack > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--pm-blue);
+}
+
+.pmWorkspaceV2 .pmProjectProgress small {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pmWorkspaceV2 .pmStatus,
+.pmWorkspaceV2 .pmContractBadge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.pmWorkspaceV2 .pmStatus.active,
+.pmWorkspaceV2 .pmContractBadge.signed_received {
+  color: #087b59;
+  background: #e9f7ef;
+}
+
+.pmWorkspaceV2 .pmContractBadge.alert {
+  color: #c2293c;
+  background: #fff0f1;
+}
+
+.pmWorkspaceV2 .pmListFooter {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 18px 0 0;
+  color: #748197;
+  font-size: 13px;
+}
+
+.pmWorkspaceV2 .pmListFooter button,
+.pmWorkspaceV2 .pmRecentProgress button,
+.pmWorkspaceV2 .pmWorkflowHint button {
+  min-height: 36px;
+  padding: 5px 0;
+  border: 0;
+  color: var(--pm-blue);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.pmWorkspaceV2 .pmProjectRowAction {
+  text-align: right;
+}
+
+.pmWorkspaceV2 .pmLoadingNotice,
+.pmWorkspaceV2 .pmWorkflowHint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px 18px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid #d7e5fa;
+  border-radius: 8px;
+  color: #4c688f;
+  background: #f4f8ff;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.pmWorkspaceV2 .pmWorkflowHint {
+  margin: 0 0 16px;
+}
+
+.pmWorkspaceV2 .noticeBar.errorNotice {
+  border-color: #f0cbd1;
+  color: #b62c40;
+  background: #fff3f5;
+}
+
+.pmWorkspaceV2 .pmNoResults {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  min-height: 230px;
+  padding: 42px 20px;
+  color: var(--pm-muted);
+  text-align: center;
+}
+
+.pmWorkspaceV2 .pmNoResults :is(h3, p) {
+  margin: 0;
+}
+
+.pmWorkspaceV2 .pmNoResults h3 {
+  color: var(--pm-ink);
+  font-size: 18px;
+}
+
+.pmWorkspaceV2 .pmDetailNav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.pmWorkspaceV2 .pmBackButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 42px;
+  padding: 8px 0;
+  border: 0;
+  color: var(--pm-blue);
+  background: transparent;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.pmWorkspaceV2 .pmProjectSwitcher {
+  display: flex;
+  min-width: 0;
+  max-width: 360px;
+  align-items: center;
+  gap: 8px;
+  color: #53647c;
+  font-size: 13px;
+}
+
+.pmWorkspaceV2 .pmProjectSwitcher select {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 30px 9px 12px;
+  border: 1px solid #d8e0ea;
+  border-radius: 8px;
+  color: var(--pm-ink);
+  background: #fff;
+  font-size: 14px;
+}
+
+.pmWorkspaceV2 .pmProjectSwitcher > span {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.pmWorkspaceV2 .pmWorkspaceDetail {
+  display: block;
+}
+
+.pmWorkspaceV2 .pmWorkspaceHeader {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding-bottom: 18px;
+}
+
+.pmWorkspaceV2 .pmWorkspaceHeader .pmDetailTopline {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pmWorkspaceV2 .pmWorkspaceHeader .pmDetailTopline > p,
+.pmWorkspaceV2 .pmWorkspaceHeader .pmProjectNo {
+  margin: 0;
+  color: #8490a2;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .4px;
+}
+
+.pmWorkspaceV2 .pmWorkspaceTitle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.pmWorkspaceV2 .pmWorkspaceTitle h2,
+.pmWorkspaceV2 h2.pmWorkspaceTitle {
+  min-width: 0;
+  margin: 0;
+  color: var(--pm-ink);
+  font-size: 28px;
+  font-weight: 750;
+  line-height: 1.4;
+  letter-spacing: -.5px;
+  overflow-wrap: anywhere;
+}
+
+.pmWorkspaceV2 .pmWorkspaceTitle > button {
+  flex: 0 0 auto;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMeta {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 20px;
+  color: var(--pm-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMeta :is(p, span) {
+  margin: 0;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMeta > p,
+.pmWorkspaceV2 .pmWorkspaceMeta > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px 18px;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMeta > p {
+  gap: 5px 10px;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMeta > :first-child {
+  flex-basis: 100%;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMeta strong {
+  color: #43536b;
+  font-weight: 600;
+}
+
+.pmWorkspaceV2 .pmContractNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 10px 14px;
+  border: 1px solid #efdcb7;
+  border-radius: 8px;
+  color: #946014;
+  background: #fffbf2;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.pmWorkspaceV2 .pmContractNotice.alert {
+  border-color: #f2cbd2;
+  color: #c4293d;
+  background: #fff3f4;
+}
+
+.pmWorkspaceV2 .pmContractNotice.signed_received {
+  border-color: #cce6d8;
+  color: #11734e;
+  background: #f0faf4;
+}
+
+.pmWorkspaceV2 .pmContractNotice > :is(div, p) {
+  min-width: 0;
+  margin: 0;
+}
+
+.pmWorkspaceV2 .pmContractNotice > p {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.pmWorkspaceV2 .pmContractNotice > p > span {
+  display: inline-flex;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.pmWorkspaceV2 .pmContractNotice button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 3px 0 3px 10px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMetrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 18px;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMetrics article {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--pm-line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMetrics :is(span, strong, small) {
+  display: block;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMetrics span {
+  color: #728096;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMetrics strong {
+  margin-top: 7px;
+  color: var(--pm-ink);
+  font-size: clamp(19px, 2cqi, 25px);
+  font-weight: 750;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.5px;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMetrics strong.positive {
+  color: #087b59;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMetrics strong.negative {
+  color: #c43844;
+}
+
+.pmWorkspaceV2 .pmWorkspaceMetrics small {
+  margin-top: 4px;
+  color: #8b97a8;
+  font-size: 12px;
+}
+
+.pmWorkspaceV2 .pmDetailTabs {
+  gap: 26px;
+  margin-bottom: 22px;
+}
+
+.pmWorkspaceV2 .pmTabPanel {
+  min-width: 0;
+  outline: none;
+}
+
+.pmWorkspaceV2 .pmOverviewGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+}
+
+.pmWorkspaceV2 .pmOverviewCard,
+.pmWorkspaceV2 .pmSectionCard {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--pm-line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.pmWorkspaceV2 .pmOverviewCard > :is(h3, header),
+.pmWorkspaceV2 .pmSectionCard > :is(h3, header) {
+  margin: 0 0 16px;
+}
+
+.pmWorkspaceV2 .pmOverviewCard h3,
+.pmWorkspaceV2 .pmSectionCard h3 {
+  color: var(--pm-ink);
+  font-size: 18px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.pmWorkspaceV2 .pmOverviewCard > p,
+.pmWorkspaceV2 .pmSectionCard > p {
+  margin: 12px 0 16px;
+  color: var(--pm-muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.pmWorkspaceV2 .pmFactsList {
+  display: grid;
+  gap: 13px;
+  margin: 0;
+}
+
+.pmWorkspaceV2 .pmFactsList > div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 10px;
+}
+
+.pmWorkspaceV2 .pmFactsList dt {
+  color: #7c899d;
+  font-size: 13px;
+}
+
+.pmWorkspaceV2 .pmFactsList dd {
+  min-width: 0;
+  margin: 0;
+  color: #40516b;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.pmWorkspaceV2 .pmFactsList dd.positive {
+  color: #087b59;
+}
+
+.pmWorkspaceV2 .pmFactsList dd.negative {
+  color: #c43844;
+}
+
+.pmWorkspaceV2 .pmRecentProgress {
+  margin-top: 18px;
+  padding: 15px 18px;
+  border: 1px solid var(--pm-line);
+  border-radius: 9px;
+  color: var(--pm-muted);
+  background: #fbfcfe;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.pmWorkspaceV2 .pmRecentProgress :is(h3, strong) {
+  margin: 0 12px 0 0;
+  color: #344760;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.pmWorkspaceV2 .pmRecentProgress p {
+  margin: 5px 0 0;
+}
+
+/* Existing forms keep their behavior and permission checks, with typography
+   and spacing adapted to the detail workspace rather than a narrow panel. */
+.pmWorkspaceV2 .pmCreatePanel {
+  padding: 0;
+  border-color: var(--pm-line);
+  background: #fff;
+  box-shadow: none;
+}
+
+.pmWorkspaceV2 .pmCreatePanel:not([open]) {
+  display: none;
+}
+
+.pmWorkspaceV2 .pmCreatePanel summary {
+  padding: 18px 22px;
+  background: #fff;
+}
+
+.pmWorkspaceV2 .pmCreatePanel summary b {
+  color: #2357a0;
+  font-size: 15px;
+}
+
+.pmWorkspaceV2 .pmCreatePanel > form {
+  padding: 4px 22px 22px;
+}
+
+.pmWorkspaceV2 .businessForm {
+  gap: 16px;
+}
+
+.pmWorkspaceV2 .businessForm label,
+.pmWorkspaceV2 .pmProcessFinanceEditor label {
+  color: #52627a;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pmWorkspaceV2 .businessForm :is(input, select, textarea),
+.pmWorkspaceV2 .pmProcessFinanceEditor input,
+.pmWorkspaceV2 .inlineReviewForm :is(input, select),
+.pmWorkspaceV2 .compactBusinessForm :is(input, select),
+.pmWorkspaceV2 .actualForm input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 11px 12px;
+  border: 1px solid #d4deea;
+  border-radius: 8px;
+  color: var(--pm-ink);
+  background: #fff;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.pmWorkspaceV2 .businessForm textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.pmWorkspaceV2 .businessForm input[type="checkbox"] {
+  width: 20px;
+  min-height: 20px;
+}
+
+.pmWorkspaceV2 .pmBrief {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.pmWorkspaceV2 .pmBrief span {
+  color: #7c899d;
+  font-size: 13px;
+}
+
+.pmWorkspaceV2 .pmBrief b {
+  margin-top: 4px;
+  color: #40516b;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pmWorkspaceV2 .pmBrief p {
+  margin: 0;
+  color: #52627a;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.pmWorkspaceV2 .pmOverviewCard .pmProcessFinanceSection {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSection {
+  border-color: var(--pm-line);
+  background: #fff;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSection > header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSection > header strong {
+  margin-top: 0;
+  color: var(--pm-ink);
+  font-size: 18px;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSection > header > div > span {
+  display: none;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSection > header small {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSummary article {
+  min-width: 0;
+  padding: 12px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSummary article > span {
+  color: #7c899d;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSummary article > strong {
+  margin-top: 7px;
+  font-size: 19px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.pmWorkspaceV2 .pmProcessFinanceSummary article > small {
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.pmWorkspaceV2 .pmProgressTrack {
+  height: 6px;
+  margin: 25px 0 16px;
+  background: #e8edf4;
+}
+
+.pmWorkspaceV2 .pmProgressTrack span {
+  background: var(--pm-blue);
+}
+
+.pmWorkspaceV2 .pmProgressTrack b {
+  top: -23px;
+  font-size: 13px;
+}
+
+.pmWorkspaceV2 .pmContractStatusPanel {
+  align-items: flex-start;
+  margin-top: 0;
+  border-width: 1px;
+  border-color: #e6d8bd;
+  border-radius: 9px;
+  background: #fffdf7;
+  box-shadow: none;
+}
+
+.pmWorkspaceV2 .pmContractStatusPanel.alert {
+  border-color: #f1ced3;
+  background: #fff7f8;
+}
+
+.pmWorkspaceV2 .pmContractStatusPanel.signed_received {
+  border-color: #cfe6d9;
+  background: #f5fbf7;
+}
+
+.pmWorkspaceV2 .pmContractStatusCopy > span {
+  display: none;
+}
+
+.pmWorkspaceV2 .pmContractStatusCopy h3 {
+  margin: 0 0 7px;
+  font-size: 18px;
+}
+
+.pmWorkspaceV2 .pmContractStatusCopy p {
+  font-size: 14px;
+}
+
+.pmWorkspaceV2 .pmSectionCard .pmContractStatusForm {
+  max-width: 520px;
+}
+
+.pmWorkspaceV2 .pmFinancialSummary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pmWorkspaceV2 .pmFinancialSummary article {
+  padding: 16px;
+  background: #fafbfd;
+}
+
+.pmWorkspaceV2 .pmFinancialSummary strong {
+  font-size: 20px;
+}
+
+.pmWorkspaceV2 .pmSectionCard + .pmSectionCard,
+.pmWorkspaceV2 .pmTabPanel > section + section,
+.pmWorkspaceV2 .pmTabPanel > details + section {
+  margin-top: 18px;
+}
+
+.pmWorkspaceV2 .pmSectionCard .pmProjectControlPanel,
+.pmWorkspaceV2 .pmSectionCard .pmCashflowSection,
+.pmWorkspaceV2 .pmSectionCard .pmTimeline,
+.pmWorkspaceV2 .pmSectionCard .pmReviewSection {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.pmWorkspaceV2 .pmProjectAdminFooter {
+  display: grid;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.pmWorkspaceV2 .pmProjectAdminFooter > header > span,
+.pmWorkspaceV2 .sectionHeading > div > span {
+  display: none;
+}
+
+.pmWorkspaceV2 .pmProjectAdminFooter > header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.pmWorkspaceV2 .pmProjectAdminFooter > header strong {
+  font-size: 18px;
+}
+
+.pmWorkspaceV2 .pmSectionCard .sectionHeading h3 {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+.pmWorkspaceV2 .pmSectionCard .sectionHeading small,
+.pmWorkspaceV2 .pmProjectAdminFooter > header small {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.pmWorkspaceV2 .pmExecutionTeam {
+  margin-top: 0;
+}
+
+.pmWorkspaceV2 .pmExecutionTeam span {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid #dce6f2;
+  border-radius: 6px;
+  color: #315b88;
+  background: #f3f7fc;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.pmWorkspaceV2 .pmCollaboratorAccess {
+  margin-top: 22px;
+  padding-top: 20px;
+}
+
+.pmWorkspaceV2 .pmCollaboratorForm input,
+.pmWorkspaceV2 .pmCollaboratorForm button {
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.pmWorkspaceV2 .businessTable {
+  font-size: 14px;
+}
+
+.pmWorkspaceV2 .businessTable :is(th, td) {
+  padding: 14px 12px;
+}
+
+.pmWorkspaceV2 .pmTimeline strong {
+  font-size: 15px;
+}
+
+.pmWorkspaceV2 .pmTimeline span {
+  font-size: 14px;
+}
+
+.pmWorkspaceV2 .pmTimeline small {
+  font-size: 12px;
+}
+
+@container pm-workspace (max-width: 900px) {
+  .pmWorkspaceV2 .pmWorkspaceMetrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pmWorkspaceV2 .pmOverviewGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pmWorkspaceV2 .pmFilterBar {
+    grid-template-columns: minmax(0, 1fr) minmax(250px, .7fr);
+    gap: 10px;
+  }
+
+  .pmWorkspaceV2 .pmProjectTable th:first-child {
+    width: 42%;
+  }
+
+  .pmWorkspaceV2 .pmProjectTable :is(th, td) {
+    padding-inline: 8px;
+  }
+
+  .pmWorkspaceV2 .pmProjectTable :is(th, td):first-child {
+    padding-left: 12px;
+  }
+
+  .pmWorkspaceV2 .pmDetailTabs {
+    gap: 22px;
+  }
+
+  .pmWorkspaceV2 .pmContractStatusPanel {
+    flex-direction: column;
+  }
+
+  .pmWorkspaceV2 .pmContractStatusForm {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .pmWorkspaceV2 .formGrid.threeColumns,
+  .pmWorkspaceV2 .pmProcessFinanceEditor > form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pmWorkspaceV2 .compactBusinessForm {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pmWorkspaceV2 .pmFounderDeleteForm,
+  .pmWorkspaceV2 .pmDeletePasswordSettings form,
+  .pmWorkspaceV2 .pmProjectAdminFooter .deletionReviewForm {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container pm-workspace (max-width: 700px) {
+  .pmWorkspaceV2 .pmOverviewPanel,
+  .pmWorkspaceV2 .pmWorkspaceDetail {
+    padding: 18px;
+  }
+
+  .pmWorkspaceV2 .pmFilterBar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pmWorkspaceV2 .pmSearchField {
+    grid-column: 1 / -1;
+  }
+
+  .pmWorkspaceV2 .pmPortfolioTabs {
+    gap: 20px;
+  }
+
+  .pmWorkspaceV2 .pmProjectTable {
+    display: block;
+    margin-top: 16px;
+  }
+
+  .pmWorkspaceV2 .pmProjectTableHead {
+    display: none;
+  }
+
+  .pmWorkspaceV2 .pmProjectTable tbody {
+    display: grid;
+    gap: 14px;
+  }
+
+  .pmWorkspaceV2 .pmProjectRow {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: 12px 18px;
+    padding: 18px;
+    border: 1px solid var(--pm-line);
+    border-radius: 9px;
+    background: #fff;
+  }
+
+  .pmWorkspaceV2 .pmProjectRow.active,
+  .pmWorkspaceV2 .pmProjectRow.selected {
+    border-color: #b9d1fb;
+    background: #f5f8ff;
+  }
+
+  .pmWorkspaceV2 .pmProjectRow td,
+  .pmWorkspaceV2 .pmProjectRow td:first-child {
+    display: block;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .pmWorkspaceV2 .pmProjectRow:hover td,
+  .pmWorkspaceV2 .pmProjectRow:focus-within td,
+  .pmWorkspaceV2 .pmProjectRow.active td,
+  .pmWorkspaceV2 .pmProjectRow.selected td {
+    background: transparent;
+  }
+
+  .pmWorkspaceV2 .pmProjectRow .pmProjectIdentity {
+    grid-column: 1 / -1;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #edf0f5;
+  }
+
+  .pmWorkspaceV2 .pmProjectManager::before,
+  .pmWorkspaceV2 .pmProjectState::before,
+  .pmWorkspaceV2 .pmProjectProgress::before,
+  .pmWorkspaceV2 .pmProjectContract::before {
+    display: block;
+    margin-bottom: 5px;
+    color: #8995a7;
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .pmWorkspaceV2 .pmProjectManager::before { content: "项目经理"; }
+  .pmWorkspaceV2 .pmProjectState::before { content: "项目状态"; }
+  .pmWorkspaceV2 .pmProjectProgress::before { content: "执行进度"; }
+  .pmWorkspaceV2 .pmProjectContract::before { content: "合同状态"; }
+
+  .pmWorkspaceV2 .pmProjectRow td:last-child {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .pmWorkspaceV2 .pmProjectIdentity .pmProjectOpen strong {
+    font-size: 17px;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceTitle {
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceTitle h2,
+  .pmWorkspaceV2 h2.pmWorkspaceTitle {
+    font-size: 25px;
+  }
+
+  .pmWorkspaceV2 .pmOverviewCard,
+  .pmWorkspaceV2 .pmSectionCard {
+    padding: 18px;
+  }
+
+  .pmWorkspaceV2 .pmFinancialSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pmWorkspaceV2 .pmCollaboratorAccess {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pmWorkspaceV2 .pmCollaboratorForm {
+    grid-column: 1;
+    max-width: none;
+  }
+
+  .pmWorkspaceV2 .inlineReviewForm {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pmWorkspaceV2 .inlineReviewForm button {
+    grid-column: 1 / -1;
+  }
+}
+
+@container pm-workspace (max-width: 440px) {
+  .pmWorkspaceV2 .pmHeadingCopy :is(h1, h2) {
+    font-size: 25px;
+  }
+
+  .pmWorkspaceV2 .pmHeadingCopy :is(p, span) {
+    font-size: 13px;
+  }
+
+  .pmWorkspaceV2 .pmPageHeading {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .pmWorkspaceV2 .pmHeadingActions :is(button, a) {
+    min-height: 42px;
+    padding-inline: 12px;
+    font-size: 13px;
+  }
+
+  .pmWorkspaceV2 .pmOverviewPanel,
+  .pmWorkspaceV2 .pmWorkspaceDetail {
+    padding: 14px;
+  }
+
+  .pmWorkspaceV2 .pmPortfolioTabs,
+  .pmWorkspaceV2 .pmDetailTabs {
+    gap: 18px;
+  }
+
+  .pmWorkspaceV2 .pmPortfolioTab,
+  .pmWorkspaceV2 .pmDetailTab {
+    font-size: 13px;
+  }
+
+  .pmWorkspaceV2 .pmProjectRow {
+    gap: 12px;
+    padding: 15px;
+  }
+
+  .pmWorkspaceV2 .pmDetailNav {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
+
+  .pmWorkspaceV2 .pmProjectSwitcher {
+    flex: 1 1 170px;
+    max-width: 100%;
+  }
+
+  .pmWorkspaceV2 .pmProjectSwitcher > :is(span, strong) {
+    display: none;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceTitle {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceTitle h2,
+  .pmWorkspaceV2 h2.pmWorkspaceTitle {
+    font-size: 24px;
+  }
+
+  .pmWorkspaceV2 .pmContractNotice {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+
+  .pmWorkspaceV2 .pmContractNotice button {
+    align-self: end;
+    padding: 2px 0;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceMetrics {
+    gap: 9px;
+    margin: 14px 0;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceMetrics article {
+    padding: 12px;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceMetrics strong {
+    font-size: 18px;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceMetrics span {
+    font-size: 12px;
+  }
+
+  .pmWorkspaceV2 .pmOverviewCard,
+  .pmWorkspaceV2 .pmSectionCard {
+    padding: 15px;
+  }
+
+  .pmWorkspaceV2 .pmFactsList > div {
+    grid-template-columns: 70px minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .pmWorkspaceV2 .pmProcessFinanceSummary {
+    gap: 7px;
+  }
+
+  .pmWorkspaceV2 .pmProcessFinanceSummary article > strong {
+    font-size: 16px;
+  }
+
+  .pmWorkspaceV2 .pmProcessFinanceSummary article > span {
+    font-size: 12px;
+  }
+
+  .pmWorkspaceV2 .formGrid.threeColumns,
+  .pmWorkspaceV2 .formGrid.twoColumns,
+  .pmWorkspaceV2 .pmProcessFinanceEditor > form,
+  .pmWorkspaceV2 .compactBusinessForm,
+  .pmWorkspaceV2 .pmFounderDeleteForm,
+  .pmWorkspaceV2 .pmDeletePasswordSettings form,
+  .pmWorkspaceV2 .pmDeletionRequestForm,
+  .pmWorkspaceV2 .pmDeletionPanel,
+  .pmWorkspaceV2 .inlineReviewForm,
+  .pmWorkspaceV2 .pmProjectAdminFooter .deletionReviewForm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pmWorkspaceV2 .formGrid .spanTwo,
+  .pmWorkspaceV2 .inlineReviewForm button {
+    grid-column: auto;
+  }
+
+  .pmWorkspaceV2 .businessForm :is(input, select, textarea),
+  .pmWorkspaceV2 .pmCollaboratorForm input,
+  .pmWorkspaceV2 .pmFilterField select,
+  .pmWorkspaceV2 .pmSearchField input {
+    font-size: 16px;
+  }
+
+  .pmWorkspaceV2 .pmCollaboratorForm {
+    flex-wrap: wrap;
+  }
+
+  .pmWorkspaceV2 .pmCollaboratorForm input {
+    flex-basis: 100%;
+  }
+
+  .pmWorkspaceV2 .pmCollaboratorForm button {
+    width: 100%;
+  }
+
+  .pmWorkspaceV2 .pmBrief {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pmWorkspaceV2 .pmBrief p {
+    grid-column: auto;
+  }
+
+  .pmWorkspaceV2 .pmCreatePanel > form {
+    padding-inline: 14px;
+  }
+}
+
+/* Mobile behavior follows available content width, including landscape
+   phones whose global navigation leaves less space than the viewport. */
+@container pm-workspace (max-width: 700px) {
+  .pmWorkspaceV2 .pmFilterBar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .pmWorkspaceV2 .pmFilterFields {
+    gap: 10px;
+  }
+
+  .pmWorkspaceV2 .pmFilterFields:not(.expanded) {
+    display: none;
+  }
+
+  .pmWorkspaceV2 .pmMobileFilterToggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 72px;
+    min-height: 44px;
+    padding: 9px 12px;
+    border: 1px solid #cbd8e8;
+    border-radius: 8px;
+    color: #2357a0;
+    background: #f7faff;
+    font-size: 14px;
+    font-weight: 650;
+  }
+
+  .pmWorkspaceV2 .pmMobileFilterToggle[aria-expanded="true"] {
+    border-color: #96b9f8;
+    background: #edf4ff;
+  }
+
+  .pmWorkspaceV2 .pmMobileFilterToggle b {
+    min-width: 19px;
+    padding: 0 4px;
+    border-radius: 5px;
+    color: #fff;
+    background: var(--pm-blue);
+    font-size: 12px;
+    line-height: 19px;
+  }
+
+  .projectManagementWorkspace.pmWorkspaceV2 :is(button, summary) {
+    min-width: 44px;
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  .pmWorkspaceV2 :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]) {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .pmWorkspaceV2 :is(button, input, select, textarea, summary, details, [role="tabpanel"]) {
+    scroll-margin-top: calc(62px + env(safe-area-inset-top));
+    scroll-margin-bottom: calc(88px + env(safe-area-inset-bottom));
+  }
+
+  .pmWorkspaceV2 .checkboxLine {
+    min-height: 44px;
+    padding-block: 8px;
+  }
+
+  .pmWorkspaceV2 .pmCollaboratorChips > span:has(button) {
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr) 44px;
+    padding-right: 3px;
+  }
+
+  .pmWorkspaceV2 .pmCollaboratorChips > span button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .pmWorkspaceV2 .pmProjectRow {
+    gap: 10px 14px;
+    padding: 14px;
+  }
+
+  .pmWorkspaceV2 .pmProjectRowAction .pmProjectOpen {
+    min-width: 84px;
+    padding: 9px 13px;
+    border: 1px solid #dbe6f5;
+    border-radius: 7px;
+    background: #f7faff;
+  }
+
+  .pmWorkspaceV2 .pmPortfolioTabs,
+  .pmWorkspaceV2 .pmDetailTabs {
+    scroll-padding-inline: 8px;
+    -webkit-overflow-scrolling: touch;
+    padding-inline: 2px;
+    scrollbar-width: none;
+  }
+
+  .pmWorkspaceV2 :is(.pmPortfolioTabs, .pmDetailTabs)::-webkit-scrollbar {
+    display: none;
+  }
+
+  .pmWorkspaceV2 .pmDetailTabs {
+    position: sticky;
+    z-index: 12;
+    top: env(safe-area-inset-top, 0px);
+    min-height: 48px;
+    padding-top: 2px;
+    background: #fff;
+  }
+
+  .pmWorkspaceV2 .pmPortfolioTab,
+  .pmWorkspaceV2 .pmDetailTab {
+    min-width: 44px;
+    padding-inline: 6px;
+  }
+
+  .pmWorkspaceV2 .pmTabPanel {
+    scroll-margin-top: calc(62px + env(safe-area-inset-top));
+  }
+
+  .content:has(> .topbar h1) .pmWorkspaceV2 .pmHeadingCopy h2 {
+    display: none;
+  }
+
+  .pmWorkspaceV2 .pmCashflowTable {
+    display: none;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCards {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard {
+    display: grid;
+    min-width: 0;
+    gap: 13px;
+    padding: 14px;
+    border: 1px solid var(--pm-line);
+    border-left: 4px solid #1c8a62;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 6px rgb(31 49 78 / 3%);
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard.payable {
+    border-left-color: #d94049;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard > header {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 9px 12px;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard > header > div {
+    min-width: 0;
+    flex: 1 1 120px;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard > header :is(span, strong) {
+    display: block;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard > header span {
+    color: #7c899d;
+    font-size: 12px;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard > header strong {
+    margin-top: 3px;
+    color: var(--pm-ink);
+    font-size: 15px;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard > header > b {
+    max-width: 100%;
+    font-size: 16px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard > p {
+    margin: 0;
+    color: var(--pm-muted);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard dl,
+  .pmWorkspaceV2 .mobileProjectSettlement dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard dl > div,
+  .pmWorkspaceV2 .mobileProjectSettlement dl > div {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+    padding: 10px;
+    border-radius: 7px;
+    background: #f2f5f9;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard dt,
+  .pmWorkspaceV2 .mobileProjectSettlement dt {
+    color: #7c899d;
+    font-size: 12px;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard dd,
+  .pmWorkspaceV2 .mobileProjectSettlement dd {
+    min-width: 0;
+    margin: 0;
+    color: #344760;
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 1.7;
+  }
+
+  .pmWorkspaceV2 .mobileActualForm {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--pm-line);
+    border-radius: 8px;
+    background: #fff;
+  }
+
+  .pmWorkspaceV2 .mobileActualForm label {
+    display: grid;
+    min-width: 0;
+    gap: 6px;
+    color: var(--pm-muted);
+    font-size: 14px;
+  }
+
+  .pmWorkspaceV2 .mobileProjectSettlement {
+    display: grid;
+    gap: 12px;
+    padding: 15px;
+    border: 1px solid var(--pm-line);
+    border-radius: 10px;
+    background: #fafbfd;
+  }
+
+  .pmWorkspaceV2 .mobileProjectSettlement header span {
+    display: none;
+  }
+
+  .pmWorkspaceV2 .mobileProjectSettlement h4 {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  .pmWorkspaceV2 .mobileProjectSettlement > p {
+    margin: 0;
+    line-height: 1.7;
+  }
+
+  .pmWorkspaceV2 .pmCashflowEditor .businessForm {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    padding: 12px 0 0;
+  }
+}
+
+@container pm-workspace (max-width: 440px) {
+  .pmWorkspaceV2 .pmOverviewCard,
+  .pmWorkspaceV2 .pmSectionCard {
+    padding: 13px;
+  }
+
+  .pmWorkspaceV2 .pmFinancialSummary,
+  .pmWorkspaceV2 .pmProcessFinanceSummary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .pmWorkspaceV2 .pmFinancialSummary article {
+    display: flex;
+    min-height: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    padding: 12px;
+  }
+
+  .pmWorkspaceV2 .pmFinancialSummary article > span {
+    flex: 1 1 80px;
+    font-size: 13px;
+  }
+
+  .pmWorkspaceV2 .pmFinancialSummary article > strong {
+    flex: 0 0 auto;
+    margin-top: 0;
+    font-size: 18px;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pmWorkspaceV2 .pmProcessFinanceSummary article {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid #edf0f5;
+  }
+
+  .pmWorkspaceV2 .pmProcessFinanceSummary article > span {
+    flex: 1 1 60px;
+    font-size: 13px;
+  }
+
+  .pmWorkspaceV2 .pmProcessFinanceSummary article > strong {
+    flex: 0 0 auto;
+    margin-top: 0;
+    font-size: 18px;
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+
+  .pmWorkspaceV2 .pmProcessFinanceSummary article > small {
+    flex: 1 0 100%;
+    font-size: 12px;
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard dl,
+  .pmWorkspaceV2 .mobileProjectSettlement dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pmWorkspaceV2 .pmCashflowCard dl dd,
+  .pmWorkspaceV2 .mobileProjectSettlement dl dd {
+    white-space: normal;
+    overflow-wrap: normal;
+  }
+
+  .pmWorkspaceV2 .pmPaymentStatus {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .pmWorkspaceV2 .pmCashflowEditorActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+@container pm-workspace (max-width: 380px) {
+  .pmWorkspaceV2 .pmWorkspaceMetrics {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceMetrics article {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 11px 12px;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceMetrics article > span {
+    flex: 1 1 65px;
+    font-size: 13px;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceMetrics article > strong {
+    flex: 0 0 auto;
+    margin-top: 0;
+    font-size: 18px;
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+
+  .pmWorkspaceV2 .pmWorkspaceMetrics article > small {
+    flex: 1 0 100%;
+    margin-top: 0;
+    font-size: 12px;
+  }
+
+  .pmWorkspaceV2 .pmDetailNav {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .pmWorkspaceV2 .pmProjectSwitcher {
+    width: 100%;
+    max-width: none;
+    flex: none;
+  }
+}
+
+/* The mobile shell uses horizontal clipping. An overflow-x:hidden body
+   would also become an unscrolled overflow-y:auto ancestor and prevent
+   the detail tabs from sticking to the document's scrolling viewport. */
+@media (max-width: 760px) {
+  body:has(.pmWorkspaceV2) {
+    overflow-x: clip;
+    overflow-y: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pmWorkspaceV2 * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
