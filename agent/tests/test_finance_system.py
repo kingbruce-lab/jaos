@@ -338,6 +338,107 @@ def _configure(monkeypatch, tmp_path, db: Session, user: User) -> TestClient:
     return TestClient(app)
 
 
+def test_statement_batch_metadata_resolves_history_outside_default_list(
+    tmp_path, monkeypatch,
+) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        uploaded = client.post(
+            "/v1/finance/statements/upload",
+            data={"company_name": "京奥电竞（北京）科技有限公司",
+                  "bank_name": "测试银行", "account_number": "6222000011117777"},
+            files={"file": ("历史银行流水.xlsx", _xlsx(), "application/octet-stream")},
+        )
+        assert uploaded.status_code == 200
+        metadata = uploaded.json()
+        batch = db.get(BankStatementBatch, metadata["id"])
+        batch.created_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        for index in range(50):
+            db.add(BankStatementBatch(
+                entity_id=batch.entity_id,
+                account_id=batch.account_id,
+                original_filename=f"近期批次-{index}.xlsx",
+                source_path=batch.source_path,
+                file_hash=hashlib.sha256(f"metadata-batch-{index}".encode()).hexdigest(),
+                uploaded_by_user_id=users["finance"].id,
+                created_at=datetime(2026, 1, 1, tzinfo=timezone.utc)
+                + timedelta(days=index),
+            ))
+        db.commit()
+        listed = client.get(
+            "/v1/finance/statements", params={"entity_id": batch.entity_id},
+        )
+        assert listed.status_code == 200
+        assert len(listed.json()) == 50
+        assert batch.id not in {item["id"] for item in listed.json()}
+        metadata["created_at"] = "2020-01-01T00:00:00Z"
+        counts_before = [db.scalar(select(func.count(model.id)))
+                         for model in (BankStatementBatch, BankTransaction, AuditLog)]
+        for role in ("finance", "manager", "founder"):
+            app.dependency_overrides[current_user] = lambda role=role: users[role]
+            response = client.get(
+                f"/v1/finance/statements/{batch.id}",
+                params={"entity_id": batch.entity_id},
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload == {key: value for key, value in metadata.items()
+                               if key != "duplicate_file"}
+            assert "source_path" not in payload
+            assert "file_hash" not in payload
+            assert payload["account"] != "6222000011117777"
+        assert [db.scalar(select(func.count(model.id)))
+                for model in (BankStatementBatch, BankTransaction, AuditLog)] == counts_before
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
+def test_statement_batch_metadata_enforces_view_permission_and_company_scope(
+    tmp_path, monkeypatch,
+) -> None:
+    db, users = _database()
+    client = _configure(monkeypatch, tmp_path, db, users["finance"])
+    try:
+        entities = client.get("/v1/finance/entities").json()
+        uploaded = client.post(
+            "/v1/finance/statements/upload",
+            data={"entity_id": entities[0]["id"], "bank_name": "测试银行",
+                  "account_number": "6222000011117777"},
+            files={"file": ("公司银行流水.xlsx", _xlsx(), "application/octet-stream")},
+        )
+        assert uploaded.status_code == 200
+        metadata = uploaded.json()
+        endpoint = f"/v1/finance/statements/{metadata['id']}"
+        for actor, ceiling, active in (
+            (users["business"], "L5", True),
+            (users["finance"], "L3", True),
+            (users["manager"], "L4", True),
+            (users["finance"], "L4", False),
+        ):
+            actor.confidentiality_ceiling = ceiling
+            actor.active = active
+            app.dependency_overrides[current_user] = lambda actor=actor: actor
+            denied = client.get(endpoint, params={"entity_id": metadata["entity_id"]})
+            assert denied.status_code == 403
+            assert denied.json()["detail"] == "无权访问财务分析系统"
+        users["finance"].confidentiality_ceiling = "L4"
+        users["finance"].active = True
+        app.dependency_overrides[current_user] = lambda: users["finance"]
+        wrong_company = client.get(endpoint, params={"entity_id": entities[1]["id"]})
+        missing = client.get(
+            "/v1/finance/statements/does-not-exist",
+            params={"entity_id": metadata["entity_id"]},
+        )
+        assert wrong_company.status_code == missing.status_code == 404
+        assert wrong_company.json() == missing.json() == {"detail": "流水批次不存在"}
+        assert client.get(endpoint).status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+        db.close()
+
+
 def test_statement_batch_delete_permissions_and_hard_delete(tmp_path, monkeypatch) -> None:
     db, users = _database()
     client = _configure(monkeypatch, tmp_path, db, users["finance"])

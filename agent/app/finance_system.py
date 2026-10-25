@@ -2208,6 +2208,20 @@ def list_statement_batches(
     return [_batch_payload(item, db) for item in rows]
 
 
+@router.get("/statements/{batch_id}")
+def statement_batch(
+    batch_id: str,
+    entity_id: str | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_finance_view(user)
+    batch = db.get(BankStatementBatch, batch_id)
+    if batch is None or (entity_id and batch.entity_id != entity_id):
+        raise HTTPException(status_code=404, detail="流水批次不存在")
+    return _batch_payload(batch, db)
+
+
 @router.get("/statements/{batch_id}/transactions")
 def statement_transactions(
     batch_id: str,

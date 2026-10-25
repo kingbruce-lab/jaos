@@ -1717,6 +1717,10 @@ export default function Home() {
   });
   const [financeIncludeInternalTransfers, setFinanceIncludeInternalTransfers] = useState(false);
   const [selectedFinanceBatch, setSelectedFinanceBatch] = useState("");
+  const financeBatchRequestRef = useRef(0);
+  const financeScopeRequestRef = useRef(0);
+  const financeSelectedEntityRef = useRef("");
+  const financeTransferScopeRef = useRef(false);
   const [financeTransactions, setFinanceTransactions] = useState<FinanceTransaction[]>([]);
   const [financePurposeCorrections, setFinancePurposeCorrections] = useState<FinancePurposeCorrectionRegistry>({
     items: [],
@@ -2020,6 +2024,11 @@ export default function Home() {
       cancelled = true;
     };
   }, [token, user]);
+
+  useEffect(() => {
+    financeSelectedEntityRef.current = selectedFinanceEntityId;
+    financeTransferScopeRef.current = financeIncludeInternalTransfers;
+  }, [selectedFinanceEntityId, financeIncludeInternalTransfers]);
 
   useEffect(() => {
     if (!token || active !== "财务分析" || !selectedFinanceEntityId) return;
@@ -3430,6 +3439,8 @@ export default function Home() {
 
   async function refreshFinance() {
     if (!token || !selectedFinanceEntityId) return;
+    if (financeSelectedEntityRef.current !== selectedFinanceEntityId || financeTransferScopeRef.current !== financeIncludeInternalTransfers) return;
+    const scopeRequest = financeScopeRequestRef.current;
     const entity = financeEntities.find((item) => item.id === selectedFinanceEntityId);
     if (!entity) return;
     const query = `?entity_id=${encodeURIComponent(selectedFinanceEntityId)}&include_internal_transfers=${financeIncludeInternalTransfers ? "true" : "false"}`;
@@ -3451,6 +3462,7 @@ export default function Home() {
           ),
       kbFetch<FinancePurposeCorrectionRegistry>(`v1/finance/purpose-corrections${transferQuery}&review_status=all&limit=100`, {}, token),
     ]);
+    if (scopeRequest !== financeScopeRequestRef.current || financeSelectedEntityRef.current !== selectedFinanceEntityId || financeTransferScopeRef.current !== financeIncludeInternalTransfers) return;
     setFinanceDashboard(dashboard);
     setFinanceBatches(batches);
     setFinanceCash(cash);
@@ -3463,6 +3475,9 @@ export default function Home() {
   function handleFinanceEntitySelect(entityId: string) {
     setActive("财务分析");
     if (entityId === selectedFinanceEntityId) return;
+    financeBatchRequestRef.current += 1;
+    financeScopeRequestRef.current += 1;
+    financeSelectedEntityRef.current = entityId;
     setSelectedFinanceEntityId(entityId);
     setFinancePeriodView("realtime");
     setFinanceAnnualYears([]);
@@ -3476,6 +3491,18 @@ export default function Home() {
     setFinanceTransactions([]);
     setFinanceMessage("");
     setFinanceUploadError("");
+  }
+
+  function handleFinanceTransferScopeChange(include: boolean) {
+    if (include === financeIncludeInternalTransfers) return;
+    financeScopeRequestRef.current += 1;
+    financeBatchRequestRef.current += 1;
+    financeTransferScopeRef.current = include;
+    setFinanceDashboard(null);
+    setFinanceAnnualDashboard(null);
+    setSelectedFinanceBatch("");
+    setFinanceTransactions([]);
+    setFinanceIncludeInternalTransfers(include);
   }
 
   async function handleFinanceTransferDecision(transferId: string, action: "confirm" | "reject" | "reset") {
@@ -3607,31 +3634,39 @@ export default function Home() {
         : `已解析 ${result.row_count} 条流水，过滤 ${result.duplicate_count} 条重复记录，请核对后确认。`);
       form.reset();
       await refreshFinance();
-      await handleFinanceBatchSelect(result.id);
+      await handleFinanceBatchSelect(result.id, true);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "银行流水上传失败";
       setFinanceUploadError(message);
       setError(message);
+      throw cause;
     } finally {
       setFinanceBusy("");
     }
   }
 
-  async function handleFinanceBatchSelect(batchId: string) {
-    if (!token || !selectedFinanceEntityId) return;
-    setSelectedFinanceBatch(batchId);
-    setFinanceBusy(`batch-${batchId}`);
+  async function handleFinanceBatchSelect(batchId: string, preserveBusy = false) {
+    if (!token || !selectedFinanceEntityId) throw new Error("请选择公司账套并重新登录后查看流水");
+    if (financeSelectedEntityRef.current !== selectedFinanceEntityId) throw new Error("公司账套已切换，请重新选择银行批次");
+    const requestId = ++financeBatchRequestRef.current;
+    if (!preserveBusy) setFinanceBusy(`batch-${batchId}`);
     setError("");
     try {
-      setFinanceTransactions(await kbFetch<FinanceTransaction[]>(
-        `v1/finance/statements/${batchId}/transactions?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`,
-        {},
-        token,
-      ));
+      const batchQuery = `?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`;
+      const knownBatch = financeBatches.some((item) => item.id === batchId && item.entity_id === selectedFinanceEntityId);
+      const [rows, historicalBatch] = await Promise.all([
+        kbFetch<FinanceTransaction[]>(`v1/finance/statements/${batchId}/transactions${batchQuery}`, {}, token),
+        knownBatch ? Promise.resolve(null) : kbFetch<FinanceBatch>(`v1/finance/statements/${batchId}${batchQuery}`, {}, token),
+      ]);
+      if (requestId !== financeBatchRequestRef.current) return;
+      if (historicalBatch) setFinanceBatches((items) => [historicalBatch, ...items.filter((item) => item.id !== historicalBatch.id)]);
+      setFinanceTransactions(rows);
+      setSelectedFinanceBatch(batchId);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "流水明细加载失败");
+      if (requestId === financeBatchRequestRef.current) setError(cause instanceof Error ? cause.message : "流水明细加载失败");
+      throw cause;
     } finally {
-      setFinanceBusy("");
+      if (!preserveBusy && requestId === financeBatchRequestRef.current) setFinanceBusy("");
     }
   }
 
@@ -3659,12 +3694,13 @@ export default function Home() {
         method: "PATCH",
         body: JSON.stringify(payload),
       }, token);
-      if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch);
+      if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch, true);
       setFinanceMessage(annotationOnly
         ? "财务分类和项目关联已更新；银行原始附言及已采用用途未改动。"
         : "流水基础信息与业务核对信息已更新。");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "流水修改失败");
+      throw cause;
     } finally {
       setFinanceBusy("");
     }
@@ -3696,7 +3732,7 @@ export default function Home() {
       );
       setFinanceMessage("用途修正已提交，创始人复核通过后才会正式生效。");
       await refreshFinance();
-      if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch);
+      if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch, true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "用途修正提交失败");
     } finally {
@@ -3739,7 +3775,7 @@ export default function Home() {
         ? "用途修正已通过，系统已采用复核后的实际业务用途。"
         : "用途修正已拒绝，系统继续保留原用途。");
       await refreshFinance();
-      if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch);
+      if (selectedFinanceBatch) await handleFinanceBatchSelect(selectedFinanceBatch, true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "用途修正复核失败");
     } finally {
@@ -3755,7 +3791,7 @@ export default function Home() {
       await kbFetch(`v1/finance/statements/${batchId}/confirm?entity_id=${encodeURIComponent(selectedFinanceEntityId)}`, { method: "POST" }, token);
       setFinanceMessage("该批银行流水已确认并进入财务分析。");
       await refreshFinance();
-      await handleFinanceBatchSelect(batchId);
+      await handleFinanceBatchSelect(batchId, true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "流水确认失败");
     } finally {
@@ -5268,7 +5304,7 @@ export default function Home() {
             projects={selectedFinanceProjects}
             onEntitySelect={handleFinanceEntitySelect}
             onPeriodViewChange={setFinancePeriodView}
-            onTransferScopeChange={setFinanceIncludeInternalTransfers}
+            onTransferScopeChange={handleFinanceTransferScopeChange}
             onTransferDecision={handleFinanceTransferDecision}
             onReceivablePayableCreate={handleFinanceReceivablePayableCreate}
             onReceivablePayableUpdate={handleFinanceReceivablePayableUpdate}
@@ -7887,7 +7923,7 @@ function FinanceInternalTransfersPanel({
   );
 }
 
-function FinanceWorkspace({
+export function FinanceWorkspace({
   token,
   user,
   entity,
@@ -7977,17 +8013,38 @@ function FinanceWorkspace({
     : "统计周期加载中";
   const financeHeroEntityName = entity.is_headquarters ? entity.display_name : entity.name;
   const [editingTransactionId, setEditingTransactionId] = useState("");
+  const workspaceRef = useRef<HTMLElement | null>(null);
+  const primaryNavRef = useRef<HTMLElement | null>(null);
+  const batchRequestRef = useRef(0);
+  const annualSearchRequestRef = useRef(0);
+  const bankListScrollRef = useRef(0);
+  const codeListScrollRef = useRef(0);
+  const [bankTab, setBankTab] = useState("overview");
+  const [bankDetailOpen, setBankDetailOpen] = useState(false);
+  const [batchLoading, setBatchLoading] = useState("");
+  const [navigationError, setNavigationError] = useState("");
+  const [batchQuery, setBatchQuery] = useState("");
+  const [batchStatus, setBatchStatus] = useState("");
+  const [codeQuery, setCodeQuery] = useState("");
+  const [codeDetailOpen, setCodeDetailOpen] = useState(false);
+  const [codeRetry, setCodeRetry] = useState(0);
   const [financeView, setFinanceView] = useState<"bank" | "cash" | "cost-centers">("bank");
-  const [costCenterRegistry, setCostCenterRegistry] = useState<FinanceCostCenterRegistry | null>(null);
+  const [costCenterRegistryPayload, setCostCenterRegistry] = useState<FinanceCostCenterRegistry | null>(null);
   const [selectedCostCenter, setSelectedCostCenter] = useState("CC26A01");
-  const [costCenterLedger, setCostCenterLedger] = useState<FinanceCostCenterLedger | null>(null);
-  const [costCenterBusy, setCostCenterBusy] = useState(false);
+  const [costCenterLedgerPayload, setCostCenterLedger] = useState<FinanceCostCenterLedger | null>(null);
+  const [registryBusy, setRegistryBusy] = useState(false);
+  const [ledgerBusy, setLedgerBusy] = useState(false);
+  const costCenterBusy = registryBusy || ledgerBusy;
+  const costCenterRegistry = costCenterRegistryPayload?.entity_id === entity.id && costCenterRegistryPayload.include_internal_transfers === includeInternalTransfers ? costCenterRegistryPayload : null;
+  const costCenterLedger = costCenterLedgerPayload?.entity_id === entity.id && costCenterLedgerPayload.code === selectedCostCenter && costCenterLedgerPayload.include_internal_transfers === includeInternalTransfers ? costCenterLedgerPayload : null;
   const [costCenterError, setCostCenterError] = useState("");
   const [annualSearchQuery, setAnnualSearchQuery] = useState("");
   const [annualSearchResult, setAnnualSearchResult] = useState<FinanceAnnualTransactionSearch | null>(null);
   const [annualSearchBusy, setAnnualSearchBusy] = useState(false);
   const [annualSearchError, setAnnualSearchError] = useState("");
   useEffect(() => {
+    annualSearchRequestRef.current += 1;
+    setAnnualSearchBusy(false);
     setAnnualSearchQuery("");
     setAnnualSearchResult(null);
     setAnnualSearchError("");
@@ -7999,7 +8056,7 @@ function FinanceWorkspace({
   useEffect(() => {
     if (financeView !== "cost-centers" || !entity.is_headquarters) return;
     let cancelled = false;
-    setCostCenterBusy(true);
+    setRegistryBusy(true);
     setCostCenterError("");
     const params = new URLSearchParams({
       entity_id: entity.id,
@@ -8019,14 +8076,14 @@ function FinanceWorkspace({
         if (!cancelled) setCostCenterError(cause instanceof Error ? cause.message : "公司编码加载失败");
       })
       .finally(() => {
-        if (!cancelled) setCostCenterBusy(false);
+        if (!cancelled) setRegistryBusy(false);
       });
     return () => { cancelled = true; };
-  }, [entity.id, entity.is_headquarters, financeView, includeInternalTransfers, token]);
+  }, [entity.id, entity.is_headquarters, financeView, includeInternalTransfers, token, codeRetry]);
   useEffect(() => {
-    if (financeView !== "cost-centers" || !entity.is_headquarters || !selectedCostCenter) return;
+    if (financeView !== "cost-centers" || !entity.is_headquarters || !selectedCostCenter || !codeDetailOpen || !costCenterRegistry) return;
     let cancelled = false;
-    setCostCenterBusy(true);
+    setLedgerBusy(true);
     setCostCenterError("");
     setCostCenterLedger(null);
     const params = new URLSearchParams({
@@ -8042,9 +8099,9 @@ function FinanceWorkspace({
       .catch((cause) => {
         if (!cancelled) setCostCenterError(cause instanceof Error ? cause.message : "编码流水加载失败");
       })
-      .finally(() => { if (!cancelled) setCostCenterBusy(false); });
+      .finally(() => { if (!cancelled) setLedgerBusy(false); });
     return () => { cancelled = true; };
-  }, [entity.id, entity.is_headquarters, financeView, includeInternalTransfers, selectedCostCenter, token]);
+  }, [entity.id, entity.is_headquarters, financeView, includeInternalTransfers, selectedCostCenter, token, codeDetailOpen, costCenterRegistry, codeRetry]);
   const handleAnnualTransactionSearch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (periodView === "realtime") return;
@@ -8053,6 +8110,7 @@ function FinanceWorkspace({
       setAnnualSearchError("请输入往来单位、用途、摘要、金额、日期或流水号关键字");
       return;
     }
+    const requestId = ++annualSearchRequestRef.current;
     setAnnualSearchBusy(true);
     setAnnualSearchError("");
     try {
@@ -8063,16 +8121,19 @@ function FinanceWorkspace({
         include_internal_transfers: includeInternalTransfers ? "true" : "false",
         limit: "100",
       });
-      setAnnualSearchResult(await kbFetch<FinanceAnnualTransactionSearch>(
+      const result = await kbFetch<FinanceAnnualTransactionSearch>(
         `v1/finance/annual-transactions/search?${params.toString()}`,
         {},
         token,
-      ));
+      );
+      if (requestId === annualSearchRequestRef.current) setAnnualSearchResult(result);
     } catch (cause) {
-      setAnnualSearchResult(null);
-      setAnnualSearchError(cause instanceof Error ? cause.message : "年度流水检索失败");
+      if (requestId === annualSearchRequestRef.current) {
+        setAnnualSearchResult(null);
+        setAnnualSearchError(cause instanceof Error ? cause.message : "年度流水检索失败");
+      }
     } finally {
-      setAnnualSearchBusy(false);
+      if (requestId === annualSearchRequestRef.current) setAnnualSearchBusy(false);
     }
   };
   const transactionProjectLabel = (item: FinanceTransaction) => {
@@ -8122,10 +8183,138 @@ function FinanceWorkspace({
     );
   };
 
+  const navigationTabs = [
+    { key: "overview", title: "资金总览" },
+    { key: "bank", title: "银行流水" },
+    { key: "obligations", title: "应收应付" },
+    { key: "reviews", title: "用途复核" },
+    { key: "annual", title: "年度分析" },
+    ...(entity.is_headquarters ? [{ key: "cost-centers", title: "编码账簿" }] : []),
+    ...(entity.show_cash ? [{ key: "cash", title: "账外现金" }] : []),
+  ];
+  const activePage = financeView === "cash" && entity.show_cash ? "cash" : financeView === "cost-centers" && entity.is_headquarters ? "cost-centers" : periodView !== "realtime" ? "annual" : bankTab;
+  const pageTitle = navigationTabs.find((tab) => tab.key === activePage)?.title || "资金总览";
+  const mutationPending = Boolean(busy) && !["company", "annual"].includes(busy) && !busy.startsWith("batch-");
+  const showingBankDetail = bankDetailOpen && Boolean(selected);
+  const filteredBatches = batches.filter((item) => (!batchStatus || item.status === batchStatus) && (!batchQuery.trim() || [item.company, item.bank_name, item.account, item.filename, item.period_start || "", item.period_end || ""].some((value) => value.toLocaleLowerCase("zh-CN").includes(batchQuery.trim().toLocaleLowerCase("zh-CN")))));
+
+  function scrollToFinanceHeading() {
+    window.requestAnimationFrame(() => {
+      const workspace = workspaceRef.current;
+      const panel = workspace?.querySelector<HTMLElement>(".financePagePanel:not([hidden])");
+      const target = workspace && workspace.clientWidth <= 760 && panel ? panel : workspace;
+      target?.scrollIntoView({ block: "start" });
+      workspaceRef.current?.querySelector<HTMLElement>(".financePageIdentity h2")?.focus({ preventScroll: true });
+    });
+  }
+
+  function navigateFinance(page: string) {
+    if (mutationPending) return;
+    batchRequestRef.current += 1;
+    setBatchLoading("");
+    setNavigationError("");
+    if (page === "cash" || page === "cost-centers") {
+      setFinanceView(page);
+    } else {
+      setFinanceView("bank");
+      if (page === "annual") {
+        onPeriodViewChange(periodView === "realtime" ? [...annualYears].sort((a, b) => b - a)[0] || Number(SHANGHAI_TODAY.slice(0, 4)) : periodView);
+      } else {
+        setBankTab(page);
+        if (periodView !== "realtime") onPeriodViewChange("realtime");
+      }
+      if (page === "bank") setBankDetailOpen(false);
+    }
+    scrollToFinanceHeading();
+  }
+
+  async function openFinanceBatch(batchId: string) {
+    if (!batchId || mutationPending || batchLoading) return;
+    const requestId = ++batchRequestRef.current;
+    bankListScrollRef.current = activePage === "bank" && !showingBankDetail ? window.scrollY : 0;
+    setBatchLoading(batchId);
+    setNavigationError("");
+    try {
+      await onSelectBatch(batchId);
+      if (requestId !== batchRequestRef.current) return;
+      setFinanceView("bank");
+      setBankTab("bank");
+      if (periodView !== "realtime") onPeriodViewChange("realtime");
+      setBankDetailOpen(true);
+      setEditingTransactionId("");
+      scrollToFinanceHeading();
+    } catch (cause) {
+      if (requestId === batchRequestRef.current) setNavigationError(cause instanceof Error ? cause.message : "流水明细加载失败，请重试。");
+    } finally {
+      if (requestId === batchRequestRef.current) setBatchLoading("");
+    }
+  }
+
+  function returnToBankList() {
+    if (mutationPending) return;
+    setBankDetailOpen(false);
+    setEditingTransactionId("");
+    window.requestAnimationFrame(() => window.scrollTo({ top: bankListScrollRef.current, behavior: "instant" }));
+  }
+
+  async function uploadStatement(event: FormEvent<HTMLFormElement>) {
+    setNavigationError("");
+    try {
+      await onUpload(event);
+      setBatchQuery("");
+      setBatchStatus("");
+      setBankDetailOpen(true);
+      setEditingTransactionId("");
+      scrollToFinanceHeading();
+    } catch (cause) {
+      setNavigationError(cause instanceof Error ? cause.message : "银行流水导入失败，请检查后重试。");
+    }
+  }
+
+  async function saveTransaction(event: FormEvent<HTMLFormElement>, transactionId: string) {
+    setNavigationError("");
+    try {
+      await onUpdateTransaction(event, transactionId);
+      setEditingTransactionId("");
+    } catch (cause) {
+      setNavigationError(cause instanceof Error ? cause.message : "流水修改失败，请重试。");
+    }
+  }
+
+  function openCompanyCode(code: string) {
+    if (!codeDetailOpen) codeListScrollRef.current = window.scrollY;
+    setSelectedCostCenter(code);
+    setCodeDetailOpen(true);
+    scrollToFinanceHeading();
+  }
+
+  function returnToCodeList() {
+    setCodeDetailOpen(false);
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: codeListScrollRef.current, behavior: "instant" });
+      document.getElementById(`finance-code-${selectedCostCenter}`)?.focus({ preventScroll: true });
+    });
+  }
+
+  useEffect(() => {
+    const nav = primaryNavRef.current;
+    if (!nav) return;
+    const revealSelected = () => {
+      const active = nav.querySelector<HTMLElement>('[aria-selected="true"]');
+      if (!active) return;
+      const outer = nav.getBoundingClientRect(), inner = active.getBoundingClientRect();
+      if (inner.left < outer.left || inner.right > outer.right) nav.scrollTo({ left: nav.scrollLeft + inner.left - outer.left - 8 });
+    };
+    revealSelected();
+    const observer = new ResizeObserver(revealSelected);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [activePage]);
+
   const entitySwitcher = (
     <section className="financeEntitySwitcher" aria-label="选择财务公司账套">
       <div className="financeEntitySwitcherCopy">
-        <p>COMPANY LEDGER</p>
+        <p>公司账套</p>
         <strong>{entity.display_name}</strong>
         <span>{entity.business_name}</span>
       </div>
@@ -8136,6 +8325,7 @@ function FinanceWorkspace({
             role="tab"
             aria-selected={item.id === entity.id}
             className={item.id === entity.id ? "active" : ""}
+            disabled={mutationPending}
             onClick={() => onEntitySelect(item.id)}
             key={item.id}
           >
@@ -8155,30 +8345,51 @@ function FinanceWorkspace({
         <small>实时页关注近期经营；年度页按自然年复盘全年银行现金流。</small>
       </div>
       <div className="financePeriodSwitcherButtons" role="tablist">
-        <button type="button" role="tab" aria-selected={periodView === "realtime"} className={periodView === "realtime" ? "active" : ""} onClick={() => onPeriodViewChange("realtime")}>实时总览</button>
+        <button type="button" role="tab" aria-selected={periodView === "realtime"} className={periodView === "realtime" ? "active" : ""} disabled={mutationPending} onClick={() => navigateFinance("overview")}>实时总览</button>
         {annualYears.map((year) => (
-          <button type="button" role="tab" aria-selected={periodView === year} className={periodView === year ? "active" : ""} onClick={() => onPeriodViewChange(year)} key={year}>{year} 年度</button>
+          <button type="button" role="tab" aria-selected={periodView === year} className={periodView === year ? "active" : ""} disabled={mutationPending} onClick={() => { setFinanceView("bank"); onPeriodViewChange(year); }} key={year}>{year} 年度</button>
         ))}
-        {entity.is_headquarters && <button type="button" className="costCenterMenuButton" onClick={() => setFinanceView("cost-centers")}>编码账簿</button>}
       </div>
     </section>
   );
 
+  const workspaceHeader = (
+    <>
+      <header className="financePageHeader">
+        <div className="financePageIdentity"><div className="financeBreadcrumbs"><span>财务分析</span><span aria-hidden="true">/</span><span>{entity.display_name}</span><span aria-hidden="true">/</span><span>{pageTitle}</span></div><h2 tabIndex={-1}>{showingBankDetail && activePage === "bank" ? "银行流水明细" : pageTitle}</h2><p>{activePage === "cash" ? "账外现金独立登记，不计入账内银行收支。" : activePage === "cost-centers" ? "按公司编码归集全部已确认银行流水，包含历史年度。" : "基于已确认银行流水分析，保留银行原始证据与操作审计。"}</p></div>
+        <div className="financePageActions"><span className="financeDataBadge">L4 · 本地财务</span><span>{user.display_name}</span></div>
+      </header>
+      {entitySwitcher}
+      <nav className="financePrimaryNav" ref={primaryNavRef} role="tablist" aria-label="财务功能" onKeyDown={(event) => {
+        const index = navigationTabs.findIndex((tab) => tab.key === activePage);
+        const next = event.key === "ArrowRight" ? (index + 1) % navigationTabs.length : event.key === "ArrowLeft" ? (index - 1 + navigationTabs.length) % navigationTabs.length : event.key === "Home" ? 0 : event.key === "End" ? navigationTabs.length - 1 : -1;
+        if (next < 0 || mutationPending) return;
+        event.preventDefault();
+        navigateFinance(navigationTabs[next].key);
+        window.requestAnimationFrame(() => primaryNavRef.current?.querySelector<HTMLButtonElement>(`#finance-tab-${navigationTabs[next].key}`)?.focus({ preventScroll: true }));
+      }}>{navigationTabs.map((tab) => <button type="button" role="tab" className="financePrimaryTab" id={`finance-tab-${tab.key}`} aria-controls={`finance-panel-${tab.key}`} aria-selected={activePage === tab.key} tabIndex={activePage === tab.key ? 0 : -1} disabled={mutationPending} key={tab.key} onClick={() => navigateFinance(tab.key)}>{tab.title}{tab.key === "bank" && dashboard?.pending_batches ? <b>{dashboard.pending_batches}</b> : tab.key === "reviews" && purposeCorrections.pending_count ? <b>{purposeCorrections.pending_count}</b> : null}</button>)}</nav>
+      {message && <div className="noticeBar successNotice" role="status"><strong>操作完成</strong><span>{message}</span></div>}
+      {navigationError && <div className="noticeBar errorNotice" role="alert"><strong>操作未完成</strong><span>{navigationError}</span></div>}
+      {batchLoading && <p className="financeContextNote" role="status">正在加载流水明细…</p>}
+    </>
+  );
+
+
   if (financeView === "cash" && entity.show_cash) {
     return (
-      <section className="financeWorkspace offbookCashWorkspace">
-        {entitySwitcher}
+      <section className="financeWorkspace offbookCashWorkspace financeWorkspaceV2" ref={workspaceRef}>
+        {workspaceHeader}
+        <section className="financePagePanel" role="tabpanel" id="finance-panel-cash" aria-labelledby="finance-tab-cash">
         <section className="financeOffbookHero">
           <div>
             <p>OFF-BOOK CASH LEDGER</p>
             <span>京奥电竞账外现金独立台账</span>
-            <strong>{formatMoney(dashboard?.cash_balance ?? 0)}</strong>
+            <strong>{dashboard ? formatMoney(dashboard.cash_balance) : "—"}</strong>
             <small>L4 本地财务数据 · 与账内银行指标完全分开</small>
           </div>
-          <button type="button" onClick={() => setFinanceView("bank")}>← 返回账内财务</button>
+          <button type="button" disabled={mutationPending} onClick={() => navigateFinance("overview")}>返回财务总览</button>
         </section>
 
-        {message && <div className="noticeBar successNotice"><strong>操作完成</strong><span>{message}</span></div>}
 
         <section className={`financeCashStandaloneGrid ${canEditCash ? "editable" : "readonly"}`}>
           {canEditCash && (
@@ -8212,17 +8423,19 @@ function FinanceWorkspace({
             </div>
           </section>
         </section>
+        </section>
       </section>
     );
   }
   if (financeView === "cost-centers" && entity.is_headquarters) {
-    const groupedCostCenters = (costCenterRegistry?.items || []).reduce<Record<string, FinanceCostCenterSummary[]>>((groups, item) => {
+    const groupedCostCenters = (costCenterRegistry?.items || []).filter((item) => !codeQuery.trim() || `${item.code} ${item.label} ${item.group}`.toLocaleLowerCase("zh-CN").includes(codeQuery.trim().toLocaleLowerCase("zh-CN"))).reduce<Record<string, FinanceCostCenterSummary[]>>((groups, item) => {
       (groups[item.group] ||= []).push(item);
       return groups;
     }, {});
     return (
-      <section className="financeWorkspace financeCostCenterWorkspace">
-        {entitySwitcher}
+      <section className="financeWorkspace financeCostCenterWorkspace financeWorkspaceV2" ref={workspaceRef}>
+        {workspaceHeader}
+        <section className="financePagePanel" role="tabpanel" id="finance-panel-cost-centers" aria-labelledby="finance-tab-cost-centers">
         <section className="financeCostCenterHero">
           <div>
             <p>COST CENTRE LEDGER</p>
@@ -8232,12 +8445,13 @@ function FinanceWorkspace({
           </div>
           <div className="financeCostCenterHeroActions">
             <button type="button" className={includeInternalTransfers ? "active" : ""} onClick={() => onTransferScopeChange(!includeInternalTransfers)}>{includeInternalTransfers ? "包含内部划转" : "剔除内部划转"}</button>
-            <button type="button" onClick={() => setFinanceView("bank")}>返回财务总览</button>
+            <button type="button" disabled={mutationPending} onClick={() => navigateFinance("overview")}>返回财务总览</button>
           </div>
         </section>
 
-        {costCenterError && <div className="noticeBar warningNotice"><strong>编码账簿暂不可用</strong><span>{costCenterError}</span></div>}
-        <section className="financeCostCenterGroups" aria-label="公司编码菜单">
+        {costCenterError && <div className="noticeBar warningNotice" role="alert"><strong>编码账簿暂不可用</strong><span>{costCenterError}</span><button type="button" onClick={() => setCodeRetry((count) => count + 1)}>重试</button></div>}
+        {!codeDetailOpen && <label className="financeLedgerSearch"><span>查找公司编码</span><input type="search" aria-label="搜索公司编码" placeholder="搜索编码、项目或分组，例如 CC2501" value={codeQuery} onChange={(event) => setCodeQuery(event.target.value)} /></label>}
+        <section className="financeCostCenterGroups" aria-label="公司编码菜单" hidden={codeDetailOpen}>
           {Object.entries(groupedCostCenters).map(([group, items]) => (
             <section className="panel financeCostCenterGroup" key={group}>
               <header><h2>{group}</h2><span>{items.length} 个编码</span></header>
@@ -8245,8 +8459,9 @@ function FinanceWorkspace({
                 {items.map((item) => (
                   <button
                     type="button"
+                    id={`finance-code-${item.code}`}
                     className={selectedCostCenter === item.code ? "active" : ""}
-                    onClick={() => setSelectedCostCenter(item.code)}
+                    onClick={() => openCompanyCode(item.code)}
                     key={item.code}
                   >
                     <span><b>{item.code}</b><strong>{item.label}</strong></span>
@@ -8258,7 +8473,9 @@ function FinanceWorkspace({
           ))}
         </section>
 
-        <section className="panel financeCostCenterLedgerPanel">
+        {!codeDetailOpen && !Object.keys(groupedCostCenters).length && <p className="financeContextNote" role="status">{registryBusy ? "正在加载公司编码…" : "没有符合条件的公司编码。"}</p>}
+        <section className="panel financeCostCenterLedgerPanel" hidden={!codeDetailOpen}>
+          <div className="financeBatchToolbar"><button type="button" className="secondaryButton" onClick={returnToCodeList}>← 返回编码目录</button><label>切换编码<select aria-label="切换公司编码" value={selectedCostCenter} onChange={(event) => openCompanyCode(event.target.value)}>{costCenterRegistry?.items.map((item) => <option key={item.code} value={item.code}>{item.code} · {item.label}</option>)}</select></label></div>
           <header>
             <div><span>CODE LEDGER</span><h2>{costCenterLedger ? `${costCenterLedger.code} · ${costCenterLedger.label}` : selectedCostCenter}</h2><p>当前公司编码下的全部已确认银行流水。</p></div>
             {costCenterLedger && <b>{costCenterLedger.transaction_count} 笔</b>}
@@ -8287,11 +8504,12 @@ function FinanceWorkspace({
           )}
           {costCenterBusy && !costCenterLedger && <p className="mutedText">正在加载编码流水…</p>}
         </section>
+        </section>
       </section>
     );
   }
   if (periodView !== "realtime") {
-    const annual = annualDashboard?.year === periodView ? annualDashboard : null;
+    const annual = annualDashboard?.year === periodView && annualDashboard.entity_id === entity.id && annualDashboard.include_internal_transfers === includeInternalTransfers ? annualDashboard : null;
     const maxMonthly = Math.max(
       1,
       ...(annual?.monthly || []).flatMap((item) => [Number(item.income), Number(item.expense)]),
@@ -8318,9 +8536,10 @@ function FinanceWorkspace({
       </section>
     );
     return (
-      <section className="financeWorkspace financeAnnualWorkspace">
-        {entitySwitcher}
+      <section className="financeWorkspace financeAnnualWorkspace financeWorkspaceV2" ref={workspaceRef}>
+        {workspaceHeader}
         {periodSwitcher}
+        <section className="financePagePanel" role="tabpanel" id="finance-panel-annual" aria-labelledby="finance-tab-annual">
         {!annual ? (
           <section className="panel financeAnnualLoading"><strong>{busy === "annual" ? `正在分析 ${periodView} 年度流水…` : "年度数据暂不可用"}</strong><span>年度统计仅使用已确认银行流水。</span></section>
         ) : (
@@ -8376,6 +8595,8 @@ function FinanceWorkspace({
                     type="button"
                     className="clearAnnualSearch"
                     onClick={() => {
+                      annualSearchRequestRef.current += 1;
+                      setAnnualSearchBusy(false);
                       setAnnualSearchQuery("");
                       setAnnualSearchResult(null);
                       setAnnualSearchError("");
@@ -8421,8 +8642,7 @@ function FinanceWorkspace({
                             <button
                               type="button"
                               onClick={() => {
-                                onPeriodViewChange("realtime");
-                                void onSelectBatch(item.batch_id);
+                                void openFinanceBatch(item.batch_id);
                               }}
                             >查看所在批次</button>
                           </footer>
@@ -8481,17 +8701,25 @@ function FinanceWorkspace({
                 <header><span>LIQUIDITY PRESSURE</span><h3>单日净流出峰值</h3></header>
                 <div>{annual.largest_outflow_days.slice(0, 8).map((item, index) => <article key={item.date}><b>{index + 1}</b><div><strong>{item.date}</strong><small>{item.transaction_count} 笔 · 收入 {formatMoney(item.income)}</small></div><em className="financeExpenseAmount">{formatMoney(Math.abs(Number(item.net)))}</em></article>)}{!annual.largest_outflow_days.length && <p className="mutedText">全年没有单日净流出。</p>}</div>
               </section>
-              <FinanceAlertsPanel eyebrow="ANNUAL RISK & EXCEPTION" title="年度风险与异常预警" range={`${periodView} 年`} periodLabel="全年" count={annual.anomaly_count} items={annual.anomalies} onSelectBatch={onSelectBatch} />
+              <FinanceAlertsPanel eyebrow="ANNUAL RISK & EXCEPTION" title="年度风险与异常预警" range={`${periodView} 年`} periodLabel="全年" count={annual.anomaly_count} items={annual.anomalies} onSelectBatch={openFinanceBatch} />
             </section>
           </>
         )}
+        </section>
       </section>
     );
   }
   return (
-    <section className="financeWorkspace">
-      {entitySwitcher}
-      {periodSwitcher}
+    <section className="financeWorkspace financeWorkspaceV2" ref={workspaceRef}>
+      {workspaceHeader}
+      <section className="financePagePanel" role="tabpanel" id="finance-panel-overview" aria-labelledby="finance-tab-overview" hidden={bankTab !== "overview"}>
+        {periodSwitcher}
+        {!dashboard && <section className="panel financeLoadingState" role="status"><h3>{busy === "company" ? "正在加载公司财务数据…" : "暂无可展示的财务数据"}</h3><p>余额与收支将在当前账套、统计口径的数据就绪后显示。</p></section>}
+        <div className="financeOverviewContent" hidden={!dashboard}>
+      <section className="financeAnnualScopeBar">
+        <div><strong>经营口径</strong><span>余额保留银行原值，收支按当前口径统计。</span></div>
+        <button type="button" disabled={mutationPending} className={includeInternalTransfers ? "active" : ""} onClick={() => onTransferScopeChange(!includeInternalTransfers)}>{includeInternalTransfers ? "当前：包含内部划转" : "当前：剔除内部划转"}</button>
+      </section>
       <section className="financeHeroPanel">
         <div className="financeHeroCopy">
           <p>JINGAO FINANCIAL COMMAND CENTER</p>
@@ -8501,13 +8729,13 @@ function FinanceWorkspace({
           {entity.show_cash && (
             <div className="financeOffbookEntry">
               <span>账外余额 {formatMoney(dashboard?.cash_balance ?? 0)}</span>
-              <button type="button" onClick={() => setFinanceView("cash")}>账外现金 →</button>
+              <button type="button" onClick={() => navigateFinance("cash")}>账外现金 →</button>
             </div>
           )}
         </div>
         <div className="financeHeroStatus">
           <span>L4 本地财务数据</span>
-          <b>{dashboard?.pending_batches ? "有待确认流水" : "数据已核对"}</b>
+          <b>{!dashboard ? "正在加载账套数据" : dashboard.pending_batches ? "有待确认流水" : dashboard.accounts.length ? "已确认流水已汇总" : "暂无已确认流水"}</b>
           <small>{entity.display_name} · {user.display_name} · 上周 {weekRange}</small>
         </div>
       </section>
@@ -8517,62 +8745,6 @@ function FinanceWorkspace({
         <article><span>账内上周支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.expense ?? 0)}</strong><small>{weekRange} · 不含账外现金</small></article>
         <article><span>账内上周净流入</span><strong>{formatMoney(dashboard?.net ?? 0)}</strong><small>{weekRange} · 已确认口径</small></article>
       </section>
-
-      <FinanceReceivablesPayablesPanel
-        dashboard={dashboard}
-        canEdit={canEditBank}
-        busy={busy}
-        onCreate={onReceivablePayableCreate}
-        onUpdate={onReceivablePayableUpdate}
-      />
-
-      <section className="financeMonthlySection">
-        <header><div><p>PREVIOUS MONTH</p><h2>账内上月经营流量</h2></div><span>{monthRange}</span></header>
-        <div className="financeMonthlyGrid">
-          <article><span>账内上月收入</span><strong className="financeIncomeAmount">{formatMoney(dashboard?.previous_month?.income ?? 0)}</strong><small>{monthRange} · 仅银行流水</small></article>
-          <article><span>账内上月支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.previous_month?.expense ?? 0)}</strong><small>{monthRange} · 不含账外现金</small></article>
-          <article><span>账内上月净流入</span><strong>{formatMoney(dashboard?.previous_month?.net ?? 0)}</strong><small>{monthRange} · 已确认口径</small></article>
-        </div>
-      </section>
-
-      <section className="financeMonthlyInsights">
-        <FinanceRankingPanel
-          eyebrow="MONTHLY INCOME TOP 10"
-          title="上月收入前 10 公司 / 单位"
-          range={monthRange}
-          items={dashboard?.monthly_top_income || []}
-          direction="income"
-          emptyText="上月暂无已确认收入。"
-        />
-        <FinanceRankingPanel
-          eyebrow="MONTHLY EXPENSE TOP 10"
-          title="上月支出前 10 公司 / 单位"
-          range={monthRange}
-          items={dashboard?.monthly_top_expense || []}
-          direction="expense"
-          emptyText="上月暂无已确认支出。"
-        />
-        <FinanceAlertsPanel
-          eyebrow="MONTHLY RISK & EXCEPTION"
-          title="上月风险与异常预警"
-          range={monthRange}
-          periodLabel="上月"
-          count={dashboard?.monthly_anomaly_count || 0}
-          items={dashboard?.monthly_anomalies || []}
-          onSelectBatch={onSelectBatch}
-        />
-      </section>
-
-      <section className="financeMonthlySection financeYearSection">
-        <header><div><p>YEAR TO DATE</p><h2>账内本年累计经营流量</h2></div><span>{yearRange}</span></header>
-        <div className="financeMonthlyGrid">
-          <article><span>账内本年收入</span><strong className="financeIncomeAmount">{formatMoney(dashboard?.current_year?.income ?? 0)}</strong><small>{yearRange} · 仅银行流水</small></article>
-          <article><span>账内本年支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.current_year?.expense ?? 0)}</strong><small>{yearRange} · 不含账外现金</small></article>
-          <article><span>账内本年净流入</span><strong>{formatMoney(dashboard?.current_year?.net ?? 0)}</strong><small>{yearRange} · 已确认口径</small></article>
-        </div>
-      </section>
-
-      {message && <div className="noticeBar successNotice"><strong>操作完成</strong><span>{message}</span></div>}
 
       <section className="financeDashboardGrid">
         <section className="panel financeTrendPanel">
@@ -8617,13 +8789,67 @@ function FinanceWorkspace({
         </section>
       </section>
 
+      <details className="financeInsightDetails" open><summary>月度与本年经营分析</summary>
+      <section className="financeMonthlySection">
+        <header><div><p>PREVIOUS MONTH</p><h2>账内上月经营流量</h2></div><span>{monthRange}</span></header>
+        <div className="financeMonthlyGrid">
+          <article><span>账内上月收入</span><strong className="financeIncomeAmount">{formatMoney(dashboard?.previous_month?.income ?? 0)}</strong><small>{monthRange} · 仅银行流水</small></article>
+          <article><span>账内上月支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.previous_month?.expense ?? 0)}</strong><small>{monthRange} · 不含账外现金</small></article>
+          <article><span>账内上月净流入</span><strong>{formatMoney(dashboard?.previous_month?.net ?? 0)}</strong><small>{monthRange} · 已确认口径</small></article>
+        </div>
+      </section>
+
+      <section className="financeMonthlyInsights">
+        <FinanceRankingPanel
+          eyebrow="MONTHLY INCOME TOP 10"
+          title="上月收入前 10 公司 / 单位"
+          range={monthRange}
+          items={dashboard?.monthly_top_income || []}
+          direction="income"
+          emptyText="上月暂无已确认收入。"
+        />
+        <FinanceRankingPanel
+          eyebrow="MONTHLY EXPENSE TOP 10"
+          title="上月支出前 10 公司 / 单位"
+          range={monthRange}
+          items={dashboard?.monthly_top_expense || []}
+          direction="expense"
+          emptyText="上月暂无已确认支出。"
+        />
+        <FinanceAlertsPanel
+          eyebrow="MONTHLY RISK & EXCEPTION"
+          title="上月风险与异常预警"
+          range={monthRange}
+          periodLabel="上月"
+          count={dashboard?.monthly_anomaly_count || 0}
+          items={dashboard?.monthly_anomalies || []}
+          onSelectBatch={openFinanceBatch}
+        />
+      </section>
+
+      <section className="financeMonthlySection financeYearSection">
+        <header><div><p>YEAR TO DATE</p><h2>账内本年累计经营流量</h2></div><span>{yearRange}</span></header>
+        <div className="financeMonthlyGrid">
+          <article><span>账内本年收入</span><strong className="financeIncomeAmount">{formatMoney(dashboard?.current_year?.income ?? 0)}</strong><small>{yearRange} · 仅银行流水</small></article>
+          <article><span>账内本年支出</span><strong className="financeExpenseAmount">{formatMoney(dashboard?.current_year?.expense ?? 0)}</strong><small>{yearRange} · 不含账外现金</small></article>
+          <article><span>账内本年净流入</span><strong>{formatMoney(dashboard?.current_year?.net ?? 0)}</strong><small>{yearRange} · 已确认口径</small></article>
+        </div>
+      </section>
+
+        </details>
+        </div>
+      </section>
+      <section className="financePagePanel" role="tabpanel" id="finance-panel-bank" aria-labelledby="finance-tab-bank" hidden={bankTab !== "bank"}>
+        <div hidden={showingBankDetail}>
+          <div className="financeBatchToolbar"><label><span>查找银行批次</span><input type="search" aria-label="搜索银行批次" placeholder="搜索文件、开户银行或账号" value={batchQuery} onChange={(event) => setBatchQuery(event.target.value)} /></label><label><span>确认状态</span><select aria-label="筛选批次确认状态" value={batchStatus} onChange={(event) => setBatchStatus(event.target.value)}><option value="">全部批次</option><option value="pending">待确认</option><option value="confirmed">已确认</option></select></label></div>
+          {canEditBank && <details className="financeImportDisclosure"><summary>＋ 导入银行流水</summary>
       {canEditBank && (
         <section className="financeOperationsGrid bankOnly">
           {canEditBank && (
             <section className="panel financeOperationCard">
               <PanelTitle eyebrow="BANK STATEMENT" title="导入银行流水" />
               <p>支持 XLSX / CSV。京奥 2026 年起优先识别“项目中心号”列，也兼容手工表中的“成本中心、项目代码、项目段”等表头；每笔流水必须选择有效公司编码后才能确认。</p>
-              <form className="businessForm" onSubmit={onUpload}>
+              <form className="businessForm" onSubmit={(event) => void uploadStatement(event)}>
                 <input name="entity_id" type="hidden" value={entity.id} readOnly />
                 <div className="formGrid twoColumns">
                   <label>公司主体<input name="company_name" value={entity.name} readOnly required /></label>
@@ -8645,6 +8871,7 @@ function FinanceWorkspace({
         </section>
       )}
 
+          </details>}
       <section className="panel financeLedgerPanel">
         <PanelTitle eyebrow="RECONCILIATION" title="银行流水批次" />
         <div className="noticeBar financeConfirmationNotice">
@@ -8658,9 +8885,9 @@ function FinanceWorkspace({
           </span>
         </div>
         <div className="financeBatchList">
-          {batches.map((item) => (
+          {filteredBatches.map((item) => (
             <article className={selectedBatch === item.id ? "active" : ""} key={item.id}>
-              <button type="button" className="batchMain" onClick={() => void onSelectBatch(item.id)}>
+              <button type="button" className="batchMain" aria-label={`查看流水 ${item.filename}`} disabled={Boolean(batchLoading) || mutationPending} onClick={() => void openFinanceBatch(item.id)}>
                 <strong>{item.company}</strong>
                 <span>{item.bank_name} {item.account} · {item.period_start} 至 {item.period_end}</span>
                 <small>{item.filename} · 上传者 {item.uploader} · {item.row_count} 条 · 去重 {item.duplicate_count} 条</small>
@@ -8689,77 +8916,15 @@ function FinanceWorkspace({
               </div>
             </article>
           ))}
-          {!batches.length && <p className="mutedText">尚未上传银行流水。</p>}
+          {!filteredBatches.length && <p className="mutedText">{batches.length ? "没有符合筛选条件的银行批次。" : "尚未上传银行流水。"}</p>}
         </div>
       </section>
 
-      <section className={`panel financePurposeReviewPanel ${purposeCorrections.pending_count ? "attention" : ""}`}>
-        <header className="financePurposeReviewHeader">
-          <div>
-            <p>PURPOSE CORRECTION REVIEW</p>
-            <h2>流水实际用途修正</h2>
-            <span>银行原始附言永久保留；财务提交的实际用途只有创始人复核通过后才生效。</span>
-          </div>
-          <aside>
-            <strong>{purposeCorrections.pending_count}</strong>
-            <span>项待复核</span>
-          </aside>
-        </header>
-        <div className="financePurposeReviewList">
-          {purposeCorrections.items.slice(0, 20).map((correction) => {
-            const isIncome = Number(correction.transaction.income) > 0;
-            return (
-              <article className={correction.status} key={correction.id}>
-                <header>
-                  <div>
-                    <b className={`purposeStatus ${correction.status}`}>{purposeStatusLabel(correction.status)}</b>
-                    <time>{correction.transaction.transacted_at ? formatShanghaiDateTime(correction.transaction.transacted_at) : "日期未知"}</time>
-                  </div>
-                  <strong className={isIncome ? "financeIncomeAmount" : "financeExpenseAmount"}>
-                    {isIncome ? "收入" : "支出"} {formatMoney(isIncome ? correction.transaction.income : correction.transaction.expense)}
-                  </strong>
-                </header>
-                <div className="financePurposeTransactionMeta">
-                  <strong>{correction.transaction.counterparty || "未识别对方单位"}</strong>
-                  <span>{correction.transaction.batch_filename}</span>
-                  {correction.transaction.summary && <small>银行原始附言：{correction.transaction.summary}</small>}
-                </div>
-                <div className="financePurposeCompare">
-                  <div><span>当前采用用途</span><p>{correction.previous_purpose || "尚未填写"}</p></div>
-                  <i>→</i>
-                  <div><span>财务申请修正为</span><p>{correction.proposed_purpose}</p></div>
-                </div>
-                <footer>
-                  <span>
-                    申请人 {correction.requested_by} · {formatShanghaiDateTime(correction.requested_at)}
-                    {correction.reviewed_by ? ` · 复核人 ${correction.reviewed_by}` : ""}
-                  </span>
-                  {correction.review_comment && <em>复核说明：{correction.review_comment}</em>}
-                  <div>
-                    {correction.transaction.batch_id && (
-                      <button type="button" className="secondaryButton" onClick={() => void onSelectBatch(correction.transaction.batch_id || "")}>查看所在批次</button>
-                    )}
-                    {canReviewPurposeCorrections && correction.status === "pending" && (
-                      <>
-                        <button type="button" className="purposeRejectButton" disabled={busy === `purpose-review-${correction.id}`} onClick={() => void onPurposeCorrectionReview(correction.id, "reject")}>拒绝</button>
-                        <button type="button" className="purposeApproveButton" disabled={busy === `purpose-review-${correction.id}`} onClick={() => void onPurposeCorrectionReview(correction.id, "approve")}>批准并采用</button>
-                      </>
-                    )}
-                  </div>
-                </footer>
-              </article>
-            );
-          })}
-          {!purposeCorrections.items.length && (
-            <div className="financePurposeReviewEmpty">
-              <b>✓</b><span>当前没有用途修正申请</span>
-            </div>
-          )}
         </div>
-      </section>
-
-      {selected && (
+      {showingBankDetail && selected && (
         <section className="panel transactionPanel">
+          <div className="financeBatchDetailHeader"><button type="button" className="secondaryButton" aria-label="返回银行流水" disabled={mutationPending} onClick={returnToBankList}>← 返回银行流水</button><span>{selected.status === "confirmed" ? "财务已确认" : "待财务核对"} · {selected.bank_name} · {selected.account}</span></div>
+          <p className="financeContextNote">{selected.filename} · {selected.period_start} 至 {selected.period_end}</p>
           <PanelTitle eyebrow="TRANSACTIONS" title={`${selected.company} · ${selected.row_count} 条流水`} />
           <div className="tableScroll desktopDataTable financeTransactionTable">
             <table className="businessTable">
@@ -8813,10 +8978,7 @@ function FinanceWorkspace({
                           <div className="transactionEditWorkflow">
                             <form
                               className="transactionEditExpanded"
-                              onSubmit={async (event) => {
-                                await onUpdateTransaction(event, item.id);
-                                setEditingTransactionId("");
-                              }}
+                              onSubmit={(event) => void saveTransaction(event, item.id)}
                             >
                               <input type="hidden" name="annotation_only" value={selected.status === "confirmed" ? "true" : "false"} />
                               {selected.status !== "confirmed" && <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>}
@@ -8894,10 +9056,7 @@ function FinanceWorkspace({
                   <div className="transactionEditWorkflow mobileTransactionEditor">
                     <form
                       className="transactionEditExpanded"
-                      onSubmit={async (event) => {
-                        await onUpdateTransaction(event, item.id);
-                        setEditingTransactionId("");
-                      }}
+                      onSubmit={(event) => void saveTransaction(event, item.id)}
                     >
                       <input type="hidden" name="annotation_only" value={selected.status === "confirmed" ? "true" : "false"} />
                       {selected.status !== "confirmed" && <label><span>交易日期与时间</span><input name="transacted_at" type="datetime-local" step="1" defaultValue={toShanghaiDateTimeLocal(item.transacted_at)} required /></label>}
@@ -8932,6 +9091,84 @@ function FinanceWorkspace({
         </section>
       )}
 
+      </section>
+      <section className="financePagePanel" role="tabpanel" id="finance-panel-obligations" aria-labelledby="finance-tab-obligations" hidden={bankTab !== "obligations"}>
+      <FinanceReceivablesPayablesPanel
+        dashboard={dashboard}
+        canEdit={canEditBank}
+        busy={busy}
+        onCreate={onReceivablePayableCreate}
+        onUpdate={onReceivablePayableUpdate}
+      />
+
+      </section>
+      <section className="financePagePanel" role="tabpanel" id="finance-panel-reviews" aria-labelledby="finance-tab-reviews" hidden={bankTab !== "reviews"}>
+      <section className={`panel financePurposeReviewPanel ${purposeCorrections.pending_count ? "attention" : ""}`}>
+        <header className="financePurposeReviewHeader">
+          <div>
+            <p>PURPOSE CORRECTION REVIEW</p>
+            <h2>流水实际用途修正</h2>
+            <span>银行原始附言永久保留；财务提交的实际用途只有创始人复核通过后才生效。</span>
+          </div>
+          <aside>
+            <strong>{purposeCorrections.pending_count}</strong>
+            <span>项待复核</span>
+          </aside>
+        </header>
+        <div className="financePurposeReviewList">
+          {purposeCorrections.items.slice(0, 20).map((correction) => {
+            const isIncome = Number(correction.transaction.income) > 0;
+            return (
+              <article className={correction.status} key={correction.id}>
+                <header>
+                  <div>
+                    <b className={`purposeStatus ${correction.status}`}>{purposeStatusLabel(correction.status)}</b>
+                    <time>{correction.transaction.transacted_at ? formatShanghaiDateTime(correction.transaction.transacted_at) : "日期未知"}</time>
+                  </div>
+                  <strong className={isIncome ? "financeIncomeAmount" : "financeExpenseAmount"}>
+                    {isIncome ? "收入" : "支出"} {formatMoney(isIncome ? correction.transaction.income : correction.transaction.expense)}
+                  </strong>
+                </header>
+                <div className="financePurposeTransactionMeta">
+                  <strong>{correction.transaction.counterparty || "未识别对方单位"}</strong>
+                  <span>{correction.transaction.batch_filename}</span>
+                  {correction.transaction.summary && <small>银行原始附言：{correction.transaction.summary}</small>}
+                </div>
+                <div className="financePurposeCompare">
+                  <div><span>当前采用用途</span><p>{correction.previous_purpose || "尚未填写"}</p></div>
+                  <i>→</i>
+                  <div><span>财务申请修正为</span><p>{correction.proposed_purpose}</p></div>
+                </div>
+                <footer>
+                  <span>
+                    申请人 {correction.requested_by} · {formatShanghaiDateTime(correction.requested_at)}
+                    {correction.reviewed_by ? ` · 复核人 ${correction.reviewed_by}` : ""}
+                  </span>
+                  {correction.review_comment && <em>复核说明：{correction.review_comment}</em>}
+                  <div>
+                    {correction.transaction.batch_id && (
+                      <button type="button" className="secondaryButton" onClick={() => void openFinanceBatch(correction.transaction.batch_id || "")}>查看所在批次</button>
+                    )}
+                    {canReviewPurposeCorrections && correction.status === "pending" && (
+                      <>
+                        <button type="button" className="purposeRejectButton" disabled={busy === `purpose-review-${correction.id}`} onClick={() => void onPurposeCorrectionReview(correction.id, "reject")}>拒绝</button>
+                        <button type="button" className="purposeApproveButton" disabled={busy === `purpose-review-${correction.id}`} onClick={() => void onPurposeCorrectionReview(correction.id, "approve")}>批准并采用</button>
+                      </>
+                    )}
+                  </div>
+                </footer>
+              </article>
+            );
+          })}
+          {!purposeCorrections.items.length && (
+            <div className="financePurposeReviewEmpty">
+              <b>✓</b><span>当前没有用途修正申请</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      </section>
     </section>
   );
 }

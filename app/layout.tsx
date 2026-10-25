@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./project-management.css";
+import "./finance-workspace.css";
 
 export const metadata: Metadata = {
   title: "京奥AI智能运营系统｜JAOS",
