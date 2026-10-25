@@ -8526,48 +8526,6 @@ function FinanceWorkspace({
         onUpdate={onReceivablePayableUpdate}
       />
 
-      <FinanceHealthPanel
-        dashboard={dashboard}
-        transfers={transfers}
-        includeInternalTransfers={includeInternalTransfers}
-        onTransferScopeChange={onTransferScopeChange}
-      />
-
-      <FinanceInternalTransfersPanel
-        registry={transfers}
-        canEdit={canEditBank}
-        busy={busy}
-        onDecision={onTransferDecision}
-      />
-
-      <section className="financeWeeklyInsights">
-        <FinanceRankingPanel
-          eyebrow="WEEKLY INCOME TOP 10"
-          title="上周收入前 10 公司 / 单位"
-          range={weekRange}
-          items={dashboard?.weekly_top_income || []}
-          direction="income"
-          emptyText="上周暂无已确认收入。"
-        />
-        <FinanceRankingPanel
-          eyebrow="WEEKLY EXPENSE TOP 10"
-          title="上周支出前 10 公司 / 单位"
-          range={weekRange}
-          items={dashboard?.weekly_top_expense || []}
-          direction="expense"
-          emptyText="上周暂无已确认支出。"
-        />
-        <FinanceAlertsPanel
-          eyebrow="WEEKLY RISK & EXCEPTION"
-          title="上周风险与异常预警"
-          range={weekRange}
-          periodLabel="上周"
-          count={dashboard?.anomaly_count || 0}
-          items={dashboard?.anomalies || []}
-          onSelectBatch={onSelectBatch}
-        />
-      </section>
-
       <section className="financeMonthlySection">
         <header><div><p>PREVIOUS MONTH</p><h2>账内上月经营流量</h2></div><span>{monthRange}</span></header>
         <div className="financeMonthlyGrid">
