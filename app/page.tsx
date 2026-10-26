@@ -3,6 +3,8 @@
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountRoleFields, EducationWorkspace } from "./education-workspace";
 import { ProjectCashflowEditor, type CashflowPlanValues } from "./project-cashflow-editor";
+import { WorkspaceSidebar, WorkspaceMobileNavigation, type NavigationTab } from "./workspace-navigation";
+import { WorkspaceHome } from "./workspace-home";
 
 type User = {
   id: string;
@@ -1142,27 +1144,25 @@ type MaintainedArtifact = {
   runs?: EvolutionRunSummary[];
 };
 
-type Tab = "工作台" | "财务分析" | "项目管理" | "资料上传" | "合同档案库" | "AI资料检索" | "智能创作" | "入库审核" | "资料治理" | "知识进化" | "系统状态" | "账号管理";
+type Tab = NavigationTab;
 
 // 评测题库与知识进化暂不作为产品功能开放。保留历史数据和实现，
 // 但不展示入口、不发起请求，便于未来按真实业务需要重新评估。
 const ADVANCED_GOVERNANCE_ENABLED = false;
 
-const tabs: { name: Tab; icon: string }[] = [
-  { name: "工作台", icon: "⌂" },
-  { name: "财务分析", icon: "¥" },
-  { name: "项目管理", icon: "▦" },
-  { name: "资料上传", icon: "↑" },
-  { name: "合同档案库", icon: "▣" },
-  { name: "AI资料检索", icon: "✦" },
-  { name: "智能创作", icon: "✎" },
-  { name: "入库审核", icon: "✓" },
-  { name: "资料治理", icon: "◆" },
-  { name: "系统状态", icon: "◎" },
-  { name: "账号管理", icon: "人" },
+const tabs: { name: Tab }[] = [
+  { name: "工作台" },
+  { name: "财务分析" },
+  { name: "项目管理" },
+  { name: "资料上传" },
+  { name: "合同档案库" },
+  { name: "AI资料检索" },
+  { name: "智能创作" },
+  { name: "入库审核" },
+  { name: "资料治理" },
+  { name: "系统状态" },
+  { name: "账号管理" },
 ];
-
-const mobilePrimaryTabNames: Tab[] = ["工作台", "AI资料检索", "智能创作", "资料上传"];
 
 const defaultCategoryNames: Record<string, string> = {
   training: "电竞培训",
@@ -1746,27 +1746,12 @@ export default function Home() {
   const [concurrencyBusy, setConcurrencyBusy] = useState(false);
   const [sourceReconcileBusy, setSourceReconcileBusy] = useState(false);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const searchResultRef = useRef<HTMLDivElement | null>(null);
+  const searchRequestRef = useRef(0);
   const writingResultRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!mobileMenuOpen) return;
-    const previousOverflow = document.body.style.overflow;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMobileMenuOpen(false);
-    };
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [mobileMenuOpen]);
 
   function navigateToTab(tab: Tab) {
     setActive(tab);
-    setMobileMenuOpen(false);
   }
 
   function scrollToMobileResult(target: { current: HTMLDivElement | null }) {
@@ -2226,12 +2211,17 @@ export default function Home() {
   }
 
   async function handleLogout() {
-    setMobileMenuOpen(false);
+    searchRequestRef.current += 1;
+    setSearching(false);
+    setSearchingMore(false);
     try {
       await kbFetch("v1/auth/logout", { method: "POST" }, token);
     } catch {
       // Local session is cleared even if the API is restarting.
     }
+    searchRequestRef.current += 1;
+    setSearching(false);
+    setSearchingMore(false);
     sessionStorage.removeItem(TOKEN_KEY);
     setToken("");
     setUser(null);
@@ -2510,32 +2500,39 @@ export default function Home() {
     }
   }
 
-  async function handleSearch(event?: FormEvent) {
+  async function handleSearch(event?: FormEvent, explicitQuery?: string) {
     event?.preventDefault();
-    if (!question.trim() || !token) return;
+    const query = (explicitQuery ?? question).trim();
+    if (!query || !token || searching) return;
+    const requestId = ++searchRequestRef.current;
+    if (explicitQuery !== undefined) setQuestion(query);
     setSearching(true);
-    setSubmittedSearchQuery(question.trim());
+    setSearchingMore(false);
+    setSubmittedSearchQuery(query);
+    setSearchResponse(null);
     setError("");
     try {
       const response = await kbFetch<SearchResponse>(
         "v1/search",
         {
           method: "POST",
-          body: JSON.stringify({ query: question.trim(), scope: "auto", limit: 20, offset: 0 }),
+          body: JSON.stringify({ query, scope: "auto", limit: 20, offset: 0 }),
         },
         token,
       );
+      if (requestId !== searchRequestRef.current) return;
       setSearchResponse(response);
       scrollToMobileResult(searchResultRef);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "检索失败");
+      if (requestId === searchRequestRef.current) setError(cause instanceof Error ? cause.message : "检索失败");
     } finally {
-      setSearching(false);
+      if (requestId === searchRequestRef.current) setSearching(false);
     }
   }
 
   async function handleLoadMoreSearch() {
-    if (!token || !searchResponse || !submittedSearchQuery || searchingMore) return;
+    if (!token || !searchResponse || !submittedSearchQuery || searching || searchingMore) return;
+    const requestId = searchRequestRef.current;
     setSearchingMore(true);
     setError("");
     try {
@@ -2552,6 +2549,7 @@ export default function Home() {
         },
         token,
       );
+      if (requestId !== searchRequestRef.current) return;
       setSearchResponse((current) => {
         if (!current) return response;
         const known = new Set(current.results.map((item) => item.document_id));
@@ -2566,9 +2564,9 @@ export default function Home() {
         };
       });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "继续加载失败");
+      if (requestId === searchRequestRef.current) setError(cause instanceof Error ? cause.message : "继续加载失败");
     } finally {
-      setSearchingMore(false);
+      if (requestId === searchRequestRef.current) setSearchingMore(false);
     }
   }
 
@@ -4930,10 +4928,6 @@ export default function Home() {
     }
   }
 
-  const readyDocuments = useMemo(
-    () => reviewQueue.filter((item) => !item.issue).length,
-    [reviewQueue],
-  );
   const batchEligibleReviewIds = useMemo(
     () => reviewQueue
       .filter((item) => (
@@ -5057,16 +5051,6 @@ export default function Home() {
     }),
     [canUseFinance, canUseManagedProjects, user?.role, user?.confidentiality_ceiling, user?.organization_role],
   );
-  const mobilePrimaryTabs = useMemo(
-    () => visibleTabs.filter((item) => mobilePrimaryTabNames.includes(item.name)),
-    [visibleTabs],
-  );
-  const mobileMoreTabs = useMemo(
-    () => visibleTabs.filter((item) => !mobilePrimaryTabNames.includes(item.name)),
-    [visibleTabs],
-  );
-  const mobileMoreActive = mobileMoreTabs.some((item) => item.name === active);
-
   if (initializing) {
     return (
       <main className="loadingScreen">
@@ -5122,79 +5106,37 @@ export default function Home() {
     );
   }
 
+  const navigationProps = {
+    active,
+    visibleTabs,
+    financeEntities,
+    selectedFinanceEntityId,
+    reviewCount: reviewQueue.length,
+    outboundEnabled: Boolean(status?.retrieval.outbound_enabled),
+    user: {
+      name: user.display_name,
+      roleLabel: userRoleNames[user.organization_role] || user.organization_role,
+      levelLabel: confidentialityLabel(user.confidentiality_ceiling),
+    },
+    onNavigate: navigateToTab,
+    onEntitySelect: handleFinanceEntitySelect,
+    onPasswordChange: () => setShowPasswordForm(true),
+    onLogout: handleLogout,
+  };
+
   return (
-    <main className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="logoFrame">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/jingao-mark-transparent.png"
-              alt="京奥电竞"
-              width={512}
-              height={512}
-            />
-          </div>
-          <div className="brandCopy"><strong>京奥AI智能运营系统</strong><span>JAOS</span></div>
-        </div>
-        <nav aria-label="主导航">
-          {visibleTabs.map((item) => (
-            <Fragment key={item.name}>
-              <button
-                type="button"
-                className={active === item.name ? "active" : ""}
-                onClick={() => navigateToTab(item.name)}
-              >
-                <span className="navIcon">{item.icon}</span>
-                <span className="navLabel">{item.name}</span>
-                {item.name === "入库审核" && reviewQueue.length > 0 && (
-                  <b className="navCount">{reviewQueue.length}</b>
-                )}
-              </button>
-              {item.name === "财务分析" && financeEntities.length > 0 && (
-                <div className="financeEntitySubnav" aria-label="财务公司账套">
-                  {financeEntities.map((entity) => (
-                    <button
-                      type="button"
-                      className={active === "财务分析" && selectedFinanceEntityId === entity.id ? "active" : ""}
-                      onClick={() => handleFinanceEntitySelect(entity.id)}
-                      key={entity.id}
-                    >
-                      <span>{entity.display_name}</span>
-                      <small>{entity.business_name}</small>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </Fragment>
-          ))}
-        </nav>
-        <div className="trial">
-          <span className="pulse" />
-          <div>
-            <strong>本地安全测试</strong>
-            <small>{status?.retrieval.outbound_enabled ? "已启用出网" : "当前资料不出网"}</small>
-          </div>
-        </div>
-        <div className="user">
-          <div className="avatar">{user.display_name.slice(0, 1)}</div>
-          <div><strong>{user.display_name}</strong><small>{userRoleNames[user.organization_role] || user.organization_role} · {confidentialityLabel(user.confidentiality_ceiling)}</small></div>
-          <div className="userActions">
-            <button type="button" onClick={() => setShowPasswordForm(true)}>改密</button>
-            <button type="button" onClick={handleLogout}>退出</button>
-          </div>
-        </div>
-      </aside>
+    <main className="shell workspaceShell">
+      <WorkspaceSidebar {...navigationProps} />
 
       <section className="content">
-        <header className="topbar">
+        <header className={`topbar${active === "工作台" ? " homeTopbar" : ""}`}>
           <div>
             <p className="eyebrow">京奥AI智能运营系统 · JAOS</p>
             <h1>{active}</h1>
           </div>
           <div className="topActions">
             <span className={`systemState ${operations?.status || ""}`}>
-              <i /> Agent {
+              <i /> {active === "工作台" ? "知识服务" : "Agent"} {
                 operations?.status === "critical"
                   ? "异常"
                   : operations?.status === "warning"
@@ -5219,61 +5161,24 @@ export default function Home() {
         {error && <div className="globalError" role="alert" aria-live="assertive">{error}<button type="button" aria-label="关闭错误提示" onClick={() => setError("")}>×</button></div>}
 
         {active === "工作台" && (
-          <>
-            <section className="hero">
-              <div className="heroCopy">
-                <span className="tag">SOURCE-GROUNDED KNOWLEDGE</span>
-                <h2>先找到证据，<br /><em>再形成答案。</em></h2>
-                <p>资料经预览确认后进入历史知识库；公司介绍等现行口径单独维护当前版本。所有结果保留文件名、版本与页码。</p>
-                <form className="ask" onSubmit={handleSearch}>
-                  <span>✦</span>
-                  <input
-                    value={question}
-                    onChange={(event) => setQuestion(event.target.value)}
-                    placeholder="例如：解说训练营方案里有哪些课程模块？"
-                    aria-label="向京奥AI智能运营系统提问"
-                  />
-                  <button disabled={searching}>{searching ? "检索中…" : "检索"}</button>
-                </form>
-                {searchResponse && <div ref={searchResultRef}><CompactAnswer response={searchResponse} /></div>}
-              </div>
-              <div className="evidenceVisual" aria-hidden="true">
-                <div className="evidenceRing ringOne" />
-                <div className="evidenceRing ringTwo" />
-                <div className="evidenceCore">
-                  <strong>{status?.counts.documents ?? 0}</strong>
-                  <span>份知识资料</span>
-                </div>
-                <span className="evidenceNode nodeOne">原文</span>
-                <span className="evidenceNode nodeTwo">页码</span>
-                <span className="evidenceNode nodeThree">权限</span>
-              </div>
-            </section>
-
-            <section className="stats">
-              <StatCard tone="blue" label="候选项目" value={status?.counts.projects ?? 0} note="等待业务确认" />
-              <StatCard tone="red" label="登记文件" value={status?.counts.documents ?? 0} note={`${status?.counts.source_available_documents ?? readyDocuments} 份原件可核验`} />
-              <StatCard tone="green" label="可检索文件" value={readyDocuments} note="本地全文检索" />
-              <StatCard tone="orange" label="当前事实" value={status?.counts.current_documents ?? 0} note="未经批准保持为 0" />
-            </section>
-
-            <section className="workspaceGrid">
-              <section className="panel">
-                <PanelTitle eyebrow="RECENT INGESTION" title="最新候选项目" action="检索资料" onAction={() => setActive("AI资料检索")} />
-                <ProjectRows projects={projects.slice(0, 5)} categoryNames={categoryNames} />
-              </section>
-              <section className="panel quickPanel">
-                <PanelTitle eyebrow="NEXT ACTION" title="从真实工作开始" />
-                <QuickAction icon="✦" title="AI资料检索" note="按页码查看候选证据" onClick={() => setActive("AI资料检索")} />
-                <QuickAction icon="✎" title="用智库写材料" note="自由描述，自动引用内部资料" onClick={() => setActive("智能创作")} />
-                {["founder", "knowledge_admin", "department_owner"].includes(user.role) ? (
-                  <QuickAction icon="✓" title="处理入库资料" note={`${reviewQueue.length} 份资料等待确认`} onClick={() => setActive("入库审核")} />
-                ) : (
-                  <QuickAction icon="↑" title="上传工作资料" note="网页直接上传到授权分类" onClick={() => setActive("资料上传")} />
-                )}
-              </section>
-            </section>
-          </>
+          <WorkspaceHome
+            question={question}
+            onQuestionChange={setQuestion}
+            onSearch={handleSearch}
+            searching={searching}
+            searchResult={searchResponse ? <CompactAnswer response={searchResponse} /> : null}
+            searchResultRef={searchResultRef}
+            submittedQuery={submittedSearchQuery}
+            resultCount={searchResponse?.total ?? null}
+            counts={status?.counts ?? null}
+            projects={projects}
+            categoryNames={categoryNames}
+            canReview={["founder", "knowledge_admin", "department_owner"].includes(user.role)}
+            canViewLibraryTotals={user.role === "founder"}
+            reviewCount={reviewQueue.length}
+            onNavigate={navigateToTab}
+            onProjectSearch={(query) => { navigateToTab("AI资料检索"); void handleSearch(undefined, query); }}
+          />
         )}
 
         {active === "财务分析" && selectedFinanceEntity && (
@@ -7462,106 +7367,7 @@ export default function Home() {
           <span>{status?.policy_version} · {status?.database}</span>
         </footer>
       </section>
-      <nav className="mobileTabbar" aria-label="手机端主导航">
-        {mobilePrimaryTabs.map((item) => (
-          <button
-            type="button"
-            key={item.name}
-            className={active === item.name ? "active" : ""}
-            aria-current={active === item.name ? "page" : undefined}
-            onClick={() => navigateToTab(item.name)}
-          >
-            <span className="mobileTabIcon" aria-hidden="true">{item.icon}</span>
-            <span>{item.name === "AI资料检索" ? "资料检索" : item.name}</span>
-          </button>
-        ))}
-        <button
-          type="button"
-          className={mobileMenuOpen || mobileMoreActive ? "active" : ""}
-          aria-expanded={mobileMenuOpen}
-          aria-controls="mobile-more-sheet"
-          onClick={() => setMobileMenuOpen(true)}
-        >
-          <span className="mobileTabIcon" aria-hidden="true">•••</span>
-          <span>更多</span>
-        </button>
-      </nav>
-      {mobileMenuOpen && (
-        <div
-          className="mobileMenuBackdrop"
-          role="presentation"
-          onMouseDown={() => setMobileMenuOpen(false)}
-        >
-          <section
-            id="mobile-more-sheet"
-            className="mobileMenuSheet"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="mobile-more-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="mobileMenuHandle" aria-hidden="true" />
-            <header className="mobileMenuHeader">
-              <div>
-                <p className="eyebrow">JAOS MOBILE</p>
-                <h2 id="mobile-more-title">更多功能</h2>
-              </div>
-              <button type="button" aria-label="关闭更多功能" onClick={() => setMobileMenuOpen(false)}>×</button>
-            </header>
-            <div className="mobileMenuUser">
-              <div className="avatar" aria-hidden="true">{user.display_name.slice(0, 1)}</div>
-              <div>
-                <strong>{user.display_name}</strong>
-                <small>{userRoleNames[user.organization_role] || user.organization_role} · {confidentialityLabel(user.confidentiality_ceiling)}</small>
-              </div>
-            </div>
-            <nav className="mobileMenuModules" aria-label="更多功能列表">
-              {mobileMoreTabs.map((item) => (
-                <Fragment key={item.name}>
-                  <button
-                    type="button"
-                    className={active === item.name ? "active" : ""}
-                    aria-current={active === item.name ? "page" : undefined}
-                    onClick={() => navigateToTab(item.name)}
-                  >
-                    <span className="navIcon" aria-hidden="true">{item.icon}</span>
-                    <span>{item.name}</span>
-                    {item.name === "入库审核" && reviewQueue.length > 0 && <b>{reviewQueue.length}</b>}
-                  </button>
-                  {item.name === "财务分析" && financeEntities.length > 0 && (
-                    <div className="mobileFinanceEntities" aria-label="财务公司账套">
-                      {financeEntities.map((entity) => (
-                        <button
-                          type="button"
-                          className={active === "财务分析" && selectedFinanceEntityId === entity.id ? "active" : ""}
-                          onClick={() => {
-                            handleFinanceEntitySelect(entity.id);
-                            setMobileMenuOpen(false);
-                          }}
-                          key={entity.id}
-                        >
-                          <span>{entity.display_name}</span>
-                          <small>{entity.business_name}</small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </Fragment>
-              ))}
-            </nav>
-            <div className="mobileMenuActions">
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  setShowPasswordForm(true);
-                }}
-              >修改密码</button>
-              <button type="button" className="danger" onClick={() => void handleLogout()}>退出登录</button>
-            </div>
-          </section>
-        </div>
-      )}
+      <WorkspaceMobileNavigation {...navigationProps} />
       {showPasswordForm && (
         <div
           className="modalBackdrop"
@@ -9858,10 +9664,6 @@ export function ProjectManagementWorkspace({
   );
 }
 
-function StatCard({ tone, label, value, note }: { tone: string; label: string; value: number; note: string }) {
-  return <article className={`statCard ${tone}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
-}
-
 function evolutionClassLabel(candidate: EvolutionCandidate) {
   return {
     material: "重要更新",
@@ -9983,51 +9785,6 @@ function PanelTitle({ eyebrow, title, action, onAction }: { eyebrow: string; tit
       <div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div>
       {action && <button type="button" onClick={onAction}>{action} →</button>}
     </div>
-  );
-}
-
-function ProjectRows({
-  projects,
-  categoryNames,
-}: {
-  projects: Project[];
-  categoryNames: Record<string, string>;
-}) {
-  if (!projects.length) return <div className="emptyRows">尚未入库项目</div>;
-  return (
-    <div className="projectRows">
-      {projects.map((project) => {
-        return (
-          <article className="projectRow" key={project.id}>
-            <div className="docIcon">案</div>
-            <div className="projectMain">
-              <strong>{project.name}</strong>
-              <span>{project.client || "客户待确认"} · {project.year || "年份待确认"}</span>
-            </div>
-            <span className="domainTag">{categoryNames[project.domain] || project.domain}</span>
-            {project.closing_report_reminder && <span className="closingBadge">待结案</span>}
-            <span className="docs">{project.document_count} 份资料</span>
-            <span className={["current", "approved"].includes(project.knowledge_status) ? "currentBadge" : "candidateBadge"}>
-              {project.knowledge_status === "current"
-                ? "当前"
-                : project.knowledge_status === "approved"
-                  ? "已入库"
-                  : project.knowledge_status === "candidate"
-                    ? "候选"
-                    : "历史"}
-            </span>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function QuickAction({ icon, title, note, onClick }: { icon: string; title: string; note: string; onClick: () => void }) {
-  return (
-    <button type="button" className="quickAction" onClick={onClick}>
-      <span>{icon}</span><div><strong>{title}</strong><small>{note}</small></div><b>→</b>
-    </button>
   );
 }
 

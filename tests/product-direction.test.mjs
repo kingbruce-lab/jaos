@@ -5,6 +5,8 @@ import test from "node:test";
 
 const page = fs.readFileSync(path.join(process.cwd(), "app", "page.tsx"), "utf8");
 const styles = fs.readFileSync(path.join(process.cwd(), "app", "globals.css"), "utf8");
+const navigation = fs.readFileSync(path.join(process.cwd(), "app", "workspace-navigation.tsx"), "utf8");
+const navigationStyles = fs.readFileSync(path.join(process.cwd(), "app", "workspace-navigation.css"), "utf8");
 const layout = fs.readFileSync(path.join(process.cwd(), "app", "layout.tsx"), "utf8");
 const agent = fs.readFileSync(path.join(process.cwd(), "agent", "app", "main.py"), "utf8");
 const financeAgent = fs.readFileSync(path.join(process.cwd(), "agent", "app", "finance_system.py"), "utf8");
@@ -34,12 +36,13 @@ test("knowledge writing persists the latest work and up to five saved drafts", (
 });
 
 test("mobile shell keeps core work reachable and respects phone safe areas", () => {
-  assert.match(page, /mobilePrimaryTabNames:[^=]*= \["工作台", "AI资料检索", "智能创作", "资料上传"\]/);
-  assert.match(page, /className="mobileTabbar"/);
-  assert.match(page, /className="mobileMenuSheet"/);
-  assert.match(page, />更多</);
-  assert.match(page, />修改密码</);
-  assert.match(page, />退出登录</);
+  assert.match(navigation, /mobilePrimaryTabNames:[^=]*= \["工作台", "AI资料检索", "智能创作", "资料上传"\]/);
+  assert.match(navigation, /className="mobileTabbar workspaceMobileTabbar"/);
+  assert.match(navigation, /className="mobileMenuSheet workspaceMobileSheet"/);
+  assert.match(navigation, />更多</);
+  assert.match(navigation, />修改密码</);
+  assert.match(navigation, />退出登录</);
+  assert.match(page, /<WorkspaceMobileNavigation \{\.\.\.navigationProps\}/);
   assert.match(page, /scrollToMobileResult\(searchResultRef\)/);
   assert.match(page, /scrollToMobileResult\(writingResultRef\)/);
   assert.doesNotMatch(page, /current-password" autoFocus/);
@@ -112,12 +115,12 @@ test("upload and review controls use readable typography and the sidebar logo is
   assert.match(styles, /\.logoFrame img \{[^}]*object-fit: contain/s);
 });
 
-test("JAOS brand uses the transparent Jingao mark in a vertical sidebar lockup", () => {
-  assert.match(page, /京奥AI智能运营系统/);
-  assert.match(page, />JAOS</);
-  assert.match(page, /src="\/jingao-mark-transparent\.png"/);
-  assert.match(styles, /\.brand \{[^}]*flex-direction: column/s);
-  assert.doesNotMatch(styles, /\.logoFrame \{[^}]*background:\s*#fff/s);
+test("JAOS sidebar keeps the transparent Jingao mark and full brand identity", () => {
+  assert.match(navigation, /京奥AI智能运营系统/);
+  assert.match(navigation, />JAOS</);
+  assert.match(navigation, /src="\/jingao-mark-transparent\.png"/);
+  assert.match(navigationStyles, /\.workspaceBrandMark\s*\{[^}]*object-fit:\s*contain/s);
+  assert.match(page, /<WorkspaceSidebar \{\.\.\.navigationProps\}/);
 });
 
 test("finance purpose corrections require founder review and preserve bank evidence", () => {
