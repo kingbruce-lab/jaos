@@ -893,13 +893,13 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
     tmp_path, monkeypatch
 ) -> None:
     labels = {item["code"]: item["label"] for item in cost_center_catalog(2026)}
-    assert len(labels) == 32
+    assert len(labels) == 36
     assert labels["CC26B05"] == "后勤保障项目"
     assert labels["CC26B06"] == "三角洲国际战队培训"
     assert labels["CC26A10"] == "出借款"
-    assert labels["CC26A11"] == "短信验证"
+    assert labels["CC26A11"] == "备用金"
     assert labels["CC26C04"] == "西安回款"
-    assert labels["CC26C05"] == "国外战队奖金"
+    assert labels["CC26C05"] == "未命名（预留）"
     assert registered_cost_center_code("cc26-a10") == "CC26A10"
     assert registered_cost_center_code("Cc26C04") == "CC26C04"
     assert registered_cost_center_code("出借款") is None
@@ -911,6 +911,8 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
     sheet.append(["2026-09-03", "CC26A11", 20, None, 8980, "服务商", "短信验证费"])
     sheet.append(["2026-09-04", "Cc26C04", None, 500, 9480, "客户", "西安回款"])
     sheet.append(["2026-09-05", "CC26C05", None, 600, 10080, "赛事方", "国外战队奖金"])
+    for offset, code in enumerate(("Cc26A12", "Cc26B11", "Cc26B12", "Cc26B13"), start=6):
+        sheet.append([f"2026-09-{offset:02d}", code, 100, None, 10080 - 100 * (offset - 5), "新增业务", f"银行原始摘要 {code}"])
     output = BytesIO()
     workbook.save(output)
 
@@ -937,6 +939,7 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
         assert rows.status_code == 200
         assert {row["project_reference"] for row in rows.json()} == {
             "CC26A10", "CC26A11", "CC26C04", "CC26C05",
+            "CC26A12", "CC26B11", "CC26B12", "CC26B13",
         }
         assert all(row["project_reference_valid"] for row in rows.json())
         assert client.post(
@@ -950,6 +953,15 @@ def test_new_2026_headquarters_codes_can_be_confirmed_and_searched(
         assert entries["CC26A11"]["transaction_count"] == 1
         assert entries["CC26C04"]["transaction_count"] == 1
         assert entries["CC26C05"]["transaction_count"] == 1
+        for code in ("CC26A12", "CC26B11", "CC26B12", "CC26B13"):
+            assert entries[code]["transaction_count"] == 1
+            assert entries[code]["expense"] == "100.00"
+            detail = client.get(
+                f"/v1/finance/cost-centers/{code}/transactions", params={"entity_id": entity["id"]},
+            )
+            assert detail.status_code == 200
+            assert detail.json()["label"] == labels[code]
+            assert detail.json()["items"][0]["summary"] == f"银行原始摘要 {code.replace('CC', 'Cc', 1)}"
     finally:
         app.dependency_overrides.clear()
         db.close()
