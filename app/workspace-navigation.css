@@ -89,7 +89,7 @@
   height: 40px;
   object-fit: contain;
   flex: none;
-  filter: drop-shadow(0 3px 6px rgb(0 0 0 / 18%));
+  filter: brightness(0) invert(1);
 }
 
 .workspaceBrandCopy { min-width: 0; }
