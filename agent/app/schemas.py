@@ -132,6 +132,7 @@ class AdminUserUpdate(BaseModel):
         max_length=50,
     )
     active: bool | None = None
+    can_delete_education_cohorts: bool | None = None
 
 
 class PasswordReset(BaseModel):

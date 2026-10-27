@@ -70,6 +70,7 @@ ADDITIVE_COLUMNS = {
     "users": {
         "organization_role": "VARCHAR(40)",
         "project_delete_password_hash": "TEXT",
+        "can_delete_education_cohorts": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
     "file_blobs": {
         "source_owner_name": "VARCHAR(120)",

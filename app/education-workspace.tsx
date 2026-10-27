@@ -11,7 +11,7 @@ type Api = <T>(path: string, options?: RequestInit, token?: string) => Promise<T
 type Summary = { cohort_count: number; student_count: number; expected_income: string; income: string; student_cost: string; cost: string; cash_expense: string; operating_expense: string; expense: string; net: string };
 type Cohort = { id: string; name: string; start_date: string; end_date: string; course_period?: string; enrollment_count?: number; effective_student_count?: number; student_count: number; unit_price: string; notes: string; version: number; owner_name: string; expected_income: string; income: string; expense: string; net: string };
 type Entry = { id: string; direction: "income" | "expense"; amount: string; occurred_on: string; ended_on: string; purpose: string; version: number; category?: string; detail?: string; staff_id?: string | null };
-type Registry = { items: Cohort[]; summary: Summary; enrollment_summary?: { receivable: string; received: string; arrears: string }; has_more: boolean; can_edit: boolean; can_delete?: boolean; scope: string };
+type Registry = { items: Cohort[]; summary: Summary; enrollment_summary?: { receivable: string; received: string; arrears: string }; has_more: boolean; can_edit: boolean; can_delete?: boolean; delete_password_mode?: "independent" | "login"; scope: string };
 const money = (value: string) => Number(value).toLocaleString("zh-CN", { style: "currency", currency: "CNY" });
 const today = () => new Date().toLocaleDateString("sv-SE");
 
@@ -195,7 +195,7 @@ export function EducationWorkspace({ api, token, initialModule = "ledger" }: { a
       {selectedId && !detail && <p role="status">正在加载班期详情…</p>}
       {detail && <section className="panel educationDetail">
         <h3>{detail.name}</h3><p>{detail.start_date} 至 {detail.end_date} · 登记人：{detail.owner_name}</p>
-        {registry.can_delete && <EducationCohortDelete key={`${detail.id}-${detail.version}`} api={api} token={token} cohort={detail} onDeleted={() => { selectCohort(""); setRevision((value) => value + 1); setMessage("班期已删除，已从日常页面及教培汇总移除；历史资料保留供追溯。"); }} />}
+        {registry.can_delete && <EducationCohortDelete key={`${detail.id}-${detail.version}`} api={api} token={token} cohort={detail} passwordMode={registry.delete_password_mode} onDeleted={() => { selectCohort(""); setRevision((value) => value + 1); setMessage("班期已删除，已从日常页面及教培汇总移除；历史资料保留供追溯。"); }} />}
         <div className="educationMetrics">
           <article><span>本期人数</span><strong>{detail.effective_student_count ?? detail.student_count} 人</strong></article>
           <article><span>预计收入</span><strong>{money(detail.expected_income)}</strong></article>

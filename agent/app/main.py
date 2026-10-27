@@ -256,6 +256,7 @@ def user_payload(user: User) -> dict:
         "organization_role": user.organization_role or "business",
         "confidentiality_ceiling": user.confidentiality_ceiling,
         "departments": json.loads(user.departments_json),
+        "can_delete_education_cohorts": bool(user.can_delete_education_cohorts),
     }
 
 
@@ -1758,6 +1759,12 @@ def update_local_user(
         target.departments_json = '["*"]'
     if "active" in changes:
         target.active = changes["active"]
+    if "can_delete_education_cohorts" in changes and changes["can_delete_education_cohorts"] is not None:
+        if changes["can_delete_education_cohorts"] and target.organization_role != "education":
+            raise HTTPException(422, "仅教培账号可以授予教培班期删除权限")
+        target.can_delete_education_cohorts = changes["can_delete_education_cohorts"]
+    if target.organization_role != "education":
+        target.can_delete_education_cohorts = False
     db.flush()
     if not target.active:
         revoke_user_sessions(db, target.id)
@@ -1776,6 +1783,7 @@ def update_local_user(
                         ],
                         "departments": before["departments"],
                         "active": before["active"],
+                        "can_delete_education_cohorts": before["can_delete_education_cohorts"],
                     },
                     "after": {
                         "role": target.organization_role,
@@ -1783,6 +1791,7 @@ def update_local_user(
                         "confidentiality_ceiling": target.confidentiality_ceiling,
                         "departments": json.loads(target.departments_json),
                         "active": target.active,
+                        "can_delete_education_cohorts": bool(target.can_delete_education_cohorts),
                     },
                 },
                 ensure_ascii=False,

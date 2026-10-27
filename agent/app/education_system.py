@@ -88,6 +88,13 @@ def _management(user: User) -> bool:
     return user.organization_role == "management" and user.confidentiality_ceiling == "L5"
 
 
+def _can_delete_cohorts(user: User) -> bool:
+    return _reviewer_slot(user) == "founder" or bool(
+        user.active and user.organization_role == "education"
+        and user.can_delete_education_cohorts
+    )
+
+
 def _require_access(user: User, *, write: bool = False) -> None:
     allowed = user.organization_role == "education" or _management(user)
     if not write:
@@ -242,7 +249,8 @@ def list_cohorts(offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=1
                         "expense": _money(summary[4]), "net": _money(summary[3] - summary[4])},
             "enrollment_summary": {"receivable": _money(summary[5]), "received": _money(summary[6]), "arrears": _money(summary[7])},
             "has_more": offset + len(rows) < summary[0], "can_edit": user.organization_role == "education" or _management(user),
-            "can_delete": _reviewer_slot(user) == "founder",
+            "can_delete": _can_delete_cohorts(user),
+            "delete_password_mode": "independent" if _reviewer_slot(user) == "founder" else "login",
             "scope": "mine" if user.organization_role == "education" else "all"}
 
 
@@ -317,23 +325,37 @@ def list_entries(cohort_id: str, user: User = Depends(current_user), db: Session
 @router.post("/cohorts/{cohort_id}/founder-delete")
 def delete_cohort(cohort_id: str, payload: CohortDelete, user: User = Depends(current_user), db: Session = Depends(get_db)):
     _require_project_founder(user)
+    return _delete_cohort_record(cohort_id, payload, user, db)
+
+
+@router.post("/cohorts/{cohort_id}/delete")
+def delete_authorized_cohort(cohort_id: str, payload: CohortDelete, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not _can_delete_cohorts(user):
+        raise HTTPException(403, "未获授权删除教培班期")
+    return _delete_cohort_record(cohort_id, payload, user, db)
+
+
+def _delete_cohort_record(cohort_id: str, payload: CohortDelete, user: User, db: Session):
     row = _cohort(db, user, cohort_id, write=True)
     if row.version != payload.version or payload.confirm_name.strip() != row.name:
         raise HTTPException(409, "班期已更新或确认名称不一致，请刷新核对")
     if not payload.reason.strip() or len(payload.reason.strip()) < 2:
         raise HTTPException(422, "请填写删除原因")
-    if not user.project_delete_password_hash:
+    is_founder = _reviewer_slot(user) == "founder"
+    password_hash = user.project_delete_password_hash if is_founder else user.password_hash
+    if not password_hash:
         raise HTTPException(409, "请先设置创始人删除密码（与项目删除共用）")
-    rate_key = _check_delete_rate_limit(user, "delete")
-    if not verify_password(payload.deletion_password, user.project_delete_password_hash):
+    rate_key = _check_delete_rate_limit(user, "delete" if is_founder else "education-delete")
+    if not verify_password(payload.deletion_password, password_hash):
         project_delete_rate_limiter.record_failure(rate_key)
         _audit(db, user, "education_cohort_delete_failed", None, {"cohort_id": row.id, "result": "password_verification_failed"})
         _commit(db)
-        raise HTTPException(403, "删除密码错误")
+        raise HTTPException(403, "删除密码错误" if is_founder else "当前账号登录密码错误")
     row.deleted_at = datetime.now(timezone.utc)
     row.version += 1
     _audit(db, user, "education_cohort_deleted", None, {"cohort_id": row.id, "name": row.name,
-        "reason": payload.reason.strip(), "deletion_mode": "soft_delete", "version": row.version})
+        "reason": payload.reason.strip(), "deletion_mode": "soft_delete", "version": row.version,
+        "authorization": "founder" if is_founder else "education_permission", "owner_user_id": row.owner_user_id})
     _commit(db)
     project_delete_rate_limiter.record_success(rate_key)
     return {"id": row.id, "status": "deleted", "deletion_mode": "soft_delete"}

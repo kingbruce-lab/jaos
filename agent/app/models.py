@@ -82,6 +82,9 @@ class User(Base):
     departments_json: Mapped[str] = mapped_column(Text, default='["training"]')
     external_identity: Mapped[str | None] = mapped_column(String(160), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    can_delete_education_cohorts: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import func, select
 
-from app.models import AuditLog, EducationStudent, EducationAssessment, EducationCohort, EducationStaff
+from app.models import AuditLog, EducationStudent, EducationAssessment, EducationCohort, EducationStaff, EducationCashEntry
 from app.auth import hash_password
 from app.project_system import project_delete_rate_limiter
 from test_education_system import setup, cohort_payload, entry_payload
@@ -235,6 +235,79 @@ def test_founder_only_cohort_deletion_preserves_and_hides_related_records(setup)
     assert db.get(EducationAssessment, assessment_id) is not None
     logs = db.scalars(select(AuditLog).where(AuditLog.action == "education_cohort_deleted")).all()
     assert len(logs) == 1 and payload["deletion_password"] not in logs[0].details_json
+
+
+def test_authorized_education_owner_can_delete_only_own_cohort(setup):
+    client, db, users, actor = setup
+    teacher = users["teacher"]
+    teacher.password_hash = hash_password("Owner-login-2026")
+    db.commit()
+    path = make_cohort(client)
+    entry = client.post(path + "/entries", json=entry_payload()).json()
+    payload = {"deletion_password": "Owner-login-2026", "confirm_name": client.get(path).json()["name"], "reason": "重复创建", "version": 1}
+    assert client.post(path + "/delete", json=payload).status_code == 403
+    assert client.patch(f"/v1/admin/users/{teacher.id}", json={"can_delete_education_cohorts": True}).status_code == 403
+    actor[0] = users["other"]
+    other_path = make_cohort(client)
+    actor[0] = users["founder"]
+    granted = client.patch(f"/v1/admin/users/{teacher.id}", json={"can_delete_education_cohorts": True})
+    assert granted.status_code == 200 and granted.json()["can_delete_education_cohorts"] is True
+    assert granted.json()["organization_role"] == "education" and granted.json()["confidentiality_ceiling"] == "L1"
+    actor[0] = teacher
+    registry = client.get("/v1/pm/education/cohorts").json()
+    assert registry["can_delete"] is True and registry["delete_password_mode"] == "login"
+    for route in ("/v1/pm/projects", "/v1/finance/entities", "/v1/admin/users", "/v1/pm/founder-delete-password/status"):
+        assert client.get(route).status_code == 403
+    assert client.post(other_path + "/delete", json=payload).status_code == 404
+    assert client.post(path + "/founder-delete", json=payload).status_code == 403
+    for changes in ({"confirm_name": "错误名称"}, {"version": 2}):
+        assert client.post(path + "/delete", json={**payload, **changes}).status_code == 409
+    assert client.post(path + "/delete", json={**payload, "deletion_password": "incorrect"}).status_code == 403
+    assert client.get(path).status_code == 200
+    assert client.post(path + "/delete", json=payload).status_code == 200
+    assert client.get(path).status_code == 404
+    assert client.get("/v1/pm/education/cohorts").json()["summary"]["income"] == "0.00"
+    assert db.get(EducationCashEntry, entry["id"]) is not None
+    audit = db.scalar(select(AuditLog).where(AuditLog.action == "education_cohort_deleted"))
+    assert audit.user_id == teacher.id and "education_permission" in audit.details_json
+    assert payload["deletion_password"] not in audit.details_json
+    actor[0] = users["other"]
+    assert client.get(other_path).status_code == 200
+    assert client.post(other_path + "/delete", json=payload).status_code == 403
+
+
+def test_education_deletion_grant_is_revocable_and_not_a_general_role(setup):
+    client, db, users, actor = setup
+    teacher = users["teacher"]
+    actor[0] = users["admin"]
+    assert client.patch(f"/v1/admin/users/{teacher.id}", json={"can_delete_education_cohorts": True}).status_code == 403
+    actor[0] = users["founder"]
+    for key in ("business", "finance", "admin"):
+        assert client.patch(f"/v1/admin/users/{users[key].id}", json={"can_delete_education_cohorts": True}).status_code == 422
+    endpoint = f"/v1/admin/users/{teacher.id}"
+    assert client.patch(endpoint, json={"can_delete_education_cohorts": True}).status_code == 200
+    assert client.patch(endpoint, json={"can_delete_education_cohorts": False}).json()["can_delete_education_cohorts"] is False
+    assert client.patch(endpoint, json={"can_delete_education_cohorts": True}).status_code == 200
+    changed = client.patch(endpoint, json={"role": "business"})
+    assert changed.status_code == 200 and changed.json()["can_delete_education_cohorts"] is False
+    assert client.patch(endpoint, json={"role": "education"}).json()["can_delete_education_cohorts"] is False
+
+
+def test_authorized_cohort_deletion_login_password_is_rate_limited(setup):
+    client, db, users, actor = setup
+    path = make_cohort(client)
+    users["teacher"].can_delete_education_cohorts = True
+    users["teacher"].password_hash = hash_password("Owner-login-2026")
+    db.commit()
+    project_delete_rate_limiter.reset()
+    payload = {"deletion_password": "wrong", "confirm_name": client.get(path).json()["name"], "reason": "重复创建", "version": 1}
+    try:
+        responses = [client.post(path + "/delete", json=payload) for _ in range(10)]
+        assert responses[0].status_code == 403 and responses[-1].status_code == 429
+        assert client.get(path).status_code == 200
+        assert db.get(EducationCohort, path.split("/")[-1]).deleted_at is None
+    finally:
+        project_delete_rate_limiter.reset()
 
 
 def test_cohort_delete_password_attempts_are_limited(setup):

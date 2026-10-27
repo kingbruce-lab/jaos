@@ -15,6 +15,9 @@ const staff = [{ id: "teacher-1", name: "测试教练", role: "助教", active: 
 const catalog = { games: ["王者荣耀", "英雄联盟", "三角洲行动", "无畏契约", "CS2"], periods: { "8_days": "八天七晚", "1_month": "一个月", "3_months": "三个月" }, rooms: ["一人间", "两人间"], staff_roles: ["助教"], fee_details: { "学费": ["课程学费"], "活动经费": ["团建活动", "其他"], "人员成本": ["助教"], "其他": ["其他"] } };
 const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   const body = options.body ? JSON.parse(String(options.body)) : {};
+  const delegatedDelete = new URLSearchParams(location.search).has("delegated_delete");
+  if (delegatedDelete && path.includes("founder-delete")) throw new Error("教培员工不应访问创始人删除接口");
+  if (path.endsWith("/delete") && delegatedDelete) { cohortDeleted = true; return { status: "deleted" } as T; }
   if (path === "v1/pm/founder-delete-password/status") return { configured: false } as T;
   if (path === "v1/pm/founder-delete-password") return { configured: true } as T;
   if (path.endsWith("/founder-delete")) { cohortDeleted = true; return { status: "deleted" } as T; }
@@ -53,7 +56,7 @@ const api = async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
   cohort.expense = entries.filter((item) => item.direction === "expense").reduce((sum, item) => sum + Number(item.amount), 0).toFixed(2);
   cohort.net = (Number(cohort.income) - Number(cohort.expense)).toFixed(2);
   if (options.method) return { id: cohort.id } as T;
-  if (path === "v1/pm/education/cohorts") return structuredClone({ items: cohortDeleted ? [] : [cohort], summary: { ...cohort, cohort_count: cohortDeleted ? 0 : 1, student_cost: "0.00", cost: "0.00", cash_expense: cohort.expense, operating_expense: cohort.expense }, has_more: false, can_edit: true, can_delete: new URLSearchParams(location.search).has("founder"), scope: "mine" }) as T;
+  if (path === "v1/pm/education/cohorts") return structuredClone({ items: cohortDeleted ? [] : [cohort], summary: { ...cohort, cohort_count: cohortDeleted ? 0 : 1, student_cost: "0.00", cost: "0.00", cash_expense: cohort.expense, operating_expense: cohort.expense }, has_more: false, can_edit: true, can_delete: delegatedDelete || new URLSearchParams(location.search).has("founder"), delete_password_mode: delegatedDelete ? "login" : "independent", scope: "mine" }) as T;
   return structuredClone({ ...cohort, entries }) as T;
 };
 createRoot(document.getElementById("root")!).render(<>
